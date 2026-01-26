@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 )
@@ -25,6 +26,9 @@ type APIClient interface {
 
 // NewWebhookHandler creates a new webhook handler
 func NewWebhookHandler(secret string, apiClient APIClient) *WebhookHandler {
+	if secret == "" {
+		log.Println("WARNING: Webhook secret is empty. This is a security risk in production environments.")
+	}
 	return &WebhookHandler{secret: secret, apiClient: apiClient}
 }
 

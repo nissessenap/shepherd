@@ -23,6 +23,8 @@ type Config struct {
 type Adapter struct {
 	cfg    Config
 	server *http.Server
+	// TODO: client will be wired to WebhookHandler during integration phase
+	// when API client is available for creating tasks and posting status updates
 	client *Client
 }
 
@@ -50,6 +52,10 @@ func NewAdapter(cfg Config) (*Adapter, error) {
 		w.WriteHeader(http.StatusOK)
 	})
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("ok"))
+	})
+	r.Get("/readyz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
 	})
