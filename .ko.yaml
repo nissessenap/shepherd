@@ -1,0 +1,8 @@
+# .ko.yaml
+defaultBaseImage: cgr.dev/chainguard/static:latest
+
+builds:
+  - id: shepherd
+    main: ./cmd/shepherd
+    env:
+      - CGO_ENABLED=0
