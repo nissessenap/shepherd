@@ -106,24 +106,24 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 }
 
 func (r *AgentTaskReconciler) reconcileJob(ctx context.Context, task *shepherdv1alpha1.AgentTask) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
 	job := &batchv1.Job{}
 	if err := r.Get(ctx, client.ObjectKey{Namespace: task.Namespace, Name: task.Status.JobName}, job); err != nil {
 		if errors.IsNotFound(err) {
-			meta.SetStatusCondition(&task.Status.Conditions, metav1.Condition{
-				Type:               "Succeeded",
-				Status:             metav1.ConditionFalse,
-				Reason:             "JobDeleted",
-				Message:            "Job was deleted",
-				ObservedGeneration: task.Generation,
-			})
+			// Job was deleted externally - clear JobName and requeue to recreate
+			logger.Info("Job not found, will recreate", "jobName", task.Status.JobName)
+			task.Status.JobName = ""
 			meta.SetStatusCondition(&task.Status.Conditions, metav1.Condition{
 				Type:               "Running",
 				Status:             metav1.ConditionFalse,
 				Reason:             "JobDeleted",
-				Message:            "Job was deleted",
+				Message:            "Job was deleted, will be recreated",
 				ObservedGeneration: task.Generation,
 			})
-			return ctrl.Result{}, r.Status().Update(ctx, task)
+			if err := r.Status().Update(ctx, task); err != nil {
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{Requeue: true}, nil
 		}
 		return ctrl.Result{}, err
 	}

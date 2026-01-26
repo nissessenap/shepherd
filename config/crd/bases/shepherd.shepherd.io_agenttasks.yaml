@@ -15,7 +15,7 @@ spec:
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .status.conditions[?(@.type=="Ready")].reason
+    - jsonPath: .status.conditions[?(@.type=="Succeeded")].reason
       name: Status
       type: string
     - jsonPath: .status.jobName

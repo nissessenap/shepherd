@@ -18,9 +18,15 @@ import (
 
 func TestAgentTaskReconciler_CreatesJob(t *testing.T) {
 	scheme := runtime.NewScheme()
-	_ = clientgoscheme.AddToScheme(scheme)
-	_ = shepherdv1alpha1.AddToScheme(scheme)
-	_ = batchv1.AddToScheme(scheme)
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		t.Fatalf("failed to add client-go scheme: %v", err)
+	}
+	if err := shepherdv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("failed to add shepherdv1alpha1 scheme: %v", err)
+	}
+	if err := batchv1.AddToScheme(scheme); err != nil {
+		t.Fatalf("failed to add batchv1 scheme: %v", err)
+	}
 
 	task := &shepherdv1alpha1.AgentTask{
 		ObjectMeta: metav1.ObjectMeta{
@@ -73,8 +79,12 @@ func TestAgentTaskReconciler_CreatesJob(t *testing.T) {
 
 func TestAgentTaskReconciler_NotFound(t *testing.T) {
 	scheme := runtime.NewScheme()
-	_ = clientgoscheme.AddToScheme(scheme)
-	_ = shepherdv1alpha1.AddToScheme(scheme)
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		t.Fatalf("failed to add client-go scheme: %v", err)
+	}
+	if err := shepherdv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("failed to add shepherdv1alpha1 scheme: %v", err)
+	}
 
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 	reconciler := &AgentTaskReconciler{Client: client, Scheme: scheme}
@@ -116,9 +126,15 @@ func TestBuildJob(t *testing.T) {
 
 func TestAgentTaskReconciler_JobSucceeded(t *testing.T) {
 	scheme := runtime.NewScheme()
-	_ = clientgoscheme.AddToScheme(scheme)
-	_ = shepherdv1alpha1.AddToScheme(scheme)
-	_ = batchv1.AddToScheme(scheme)
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		t.Fatalf("failed to add client-go scheme: %v", err)
+	}
+	if err := shepherdv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("failed to add shepherdv1alpha1 scheme: %v", err)
+	}
+	if err := batchv1.AddToScheme(scheme); err != nil {
+		t.Fatalf("failed to add batchv1 scheme: %v", err)
+	}
 
 	task := &shepherdv1alpha1.AgentTask{
 		ObjectMeta: metav1.ObjectMeta{
@@ -222,9 +238,15 @@ func TestAgentTaskReconciler_JobSucceeded(t *testing.T) {
 
 func TestAgentTaskReconciler_JobFailed(t *testing.T) {
 	scheme := runtime.NewScheme()
-	_ = clientgoscheme.AddToScheme(scheme)
-	_ = shepherdv1alpha1.AddToScheme(scheme)
-	_ = batchv1.AddToScheme(scheme)
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		t.Fatalf("failed to add client-go scheme: %v", err)
+	}
+	if err := shepherdv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("failed to add shepherdv1alpha1 scheme: %v", err)
+	}
+	if err := batchv1.AddToScheme(scheme); err != nil {
+		t.Fatalf("failed to add batchv1 scheme: %v", err)
+	}
 
 	task := &shepherdv1alpha1.AgentTask{
 		ObjectMeta: metav1.ObjectMeta{

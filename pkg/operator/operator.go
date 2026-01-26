@@ -10,6 +10,7 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
+	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	shepherdv1alpha1 "github.com/NissesSenap/shepherd/api/v1alpha1"
 	controller "github.com/NissesSenap/shepherd/internal/controller"
@@ -38,8 +39,14 @@ type Operator struct {
 
 // NewOperator creates a new Operator
 func NewOperator(cfg Config) (*Operator, error) {
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	restConfig, err := ctrl.GetConfig()
+	if err != nil {
+		return nil, fmt.Errorf("get kubeconfig: %w", err)
+	}
+
+	mgr, err := ctrl.NewManager(restConfig, ctrl.Options{
 		Scheme:                 scheme,
+		Metrics:                metricsserver.Options{BindAddress: cfg.MetricsAddr},
 		HealthProbeBindAddress: cfg.HealthProbeAddr,
 		LeaderElection:         cfg.LeaderElection,
 		LeaderElectionID:       cfg.LeaderElectionID,
