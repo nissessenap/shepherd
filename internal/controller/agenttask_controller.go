@@ -172,7 +172,7 @@ func (r *AgentTaskReconciler) buildJob(task *shepherdv1alpha1.AgentTask) *batchv
 	jobName := fmt.Sprintf("%s-job", task.Name)
 
 	// Convert timeout to seconds for ActiveDeadlineSeconds
-	timeoutSeconds := int64(task.Spec.Runner.Timeout.Duration.Seconds())
+	timeoutSeconds := int64(task.Spec.Runner.Timeout.Seconds())
 
 	env := []corev1.EnvVar{
 		{Name: "SHEPHERD_TASK_ID", Value: task.Name},

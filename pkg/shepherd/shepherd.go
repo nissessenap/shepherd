@@ -49,7 +49,6 @@ func (s *Shepherd) Run(ctx context.Context) error {
 	g, ctx := errgroup.WithContext(ctx)
 
 	for _, m := range s.modules {
-		m := m // capture for goroutine
 		g.Go(func() error {
 			fmt.Printf("Starting module: %s\n", m.Name())
 			return m.Run(ctx)

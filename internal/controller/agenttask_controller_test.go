@@ -95,7 +95,7 @@ func TestAgentTaskReconciler_NotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reconcile failed: %v", err)
 	}
-	if result.Requeue {
+	if result.RequeueAfter > 0 {
 		t.Error("should not requeue for non-existent task")
 	}
 }
