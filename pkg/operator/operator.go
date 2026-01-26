@@ -77,6 +77,7 @@ func (o *Operator) Name() string {
 
 // Run starts the operator
 func (o *Operator) Run(ctx context.Context) error {
-	fmt.Printf("Operator starting with leader election: %v\n", o.cfg.LeaderElection)
+	logger := ctrl.Log.WithName("operator")
+	logger.Info("Starting operator", "leaderElection", o.cfg.LeaderElection)
 	return o.mgr.Start(ctx)
 }

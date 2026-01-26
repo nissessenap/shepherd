@@ -44,22 +44,25 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// Initialize conditions if empty
 	if len(task.Status.Conditions) == 0 {
 		meta.SetStatusCondition(&task.Status.Conditions, metav1.Condition{
-			Type:    "Accepted",
-			Status:  metav1.ConditionTrue,
-			Reason:  "ValidationPassed",
-			Message: "Task validated and accepted",
+			Type:               "Accepted",
+			Status:             metav1.ConditionTrue,
+			Reason:             "ValidationPassed",
+			Message:            "Task validated and accepted",
+			ObservedGeneration: task.Generation,
 		})
 		meta.SetStatusCondition(&task.Status.Conditions, metav1.Condition{
-			Type:    "Running",
-			Status:  metav1.ConditionFalse,
-			Reason:  "Pending",
-			Message: "Waiting for job to start",
+			Type:               "Running",
+			Status:             metav1.ConditionFalse,
+			Reason:             "Pending",
+			Message:            "Waiting for job to start",
+			ObservedGeneration: task.Generation,
 		})
 		meta.SetStatusCondition(&task.Status.Conditions, metav1.Condition{
-			Type:    "Succeeded",
-			Status:  metav1.ConditionFalse,
-			Reason:  "InProgress",
-			Message: "",
+			Type:               "Succeeded",
+			Status:             metav1.ConditionFalse,
+			Reason:             "InProgress",
+			Message:            "",
+			ObservedGeneration: task.Generation,
 		})
 		if err := r.Status().Update(ctx, task); err != nil {
 			return ctrl.Result{}, err
@@ -89,10 +92,11 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// Update status with job name
 	task.Status.JobName = job.Name
 	meta.SetStatusCondition(&task.Status.Conditions, metav1.Condition{
-		Type:    "Running",
-		Status:  metav1.ConditionTrue,
-		Reason:  "JobStarted",
-		Message: fmt.Sprintf("Job %s started", job.Name),
+		Type:               "Running",
+		Status:             metav1.ConditionTrue,
+		Reason:             "JobStarted",
+		Message:            fmt.Sprintf("Job %s started", job.Name),
+		ObservedGeneration: task.Generation,
 	})
 	if err := r.Status().Update(ctx, task); err != nil {
 		return ctrl.Result{}, err
@@ -106,16 +110,18 @@ func (r *AgentTaskReconciler) reconcileJob(ctx context.Context, task *shepherdv1
 	if err := r.Get(ctx, client.ObjectKey{Namespace: task.Namespace, Name: task.Status.JobName}, job); err != nil {
 		if errors.IsNotFound(err) {
 			meta.SetStatusCondition(&task.Status.Conditions, metav1.Condition{
-				Type:    "Succeeded",
-				Status:  metav1.ConditionFalse,
-				Reason:  "JobDeleted",
-				Message: "Job was deleted",
+				Type:               "Succeeded",
+				Status:             metav1.ConditionFalse,
+				Reason:             "JobDeleted",
+				Message:            "Job was deleted",
+				ObservedGeneration: task.Generation,
 			})
 			meta.SetStatusCondition(&task.Status.Conditions, metav1.Condition{
-				Type:    "Running",
-				Status:  metav1.ConditionFalse,
-				Reason:  "JobDeleted",
-				Message: "Job was deleted",
+				Type:               "Running",
+				Status:             metav1.ConditionFalse,
+				Reason:             "JobDeleted",
+				Message:            "Job was deleted",
+				ObservedGeneration: task.Generation,
 			})
 			return ctrl.Result{}, r.Status().Update(ctx, task)
 		}
@@ -124,32 +130,36 @@ func (r *AgentTaskReconciler) reconcileJob(ctx context.Context, task *shepherdv1
 
 	if job.Status.Succeeded > 0 {
 		meta.SetStatusCondition(&task.Status.Conditions, metav1.Condition{
-			Type:    "Succeeded",
-			Status:  metav1.ConditionTrue,
-			Reason:  "JobCompleted",
-			Message: "Job completed successfully",
+			Type:               "Succeeded",
+			Status:             metav1.ConditionTrue,
+			Reason:             "JobCompleted",
+			Message:            "Job completed successfully",
+			ObservedGeneration: task.Generation,
 		})
 		meta.SetStatusCondition(&task.Status.Conditions, metav1.Condition{
-			Type:    "Running",
-			Status:  metav1.ConditionFalse,
-			Reason:  "JobCompleted",
-			Message: "Job completed successfully",
+			Type:               "Running",
+			Status:             metav1.ConditionFalse,
+			Reason:             "JobCompleted",
+			Message:            "Job completed successfully",
+			ObservedGeneration: task.Generation,
 		})
 		return ctrl.Result{}, r.Status().Update(ctx, task)
 	}
 
 	if job.Status.Failed > 0 {
 		meta.SetStatusCondition(&task.Status.Conditions, metav1.Condition{
-			Type:    "Succeeded",
-			Status:  metav1.ConditionFalse,
-			Reason:  "JobFailed",
-			Message: "Job failed",
+			Type:               "Succeeded",
+			Status:             metav1.ConditionFalse,
+			Reason:             "JobFailed",
+			Message:            "Job failed",
+			ObservedGeneration: task.Generation,
 		})
 		meta.SetStatusCondition(&task.Status.Conditions, metav1.Condition{
-			Type:    "Running",
-			Status:  metav1.ConditionFalse,
-			Reason:  "JobFailed",
-			Message: "Job failed",
+			Type:               "Running",
+			Status:             metav1.ConditionFalse,
+			Reason:             "JobFailed",
+			Message:            "Job failed",
+			ObservedGeneration: task.Generation,
 		})
 		task.Status.Result.Error = "Job failed"
 		return ctrl.Result{}, r.Status().Update(ctx, task)
@@ -161,6 +171,23 @@ func (r *AgentTaskReconciler) reconcileJob(ctx context.Context, task *shepherdv1
 func (r *AgentTaskReconciler) buildJob(task *shepherdv1alpha1.AgentTask) *batchv1.Job {
 	jobName := fmt.Sprintf("%s-job", task.Name)
 
+	// Convert timeout to seconds for ActiveDeadlineSeconds
+	timeoutSeconds := int64(task.Spec.Runner.Timeout.Duration.Seconds())
+
+	env := []corev1.EnvVar{
+		{Name: "SHEPHERD_TASK_ID", Value: task.Name},
+		{Name: "SHEPHERD_REPO_URL", Value: task.Spec.Repo.URL},
+		{Name: "SHEPHERD_TASK_DESCRIPTION", Value: task.Spec.Task.Description},
+	}
+
+	// Add context if provided
+	if task.Spec.Task.Context != "" {
+		env = append(env, corev1.EnvVar{
+			Name:  "SHEPHERD_TASK_CONTEXT",
+			Value: task.Spec.Task.Context,
+		})
+	}
+
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      jobName,
@@ -170,6 +197,7 @@ func (r *AgentTaskReconciler) buildJob(task *shepherdv1alpha1.AgentTask) *batchv
 			},
 		},
 		Spec: batchv1.JobSpec{
+			ActiveDeadlineSeconds: &timeoutSeconds,
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyNever,
@@ -177,11 +205,7 @@ func (r *AgentTaskReconciler) buildJob(task *shepherdv1alpha1.AgentTask) *batchv
 						{
 							Name:  "runner",
 							Image: task.Spec.Runner.Image,
-							Env: []corev1.EnvVar{
-								{Name: "SHEPHERD_TASK_ID", Value: task.Name},
-								{Name: "SHEPHERD_REPO_URL", Value: task.Spec.Repo.URL},
-								{Name: "SHEPHERD_TASK_DESCRIPTION", Value: task.Spec.Task.Description},
-							},
+							Env:   env,
 						},
 					},
 				},
