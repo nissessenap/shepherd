@@ -8,18 +8,21 @@
 Shepherd is an open-source background coding agent orchestrator. It receives tasks from various triggers (GitHub, Slack, CLI), runs AI coding agents in isolated Kubernetes jobs, and reports results back.
 
 Inspired by:
+
 - [Spotify's Background Coding Agent](https://engineering.atspotify.com/2025/11/spotifys-background-coding-agent-part-1)
 - [Ramp's Background Agent](https://builders.ramp.com/post/why-we-built-our-background-agent)
 
 ## Goals
 
 ### MVP (Priority Order)
+
 1. **Issue-driven development** - Trigger agent from GitHub issue/PR to work on a single repo
 2. **Scheduled SRE tasks** - Daily/weekly automated analysis and fixes
 
 ### Future
+
 3. **Fleet migrations** - Running the same transformation across many repos
-4. **Interactive sessions** - Long-running dev environments with remote access
+2. **Interactive sessions** - Long-running dev environments with remote access
 
 ## Architecture
 
@@ -274,6 +277,7 @@ shepherd/
 - **Pre-approved runner images**: Users cannot specify arbitrary images
 - **Internal callbacks**: Job to API uses cluster-internal networking
 - **Signed callbacks**: API to adapter uses HMAC signature verification
+- **Prompt injection**: How to make sure an LLM can't overshare based on prompt or perform melisous tasks.
 
 ## Future Considerations
 

@@ -8,4 +8,14 @@ layout:
 - go.kubebuilder.io/v4
 projectName: shepherd
 repo: github.com/NissesSenap/shepherd
+resources:
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: shepherd.io
+  group: shepherd
+  kind: AgentTask
+  path: github.com/NissesSenap/shepherd/api/v1alpha1
+  version: v1alpha1
 version: "3"
