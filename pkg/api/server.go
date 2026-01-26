@@ -22,6 +22,16 @@ type Config struct {
 	ListenAddr string
 }
 
+// bodyLimitMiddleware limits the size of request bodies to prevent DoS attacks
+func bodyLimitMiddleware(maxBytes int64) func(next http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 // NewServer creates a new API server
 func NewServer(cfg Config) (*Server, error) {
 	handlers := NewHandlers()
@@ -30,6 +40,8 @@ func NewServer(cfg Config) (*Server, error) {
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(30 * time.Second))
+	r.Use(middleware.SetHeader("Content-Type", "application/json"))
+	r.Use(bodyLimitMiddleware(1 << 20)) // 1MB limit
 
 	r.Get("/healthz", handlers.HealthCheck)
 	r.Get("/readyz", handlers.ReadyCheck)

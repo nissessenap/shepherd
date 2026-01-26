@@ -84,6 +84,69 @@ func TestCreateTask_MissingCallbackURL(t *testing.T) {
 	}
 }
 
+func TestCreateTask_InvalidJSON(t *testing.T) {
+	handlers := NewHandlers()
+	invalidJSON := []byte("{invalid json}")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks", bytes.NewReader(invalidJSON))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handlers.CreateTask(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
+	}
+
+	var resp ErrorResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode error response: %v", err)
+	}
+	if resp.Error == "" {
+		t.Error("expected error message to be non-empty")
+	}
+}
+
+func TestCreateTask_InvalidRepoURL(t *testing.T) {
+	handlers := NewHandlers()
+	body := CreateTaskRequest{
+		RepoURL:     "http://github.com/org/repo.git", // http instead of https
+		Description: "Fix the bug",
+		CallbackURL: "https://callback.example.com/webhook",
+	}
+	bodyBytes, _ := json.Marshal(body)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handlers.CreateTask(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
+	}
+}
+
+func TestCreateTask_InvalidCallbackURL(t *testing.T) {
+	handlers := NewHandlers()
+	body := CreateTaskRequest{
+		RepoURL:     "https://github.com/org/repo.git",
+		Description: "Fix the bug",
+		CallbackURL: "not-a-valid-url",
+	}
+	bodyBytes, _ := json.Marshal(body)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handlers.CreateTask(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
+	}
+}
+
 func TestGetTaskStatus(t *testing.T) {
 	handlers := NewHandlers()
 	r := chi.NewRouter()
@@ -132,5 +195,54 @@ func TestReadyCheck(t *testing.T) {
 	}
 	if w.Body.String() != "ok" {
 		t.Errorf("expected body 'ok', got '%s'", w.Body.String())
+	}
+}
+
+func TestUpdateTaskStatus(t *testing.T) {
+	handlers := NewHandlers()
+	r := chi.NewRouter()
+	r.Post("/api/v1/tasks/{id}/status", handlers.UpdateTaskStatus)
+
+	body := StatusUpdateRequest{
+		Event:   "progress",
+		Message: "Task is running",
+		Details: map[string]string{"step": "1"},
+	}
+	bodyBytes, _ := json.Marshal(body)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks/test-123/status", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusAccepted {
+		t.Errorf("expected status %d, got %d", http.StatusAccepted, w.Code)
+	}
+}
+
+func TestUpdateTaskStatus_InvalidJSON(t *testing.T) {
+	handlers := NewHandlers()
+	r := chi.NewRouter()
+	r.Post("/api/v1/tasks/{id}/status", handlers.UpdateTaskStatus)
+
+	invalidJSON := []byte("{not valid json}")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks/test-123/status", bytes.NewReader(invalidJSON))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
+	}
+
+	var resp ErrorResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode error response: %v", err)
+	}
+	if resp.Error == "" {
+		t.Error("expected error message to be non-empty")
 	}
 }

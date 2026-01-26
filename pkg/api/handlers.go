@@ -4,6 +4,8 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -30,12 +32,20 @@ func (h *Handlers) CreateTask(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusBadRequest, "repo_url is required")
 		return
 	}
+	if !strings.HasPrefix(req.RepoURL, "https://") {
+		h.writeError(w, http.StatusBadRequest, "repo_url must start with https://")
+		return
+	}
 	if req.Description == "" {
 		h.writeError(w, http.StatusBadRequest, "description is required")
 		return
 	}
 	if req.CallbackURL == "" {
 		h.writeError(w, http.StatusBadRequest, "callback_url is required")
+		return
+	}
+	if _, err := url.ParseRequestURI(req.CallbackURL); err != nil {
+		h.writeError(w, http.StatusBadRequest, "callback_url must be a valid URL")
 		return
 	}
 
@@ -78,19 +88,19 @@ func (h *Handlers) UpdateTaskStatus(w http.ResponseWriter, r *http.Request) {
 // HealthCheck handles GET /healthz
 func (h *Handlers) HealthCheck(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("ok"))
+	_, _ = w.Write([]byte("ok"))
 }
 
 // ReadyCheck handles GET /readyz
 func (h *Handlers) ReadyCheck(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("ok"))
+	_, _ = w.Write([]byte("ok"))
 }
 
 func (h *Handlers) writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
+	_ = json.NewEncoder(w).Encode(v)
 }
 
 func (h *Handlers) writeError(w http.ResponseWriter, status int, message string) {
