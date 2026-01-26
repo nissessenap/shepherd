@@ -1,0 +1,203 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.0
+  name: agenttasks.shepherd.shepherd.io
+spec:
+  group: shepherd.shepherd.io
+  names:
+    kind: AgentTask
+    listKind: AgentTaskList
+    plural: agenttasks
+    singular: agenttask
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.conditions[?(@.type=="Ready")].reason
+      name: Status
+      type: string
+    - jsonPath: .status.jobName
+      name: Job
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: AgentTask is the Schema for the agenttasks API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: AgentTaskSpec defines the desired state of AgentTask
+            properties:
+              callback:
+                description: Callback specifies where to send status updates
+                properties:
+                  secretRef:
+                    description: SecretRef references a secret containing the callback
+                      authentication
+                    type: string
+                  url:
+                    description: URL is the callback endpoint
+                    pattern: ^https?://
+                    type: string
+                required:
+                - url
+                type: object
+              repo:
+                description: Repo specifies the repository to work on
+                properties:
+                  url:
+                    description: URL is the git repository URL
+                    pattern: ^https://
+                    type: string
+                required:
+                - url
+                type: object
+              runner:
+                description: Runner configures the runner job
+                properties:
+                  image:
+                    default: shepherd-runner:latest
+                    description: Image is the runner container image (must be pre-approved)
+                    type: string
+                  timeout:
+                    default: 30m
+                    description: Timeout is the maximum duration for the task
+                    type: string
+                type: object
+              task:
+                description: Task specifies what the agent should do
+                properties:
+                  context:
+                    description: Context provides additional context (issue body,
+                      comments, etc.)
+                    type: string
+                  description:
+                    description: Description is the task description for the AI agent
+                    minLength: 1
+                    type: string
+                required:
+                - description
+                type: object
+            required:
+            - callback
+            - repo
+            - task
+            type: object
+          status:
+            description: AgentTaskStatus defines the observed state of AgentTask
+            properties:
+              conditions:
+                description: Conditions represent the latest available observations
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              events:
+                description: Events contains status updates from the runner
+                items:
+                  description: TaskEvent represents a status event during task execution
+                  properties:
+                    message:
+                      description: Message describing the event
+                      type: string
+                    timestamp:
+                      description: Timestamp of the event
+                      format: date-time
+                      type: string
+                  required:
+                  - message
+                  - timestamp
+                  type: object
+                type: array
+              jobName:
+                description: JobName is the name of the K8s Job running this task
+                type: string
+              result:
+                description: Result contains the task outcome
+                properties:
+                  error:
+                    description: Error contains error details if the task failed
+                    type: string
+                  prUrl:
+                    description: PRUrl is the URL of the created pull request (if
+                      any)
+                    type: string
+                type: object
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
