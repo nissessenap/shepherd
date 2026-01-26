@@ -33,7 +33,8 @@ import (
 
 var (
 	// managerImage is the manager image to be built and loaded for testing.
-	managerImage = "example.com/shepherd:v0.0.1"
+	// When using ko-build-kind, this is set to ko.local/shepherd
+	managerImage = "ko.local/shepherd"
 	// shouldCleanupCertManager tracks whether CertManager was installed by this suite.
 	shouldCleanupCertManager = false
 )
@@ -49,16 +50,10 @@ func TestE2E(t *testing.T) {
 }
 
 var _ = BeforeSuite(func() {
-	By("building the manager image")
-	cmd := exec.Command("make", "docker-build", fmt.Sprintf("IMG=%s", managerImage))
+	By("building the manager image with ko and loading into kind")
+	cmd := exec.Command("make", "ko-build-kind")
 	_, err := utils.Run(cmd)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the manager image")
-
-	// TODO(user): If you want to change the e2e test vendor from Kind,
-	// ensure the image is built and available, then remove the following block.
-	By("loading the manager image on Kind")
-	err = utils.LoadImageToKindClusterWithName(managerImage)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the manager image into Kind")
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build and load the manager image with ko")
 
 	setupCertManager()
 })

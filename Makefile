@@ -251,14 +251,27 @@ endef
 
 ##@ Ko targets
 KO_DOCKER_REPO ?= ko.local
+KO ?= ko
 
 .PHONY: ko-build
 ko-build: ## Build container image with ko locally
-	ko build ./cmd/shepherd --local --bare
+	$(KO) build ./cmd/shepherd --local --bare
 
 .PHONY: ko-push
 ko-push: ## Build and push container image with ko
-	ko build ./cmd/shepherd --bare
+	$(KO) build ./cmd/shepherd --bare
+
+.PHONY: ko-build-kind
+ko-build-kind: ## Build container image with ko and load into kind
+	KO_DOCKER_REPO=ko.local $(KO) build ./cmd/shepherd --local --bare
+	kind load docker-image ko.local/shepherd --name $(KIND_CLUSTER)
+
+.PHONY: deploy-e2e
+deploy-e2e: manifests kustomize ## Deploy controller to kind cluster for e2e tests
+	"$(KUSTOMIZE)" build config/e2e-overlay | "$(KUBECTL)" apply -f -
+	@echo "Waiting for shepherd controller to be ready..."
+	"$(KUBECTL)" wait --for=condition=ready pod -l control-plane=controller-manager -n shepherd-system --timeout=120s
+	@echo "Controller is ready!"
 
 .PHONY: build-shepherd
 build-shepherd: ## Build shepherd binary

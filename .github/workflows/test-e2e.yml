@@ -4,6 +4,9 @@ on:
   push:
   pull_request:
 
+env:
+  KIND_CLUSTER: shepherd-test-e2e
+
 jobs:
   test-e2e:
     name: Run on Ubuntu
@@ -17,6 +20,11 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Install ko
+        uses: ko-build/setup-ko@v0.9
+        with:
+          version: v0.17.1
+
       - name: Install the latest version of kind
         run: |
           curl -Lo ./kind https://kind.sigs.k8s.io/dl/latest/kind-linux-$(go env GOARCH)
@@ -26,7 +34,31 @@ jobs:
       - name: Verify kind installation
         run: kind version
 
+      - name: Create kind cluster
+        run: |
+          kind create cluster --name $KIND_CLUSTER
+
+      - name: Build and load image into kind
+        run: |
+          make ko-build-kind
+
       - name: Running Test e2e
         run: |
           go mod tidy
-          make test-e2e
+          KIND_CLUSTER=$KIND_CLUSTER go test -tags=e2e ./test/e2e/ -v -ginkgo.v
+
+      - name: Debug failure
+        if: failure()
+        run: |
+          kubectl get all -n shepherd-system || true
+          kubectl get pods -n shepherd-system -o yaml || true
+          POD=$(kubectl get pods -n shepherd-system -l control-plane=controller-manager --output='jsonpath={.items[].metadata.name}' 2>/dev/null || true)
+          if [ -n "$POD" ]; then
+            echo "=== Pod logs ==="
+            kubectl logs -n shepherd-system $POD -c manager || true
+          fi
+
+      - name: Cleanup
+        if: always()
+        run: |
+          kind delete cluster --name $KIND_CLUSTER || true
