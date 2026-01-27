@@ -73,7 +73,7 @@ func Run(opts Options) error {
 	if err := (&controller.AgentTaskReconciler{
 		Client:             mgr.GetClient(),
 		Scheme:             mgr.GetScheme(),
-		Recorder:           mgr.GetEventRecorderFor("shepherd-operator"),
+		Recorder:           mgr.GetEventRecorder("shepherd-operator"),
 		AllowedRunnerImage: opts.AllowedRunnerImage,
 		RunnerSecretName:   opts.RunnerSecretName,
 	}).SetupWithManager(mgr); err != nil {

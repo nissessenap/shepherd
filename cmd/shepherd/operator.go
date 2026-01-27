@@ -24,11 +24,11 @@ type OperatorCmd struct {
 	MetricsAddr        string `help:"Metrics address" default:":9090" env:"SHEPHERD_METRICS_ADDR"`
 	HealthAddr         string `help:"Health probe address" default:":8081" env:"SHEPHERD_HEALTH_ADDR"`
 	LeaderElection     bool   `help:"Enable leader election" default:"false" env:"SHEPHERD_LEADER_ELECTION"`
-	AllowedRunnerImage string `help:"Allowed runner image (full registry path including tag)" required:"" env:"SHEPHERD_RUNNER_IMAGE"`
-	RunnerSecretName   string `help:"GitHub App private key secret name" default:"shepherd-runner-app-key" env:"SHEPHERD_RUNNER_SECRET"`
+	AllowedRunnerImage string `help:"Allowed runner image" required:"" env:"SHEPHERD_RUNNER_IMAGE"`
+	RunnerSecretName   string `help:"Runner app key secret" default:"shepherd-runner-app-key" env:"SHEPHERD_RUNNER_SECRET"`
 }
 
-func (c *OperatorCmd) Run(globals *CLI) error {
+func (c *OperatorCmd) Run(_ *CLI) error {
 	return operator.Run(operator.Options{
 		MetricsAddr:        c.MetricsAddr,
 		HealthAddr:         c.HealthAddr,
