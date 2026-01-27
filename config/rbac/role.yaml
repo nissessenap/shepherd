@@ -1,0 +1,32 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: manager-role
+rules:
+- apiGroups:
+  - toolkit.shepherd.io
+  resources:
+  - agenttasks
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - toolkit.shepherd.io
+  resources:
+  - agenttasks/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - toolkit.shepherd.io
+  resources:
+  - agenttasks/status
+  verbs:
+  - get
+  - patch
+  - update

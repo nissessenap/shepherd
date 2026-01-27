@@ -201,11 +201,11 @@ make manifests  # CRD YAML + RBAC
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `make generate` succeeds (deepcopy generated)
-- [ ] `make manifests` succeeds (CRD YAML generated in `config/crd/bases/`)
-- [ ] `go build ./...` compiles
-- [ ] `go vet ./...` passes
-- [ ] CRD YAML contains all spec/status fields, print columns, and validation rules
+- [x] `make generate` succeeds (deepcopy generated)
+- [x] `make manifests` succeeds (CRD YAML generated in `config/crd/bases/`)
+- [x] `go build ./...` compiles
+- [x] `go vet ./...` passes
+- [x] CRD YAML contains all spec/status fields, print columns, and validation rules
 
 #### Manual Verification:
 - [ ] Review generated CRD YAML matches design doc schema
