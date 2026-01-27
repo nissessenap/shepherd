@@ -56,8 +56,8 @@ Single binary with Kong subcommands (`shepherd api`, `shepherd operator`, `sheph
 
 | Target | Role | Scaling |
 | ------ | ---- | ------- |
-| `api` | REST API, CRD creation, job callbacks, adapter callbacks | Multiple replicas behind LB |
-| `operator` | Watches CRDs, manages Jobs, updates status | 1 active (leader election) |
+| `api` | REST API, CRD creation, runner callbacks, watches CRD status, notifies adapters | Multiple replicas behind LB |
+| `operator` | Watches CRDs, manages Jobs, updates CRD status. K8s-only, no external calls. | 1 active (leader election) |
 | `github` | GitHub App webhooks, posts comments | Multiple replicas |
 | `all` | All in one process | Dev/testing only |
 
@@ -111,9 +111,19 @@ Two separate GitHub Apps with distinct responsibilities:
 | Shepherd Trigger | Webhooks, read issues/PRs, write comments | Read issues, write comments | github-adapter |
 | Shepherd Runner | Clone repos, push branches, create PRs | Read/write code, create PRs | K8s jobs (via init container) |
 
+### Component Responsibilities
+
+| Component | Does | Does NOT |
+| --------- | ---- | -------- |
+| **Operator** | Watch CRDs, create/monitor Jobs, update CRD status | Make external HTTP calls |
+| **API** | Serve REST endpoints, create CRDs, receive runner callbacks, watch CRD status changes, notify adapters via callback URLs | Manage Jobs |
+| **Adapter** | Handle GitHub webhooks, post GitHub comments, query API for deduplication | Read CRDs, talk to K8s |
+
+The operator is purely K8s-internal. All external communication (adapter callbacks) flows through the API, which watches CRD status changes via an informer.
+
 ### Data Flow
 
-```
+```text
 1. Developer comments "@shepherd fix the null pointer"
          |
          v
@@ -144,19 +154,26 @@ Two separate GitHub Apps with distinct responsibilities:
 7. Job starts:
    - Init container generates token, writes to shared volume
    - Main container clones repo, Claude Code works on task
-   - Hooks POST status updates to API
+   - Hooks POST progress updates to API
          |
          v
-8. API updates CRD status, POSTs to adapter callback_url
+8. API receives runner callback, updates CRD status,
+   reads callback URL from CRD spec, POSTs to adapter
    Adapter posts comment: "Working on it..."
          |
          v
 9. Claude Code creates PR, job completes
          |
          v
-10. Operator sees job done, updates CRD Succeeded=True
-    API notifies adapter --> posts final comment with PR link
+10. Operator sees job done, updates CRD to Succeeded=True
+         |
+         v
+11. API's CRD status watcher detects terminal state,
+    reads callback URL from CRD spec, POSTs to adapter
+    Adapter posts final comment with PR link
 ```
+
+Step 11 ensures the adapter is notified even if the runner crashes without calling its completion hook. The API watches AgentTask status for terminal conditions (`Succeeded=True` or `Succeeded=False`) and fires the adapter callback.
 
 ## CRD Specification
 
@@ -378,11 +395,11 @@ containers:
 
 ## Callback Contract
 
-### Job to API
+### Runner to API (progress updates)
 
-Internal K8s networking, no auth required:
+The runner POSTs progress updates to the API via internal K8s networking. The API updates the CRD status and forwards to the adapter callback URL.
 
-```
+```json
 POST /api/v1/tasks/{task_id}/status
 Content-Type: application/json
 
@@ -396,11 +413,15 @@ Content-Type: application/json
 }
 ```
 
+### API CRD Status Watcher (terminal state)
+
+The API runs an informer on AgentTask resources. When the operator updates a CRD to a terminal condition (`Succeeded=True` or `Succeeded=False`), the API reads the callback URL from `spec.callback.url` and notifies the adapter. This handles the case where the runner crashes without calling its completion hook.
+
 ### API to Adapter
 
-External callback with HMAC-SHA256 signature verification:
+Both runner callbacks and CRD status watcher trigger adapter notifications. External callback with HMAC-SHA256 signature verification:
 
-```
+```json
 POST {callback_url}
 Content-Type: application/json
 X-Shepherd-Signature: sha256=...
@@ -413,6 +434,8 @@ X-Shepherd-Signature: sha256=...
   "context": { ... }
 }
 ```
+
+The API should deduplicate notifications to avoid sending duplicate "completed" or "failed" callbacks (e.g., if the runner reports completion AND the operator updates the CRD).
 
 ## Repository Structure
 
