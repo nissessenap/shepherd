@@ -388,7 +388,7 @@ func Run(opts Options) error {
     if err := (&controller.AgentTaskReconciler{
         Client:             mgr.GetClient(),
         Scheme:             mgr.GetScheme(),
-        Recorder:           mgr.GetEventRecorderFor("shepherd-operator"),
+        Recorder:           mgr.GetEventRecorder("shepherd-operator"), // new API (not deprecated GetEventRecorderFor)
         AllowedRunnerImage: opts.AllowedRunnerImage,
         RunnerSecretName:   opts.RunnerSecretName,
     }).SetupWithManager(mgr); err != nil {
@@ -420,7 +420,7 @@ Update the kubebuilder-generated reconciler to include the event recorder and co
 type AgentTaskReconciler struct {
     client.Client
     Scheme             *runtime.Scheme
-    Recorder           record.EventRecorder
+    Recorder           events.EventRecorder // k8s.io/client-go/tools/events (new API, via mgr.GetEventRecorder())
     AllowedRunnerImage string
     RunnerSecretName   string
 }
@@ -478,7 +478,7 @@ import (
     "k8s.io/apimachinery/pkg/api/meta"
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
     "k8s.io/apimachinery/pkg/runtime"
-    "k8s.io/client-go/tools/record"
+    "k8s.io/client-go/tools/events"
     ctrl "sigs.k8s.io/controller-runtime"
     "sigs.k8s.io/controller-runtime/pkg/client"
     "sigs.k8s.io/controller-runtime/pkg/log"
@@ -489,7 +489,7 @@ import (
 type AgentTaskReconciler struct {
     client.Client
     Scheme             *runtime.Scheme
-    Recorder           record.EventRecorder
+    Recorder           events.EventRecorder // new API via mgr.GetEventRecorder()
     AllowedRunnerImage string
     RunnerSecretName   string
 }
@@ -528,9 +528,11 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
         if err := r.Status().Update(ctx, &task); err != nil {
             return ctrl.Result{}, fmt.Errorf("updating initial status: %w", err)
         }
-        r.Recorder.Event(&task, "Normal", "Pending", "Task accepted, waiting for job creation")
+        r.Recorder.Eventf(&task, nil, "Normal", "Pending", "Reconcile", "Task accepted, waiting for job creation")
         log.Info("initialized task status", "task", req.NamespacedName)
-        return ctrl.Result{Requeue: true}, nil
+        // Note: ctrl.Result{Requeue: true} is deprecated in controller-runtime v0.23+.
+        // Use RequeueAfter with a minimal duration instead.
+        return ctrl.Result{RequeueAfter: time.Second}, nil
     }
 
     // TODO Phase 4: Create/monitor Job here
@@ -657,10 +659,10 @@ import (
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `make test` passes (all unit + envtest tests)
-- [ ] `go vet ./...` clean
-- [ ] Unit tests cover: isTerminal, hasCondition, setCondition helpers
-- [ ] envtest: creating AgentTask results in Pending condition being set
+- [x] `make test` passes (all unit + envtest tests)
+- [x] `go vet ./...` clean
+- [x] Unit tests cover: isTerminal, hasCondition, setCondition helpers
+- [x] envtest: creating AgentTask results in Pending condition being set
 
 #### Manual Verification:
 - [ ] Review reconciler logic matches the condition state machine from design doc
@@ -883,7 +885,7 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
         if statusErr := r.Status().Update(ctx, &task); statusErr != nil {
             return ctrl.Result{}, fmt.Errorf("updating status after job creation: %w", statusErr)
         }
-        r.Recorder.Event(&task, "Normal", "JobCreated", "Created job "+newJob.Name)
+        r.Recorder.Eventf(&task, nil, "Normal", "JobCreated", "Reconcile", "Created job %s", newJob.Name)
         log.Info("created job", "job", newJob.Name)
         return ctrl.Result{}, nil
     }
@@ -927,7 +929,7 @@ func (r *AgentTaskReconciler) markSucceeded(ctx context.Context, task *toolkitv1
     if err := r.Status().Update(ctx, task); err != nil {
         return ctrl.Result{}, fmt.Errorf("marking succeeded: %w", err)
     }
-    r.Recorder.Event(task, "Normal", "Succeeded", message)
+    r.Recorder.Eventf(task, nil, "Normal", "Succeeded", "Reconcile", message)
     return ctrl.Result{}, nil
 }
 
@@ -945,7 +947,7 @@ func (r *AgentTaskReconciler) markFailed(ctx context.Context, task *toolkitv1alp
     if err := r.Status().Update(ctx, task); err != nil {
         return ctrl.Result{}, fmt.Errorf("marking failed: %w", err)
     }
-    r.Recorder.Event(task, "Warning", reason, message)
+    r.Recorder.Eventf(task, nil, "Warning", reason, "Reconcile", message)
     return ctrl.Result{}, nil
 }
 ```
@@ -1129,12 +1131,14 @@ func (r *AgentTaskReconciler) retryJob(ctx context.Context, task *toolkitv1alpha
         return ctrl.Result{}, fmt.Errorf("updating retry count: %w", err)
     }
 
-    r.Recorder.Event(task, "Warning", "RetryingJob",
-        fmt.Sprintf("Retrying after infrastructure failure (attempt %d/%d): %s", retries+1, maxInfraRetries, reason))
+    r.Recorder.Eventf(task, nil, "Warning", "RetryingJob", "Reconcile",
+        "Retrying after infrastructure failure (attempt %d/%d): %s", retries+1, maxInfraRetries, reason)
     log.Info("retrying job after infrastructure failure", "attempt", retries+1, "reason", reason)
 
     // Requeue — next reconcile will create a new Job
-    return ctrl.Result{Requeue: true}, nil
+    // Note: ctrl.Result{Requeue: true} is deprecated in controller-runtime v0.23+.
+    // Use RequeueAfter with a minimal duration instead.
+    return ctrl.Result{RequeueAfter: time.Second}, nil
 }
 
 // Retry count stored in annotation to survive reconciler restarts.
