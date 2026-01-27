@@ -22,6 +22,7 @@ import (
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -83,9 +84,106 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{RequeueAfter: time.Second}, nil
 	}
 
-	// TODO Phase 4: Create/monitor Job here
-	log.Info("reconcile complete (job creation not yet implemented)", "task", req.NamespacedName)
+	// Look for existing Job (name includes generation to avoid collision on delete/recreate)
+	var job batchv1.Job
+	jobName := fmt.Sprintf("%s-%d-job", task.Name, task.Generation)
+	jobKey := client.ObjectKey{Namespace: task.Namespace, Name: jobName}
 
+	err := r.Get(ctx, jobKey, &job)
+	if client.IgnoreNotFound(err) != nil {
+		return ctrl.Result{}, fmt.Errorf("getting job: %w", err)
+	}
+
+	if err != nil {
+		// Job doesn't exist — create it
+		newJob, buildErr := buildJob(&task, jobConfig{
+			AllowedRunnerImage: r.AllowedRunnerImage,
+			RunnerSecretName:   r.RunnerSecretName,
+			Scheme:             r.Scheme,
+		})
+		if buildErr != nil {
+			return ctrl.Result{}, fmt.Errorf("building job: %w", buildErr)
+		}
+		if createErr := r.Create(ctx, newJob); createErr != nil {
+			return ctrl.Result{}, fmt.Errorf("creating job: %w", createErr)
+		}
+
+		task.Status.JobName = newJob.Name
+		setCondition(&task, metav1.Condition{
+			Type:               toolkitv1alpha1.ConditionSucceeded,
+			Status:             metav1.ConditionUnknown,
+			Reason:             toolkitv1alpha1.ReasonRunning,
+			Message:            "Job created",
+			ObservedGeneration: task.Generation,
+		})
+		now := metav1.Now()
+		task.Status.StartTime = &now
+
+		if statusErr := r.Status().Update(ctx, &task); statusErr != nil {
+			return ctrl.Result{}, fmt.Errorf("updating status after job creation: %w", statusErr)
+		}
+		r.Recorder.Eventf(&task, nil, "Normal", "JobCreated", "Reconcile", "Created job %s", newJob.Name)
+		log.Info("created job", "job", newJob.Name)
+		return ctrl.Result{}, nil
+	}
+
+	// Job exists — check its status
+	return r.reconcileJobStatus(ctx, &task, &job)
+}
+
+func (r *AgentTaskReconciler) reconcileJobStatus(ctx context.Context, task *toolkitv1alpha1.AgentTask, job *batchv1.Job) (ctrl.Result, error) {
+	log := logf.FromContext(ctx)
+
+	for _, c := range job.Status.Conditions {
+		switch c.Type {
+		case batchv1.JobComplete:
+			if c.Status == corev1.ConditionTrue {
+				return r.markSucceeded(ctx, task, "Job completed successfully")
+			}
+		case batchv1.JobFailed:
+			if c.Status == corev1.ConditionTrue {
+				// Phase 5 will add infrastructure vs application failure distinction
+				return r.markFailed(ctx, task, toolkitv1alpha1.ReasonFailed, c.Message)
+			}
+		}
+	}
+
+	log.V(1).Info("job still running", "job", job.Name)
+	return ctrl.Result{}, nil
+}
+
+func (r *AgentTaskReconciler) markSucceeded(ctx context.Context, task *toolkitv1alpha1.AgentTask, message string) (ctrl.Result, error) {
+	now := metav1.Now()
+	task.Status.CompletionTime = &now
+	setCondition(task, metav1.Condition{
+		Type:               toolkitv1alpha1.ConditionSucceeded,
+		Status:             metav1.ConditionTrue,
+		Reason:             toolkitv1alpha1.ReasonSucceeded,
+		Message:            message,
+		ObservedGeneration: task.Generation,
+	})
+	if err := r.Status().Update(ctx, task); err != nil {
+		return ctrl.Result{}, fmt.Errorf("marking succeeded: %w", err)
+	}
+	r.Recorder.Eventf(task, nil, "Normal", "Succeeded", "Reconcile", message)
+	return ctrl.Result{}, nil
+}
+
+func (r *AgentTaskReconciler) markFailed(ctx context.Context, task *toolkitv1alpha1.AgentTask, reason, message string) (ctrl.Result, error) {
+	now := metav1.Now()
+	task.Status.CompletionTime = &now
+	task.Status.Result.Error = message
+	setCondition(task, metav1.Condition{
+		Type:               toolkitv1alpha1.ConditionSucceeded,
+		Status:             metav1.ConditionFalse,
+		Reason:             reason,
+		Message:            message,
+		ObservedGeneration: task.Generation,
+	})
+	if err := r.Status().Update(ctx, task); err != nil {
+		return ctrl.Result{}, fmt.Errorf("marking failed: %w", err)
+	}
+	r.Recorder.Eventf(task, nil, "Warning", reason, "Reconcile", message)
 	return ctrl.Result{}, nil
 }
 
