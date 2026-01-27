@@ -315,6 +315,17 @@ The primary condition is `Succeeded` (run-to-completion pattern, like Tekton Tas
 
 Progress events use the K8s Events API (`r.Recorder.Event(...)`) rather than embedded status fields.
 
+### Job Failure and Pod Termination
+
+The operator watches Jobs via `Owns(&batchv1.Job{})`. This covers cases where the runner cannot report its own status:
+
+- **Node loss / eviction**: The node is deleted or the pod is evicted. The pod object may be gone entirely. The operator detects the Job failure and looks up the pod: if the pod no longer exists (or was evicted), this is an infrastructure failure. The operator creates a new Job. The CRD stays at `Succeeded=Unknown` with reason `Running`.
+- **Application failure**: The pod exists with a non-zero exit code. The operator updates the CRD to `Succeeded=False`. The API's CRD status watcher notifies the adapter. Users can retrigger via a new `@shepherd` comment.
+- **OOM kill**: Pod exists with OOMKilled reason. Treated as application failure (`Succeeded=False`).
+- **Timeout**: The Job's `activeDeadlineSeconds` (derived from `spec.runner.timeout`) causes K8s to terminate the Job. Operator sets `Succeeded=False` with reason `TimedOut`.
+
+The Job is always created with `backoffLimit: 0` (K8s does not retry on its own). Retry logic lives in the operator, which distinguishes infrastructure failures (pod missing / evicted) from application failures (pod exists with exit code) and only retries the former.
+
 ### Spec Immutability
 
 Enforced via CEL validation rules (`self == oldSelf`) on `repo` and `task` fields. No validating webhook needed.
