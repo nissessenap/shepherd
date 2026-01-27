@@ -201,11 +201,11 @@ make manifests  # CRD YAML + RBAC
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `make generate` succeeds (deepcopy generated)
-- [ ] `make manifests` succeeds (CRD YAML generated in `config/crd/bases/`)
-- [ ] `go build ./...` compiles
-- [ ] `go vet ./...` passes
-- [ ] CRD YAML contains all spec/status fields, print columns, and validation rules
+- [x] `make generate` succeeds (deepcopy generated)
+- [x] `make manifests` succeeds (CRD YAML generated in `config/crd/bases/`)
+- [x] `go build ./...` compiles
+- [x] `go vet ./...` passes
+- [x] CRD YAML contains all spec/status fields, print columns, and validation rules
 
 #### Manual Verification:
 - [ ] Review generated CRD YAML matches design doc schema
@@ -442,11 +442,11 @@ Update the `Makefile` to point to the new entrypoint. Change the build target fr
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `go build ./cmd/shepherd/` compiles
-- [ ] `./shepherd --help` shows api, operator, github subcommands
-- [ ] `./shepherd api` returns "not implemented yet" error
-- [ ] `./shepherd github` returns "not implemented yet" error
-- [ ] `make test` still passes (envtest suite)
+- [x] `go build ./cmd/shepherd/` compiles
+- [x] `./shepherd --help` shows api, operator, github subcommands
+- [x] `./shepherd api` returns "not implemented yet" error
+- [x] `./shepherd github` returns "not implemented yet" error
+- [x] `make test` still passes (envtest suite)
 
 #### Manual Verification:
 - [ ] `./shepherd operator` starts and attempts to connect to a K8s cluster (will fail without kubeconfig, that's fine — verify it prints the right startup log)

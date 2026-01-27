@@ -1,0 +1,19 @@
+apiVersion: toolkit.shepherd.io/v1alpha1
+kind: AgentTask
+metadata:
+  labels:
+    app.kubernetes.io/name: shepherd
+    app.kubernetes.io/managed-by: kustomize
+  name: agenttask-sample
+spec:
+  repo:
+    url: https://github.com/example/example-repo.git
+    ref: main
+  task:
+    description: "Update the README with installation instructions"
+    context: "The project needs clear installation steps for new users"
+  callback:
+    url: https://example.com/webhook/agenttask
+  runner:
+    image: shepherd-runner:latest
+    timeout: 30m
