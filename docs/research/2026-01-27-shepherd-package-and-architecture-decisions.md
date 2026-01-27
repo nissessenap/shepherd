@@ -9,6 +9,7 @@ tags: [research, architecture, packages, crd-design, kubebuilder, go]
 status: complete
 last_updated: 2026-01-27
 last_updated_by: Claude
+last_updated_note: "Updated with follow-up decisions: Kong CLI, task deduplication, gzip context, namespace strategy, envconfig"
 ---
 
 # Research: Package Choices, Binary Architecture, CRD Design, and Pre-Implementation Decisions
@@ -32,7 +33,7 @@ last_updated_by: Claude
 
 ## Summary
 
-This research covers the key technical decisions needed before implementing Shepherd. The findings support most of the current design with some important refinements, particularly around CRD design (replacing `status.events[]` with proper conditions), CLI framework choice (Cobra over Kong), and additional fields the CRD needs.
+This research covers the key technical decisions needed before implementing Shepherd. The findings support most of the current design with refinements around CRD design (replacing `status.events[]` with proper conditions, adding gzip for large contexts), CLI framework (Kong for subcommands), testing strategy (testify for unit tests, Gomega for integration), and additional fields the CRD needs.
 
 ---
 
@@ -87,32 +88,57 @@ shepherd/
 
 ---
 
-## 2. CLI Framework: Kong vs Cobra
+## 2. CLI Framework: Kong
 
-### Cobra (Kubebuilder Default)
+### Why Kong
 
-- Used by Kubernetes, Hugo, GitHub CLI
-- Kubebuilder scaffolds with Cobra; generated `cmd/main.go` uses it
-- Over 35,000 GitHub stars, dominant in K8s ecosystem
-
-### Kong
-
-- Struct-based, declarative approach
-- Smaller, easier to understand
+- Struct-based, declarative approach - clean subcommand model
+- Smaller and easier to understand than Cobra
 - Developer sentiment favors it for new projects
-- Not used in K8s ecosystem
 
-### Verdict: Use Cobra
+### Kubebuilder Context
 
-**Rationale:**
-1. Kubebuilder already sets it up - mixing would add confusion
-2. Controller-runtime's zap flags use `flag.CommandLine` - Cobra integrates with this; Kong would require adaptation
-3. Consistent with K8s ecosystem conventions
-4. The `-target` flag pattern works naturally with Cobra subcommands or flags
+Kubebuilder's generated `cmd/main.go` uses the standard `flag` package (not Cobra). Since we replace `cmd/main.go` with our own entrypoint anyway, there is no existing Cobra to conflict with.
 
-However, the existing implementation plan uses `flag.FlagSet` directly (not Cobra), which is even simpler and perfectly fine for the current needs. You don't actually need Cobra *or* Kong unless you want subcommands. The `flag` package is sufficient for flag-based configuration.
+Controller-runtime's zap package registers flags via `opts.BindFlags(flag.CommandLine)`. With Kong, configure zap programmatically instead:
 
-**Recommendation: Start with `flag` (as the current plan does). If you later need subcommands, add Cobra. Skip Kong entirely.**
+```go
+logger := zap.New(
+    zap.UseDevMode(cfg.DevMode),
+    zap.Level(zapcore.Level(cfg.LogLevel)),
+)
+```
+
+### Kong Subcommand Pattern
+
+```go
+type CLI struct {
+    API      APICmd      `cmd:"" help:"Run API server"`
+    Operator OperatorCmd `cmd:"" help:"Run K8s operator"`
+    GitHub   GitHubCmd   `cmd:"" help:"Run GitHub adapter"`
+    All      AllCmd      `cmd:"" help:"Run all components"`
+
+    // Shared flags
+    LogLevel int  `help:"Log level (0=info, 1=debug)" default:"0"`
+    DevMode  bool `help:"Enable development mode logging" default:"false"`
+}
+
+type APICmd struct {
+    ListenAddr string `help:"API listen address" default:":8080" env:"SHEPHERD_API_ADDR"`
+}
+
+type OperatorCmd struct {
+    MetricsAddr    string `help:"Metrics address" default:":9090"`
+    HealthAddr     string `help:"Health probe address" default:":8081"`
+    LeaderElection bool   `help:"Enable leader election" default:"false"`
+}
+```
+
+This gives proper `--help` per subcommand and clean separation of flags per target.
+
+### Decision: Use Kong
+
+Kong's struct-based approach is well-suited to the multi-target pattern. Each subcommand gets its own flag set naturally. The `env` struct tag also provides envconfig-style environment variable support built in, potentially reducing the need for a separate envconfig dependency.
 
 ---
 
@@ -191,24 +217,34 @@ Use zap everywhere. Set logger once in `main.go`, create named child loggers per
 - Kubebuilder scaffolds tests with Ginkgo/Gomega by default
 - testify is used by some K8s ecosystem projects (Oracle MySQL Operator, others)
 
-### Recommendation: testify for unit tests, consider Gomega's Eventually for async
+### Decision: testify for unit tests, Gomega for integration tests
 
-**Use testify for:**
+**testify for:**
+
 - Unit tests with mocked/faked clients
 - API handler tests
 - Webhook handler tests
 - Helper function tests
 
-**Be aware:**
-- Kubebuilder's scaffolded `suite_test.go` uses Ginkgo - you can replace it or keep it for envtest integration tests
-- For async K8s operations (reconciler integration tests), Gomega's `Eventually()` is genuinely useful; testify doesn't have a built-in equivalent
-- You can use `testify/assert` + a simple polling helper for async tests, or mix testify with Gomega selectively
+**Gomega for:**
 
-**Import:**
+- envtest integration tests (reconciler tests against local API server)
+- Async assertions via `Eventually()` for K8s operations
+
+Kubebuilder's scaffolded `suite_test.go` uses Ginkgo/Gomega. Keep Gomega for envtest integration tests where `Eventually()` is genuinely needed. Use testify everywhere else.
+
+**Imports:**
+
 ```go
+// Unit tests
 import (
     "github.com/stretchr/testify/assert"
     "github.com/stretchr/testify/require"
+)
+
+// Integration tests (envtest)
+import (
+    . "github.com/onsi/gomega"
 )
 ```
 
@@ -321,16 +357,40 @@ Add useful kubectl output:
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 ```
 
-### etcd Size Limits
+### etcd Size Limits and Context Handling
 
 - Per-object limit: 1.5 MiB
 - Practical recommendation: Keep under 100 KB
 - `spec.task.context` could exceed this for large issues
 
-**Mitigation options:**
-1. Store only a summary + URL in the CRD: `contextUrl: "https://github.com/org/repo/issues/123"`
-2. Reference a ConfigMap: `contextRef: {configMapKeyRef: {name: ..., key: ...}}`
-3. Truncate with link to full context
+**Decision: Gzip compression for context field**
+
+Inspired by the [Grafana Operator's gzip dashboard pattern](https://grafana.github.io/grafana-operator/docs/examples/dashboard/#gzipjson), the API will gzip-compress the context before creating the CRD. This is transparent to consumers.
+
+- The API receives plaintext context, compresses it, and stores it as a gzip+base64 field
+- The controller decompresses when creating the Job's environment
+- A 1.5 MiB etcd limit with gzip comfortably holds ~5-10 MiB of uncompressed text
+- No external storage needed for MVP
+
+```go
+type TaskSpec struct {
+    Description string `json:"description"`
+    // Context is gzip+base64 encoded. The API handles compression transparently.
+    Context        string `json:"context,omitempty"`
+    ContextEncoding string `json:"contextEncoding,omitempty"` // "gzip" or empty for plaintext
+}
+```
+
+A `contextUrl` field (e.g., linking to the GitHub issue) should also be included as a lightweight alternative:
+
+```go
+type TaskSpec struct {
+    Description     string `json:"description"`
+    Context         string `json:"context,omitempty"`
+    ContextEncoding string `json:"contextEncoding,omitempty"`
+    ContextURL      string `json:"contextUrl,omitempty"` // link to full context
+}
+```
 
 ---
 
@@ -351,14 +411,13 @@ Implement manually using `crypto/hmac` + `crypto/sha256` + `crypto/subtle.Consta
 
 ### Configuration
 
-| Option | Best For | Notes |
-|--------|----------|-------|
-| `flag` (stdlib) | Simple flag-based config | Already in the plan, sufficient for MVP |
-| `envconfig` | K8s env-var config | Good for 12-factor; `github.com/kelseyhightower/envconfig` |
-| `koanf` | Complex multi-source config | Better than viper (313% smaller binary, no key lowercasing) |
-| `viper` | Cobra companion | Popular but bloated, force-lowercases keys |
+**Decision: Kong + envconfig**
 
-**Recommendation:** Start with `flag` for MVP. Add `envconfig` if you need env var overrides (common in K8s). Avoid viper.
+Kong provides both CLI flags and environment variable support via struct tags (`env:"SHEPHERD_API_ADDR"`). This may be sufficient on its own, reducing the need for a separate envconfig dependency.
+
+If Kong's built-in env support proves insufficient (e.g., need for `_FILE` suffix convention for mounted secrets), add `github.com/kelseyhightower/envconfig` as a complement.
+
+Avoid viper (bloated, force-lowercases keys, Cobra companion).
 
 ### Prometheus Metrics
 
@@ -404,10 +463,21 @@ The design mentions "pre-approved runner images" but doesn't specify enforcement
 
 ### 8.3 Task Deduplication
 
-What happens if someone comments `@shepherd fix this` twice on the same issue? Consider:
-- Generating deterministic task names from repo + issue number
-- Checking for existing active tasks before creating new ones
-- Or just allowing duplicates and letting users manage
+**Decision: One active task per issue, with retrigger on failure.**
+
+When someone comments `@shepherd` on an issue:
+
+1. The adapter checks via the API whether an active AgentTask exists for that repo+issue
+2. If active (`Succeeded` condition is `Unknown`): post comment "Already running a job on this issue, will provide feedback soon"
+3. If the latest task completed (`Succeeded=True`): allow a new task (user explicitly asked again)
+4. If the latest task failed (`Succeeded=False`) and the API has posted failure feedback: allow a new task
+
+**Implementation:**
+
+- Labels on AgentTask: `shepherd.io/repo: org-repo`, `shepherd.io/issue: "123"`
+- The adapter queries the API: `GET /api/v1/tasks?repo=org/repo&issue=123&active=true`
+- The adapter does NOT read CRDs directly (stays provider-agnostic)
+- Task names include attempt number or are UUID-based (not deterministic by issue, since retriggers are allowed)
 
 ### 8.4 Graceful Shutdown of Long-Running Jobs
 
@@ -446,10 +516,12 @@ The current controller has some gaps:
 
 ### 8.9 Namespace Strategy
 
-The design implies a single `shepherd` namespace. Consider:
-- Should AgentTasks be namespace-scoped (current) or cluster-scoped?
-- Namespace-scoped is simpler and supports multi-tenancy later
-- The operator needs RBAC to create Jobs in the task's namespace
+**Decision: Namespace-scoped CRD, default to `shepherd` namespace, cluster-wide RBAC.**
+
+- AgentTasks are namespace-scoped (correct default for future multi-tenancy)
+- Default deployment uses `shepherd` namespace
+- Operator has ClusterRole/ClusterRoleBinding (kubebuilder default) to watch all namespaces
+- Moving to multi-namespace later is not a significant refactor - just remove any namespace filter in cache config
 
 ### 8.10 Helm vs Kustomize
 
@@ -469,6 +541,9 @@ require (
     k8s.io/apimachinery             // transitive
     k8s.io/client-go                // transitive
 
+    // CLI
+    github.com/alecthomas/kong
+
     // HTTP
     github.com/go-chi/chi/v5
 
@@ -484,6 +559,7 @@ require (
 
     // Testing
     github.com/stretchr/testify
+    github.com/onsi/gomega              // for envtest integration tests
 )
 ```
 
@@ -494,9 +570,23 @@ require (
 - `docs/plans/2026-01-25-shepherd-design.md` - Original architecture design
 - `docs/plans/2026-01-26-shepherd-implementation.md` - Existing implementation plan
 
+## Decisions Made
+
+| Decision | Choice | Rationale |
+| -------- | ------ | --------- |
+| CLI framework | Kong | Struct-based, clean subcommands, env tag support |
+| API framework | chi | Lightweight, idiomatic, good K8s ecosystem fit |
+| Logging | zap (via controller-runtime) | Still the default, configure programmatically with Kong |
+| Unit testing | testify | Developer preference, works with kubebuilder |
+| Integration testing | Gomega | `Eventually()` for async K8s operations |
+| Configuration | Kong env tags + envconfig if needed | Kong's `env` struct tags may suffice |
+| Context size | Gzip compression | Grafana operator pattern, ~5-10x compression |
+| Task deduplication | One active per issue, retrigger on failure | Adapter queries API before creating |
+| Namespace | Namespace-scoped, default `shepherd` | Cluster-wide RBAC, expandable later |
+| Spec immutability | CEL validation | `self == oldSelf`, no webhook needed |
+
 ## Open Questions
 
 1. **go-github version** - Plan uses v68, current is v81. Pin to latest at implementation time.
-2. **CRD group naming** - Plan uses `shepherd.io` as the group, but kubebuilder generates `shepherd.shepherd.io`. Consider using just `shepherd.io` as the domain and a different group name, or accept the stuttering.
-3. **Ginkgo vs testify for envtest** - The plan's unit tests use raw `testing.T`, which is fine. But envtest integration tests benefit from Gomega's `Eventually()`. Decide whether to add Gomega as a test dependency or write a polling helper.
-4. **Runner image distribution** - ko builds the shepherd binary. The runner image (with Claude Code) needs a separate Dockerfile. This is out of scope for MVP but needs planning.
+2. **CRD group naming** - Plan uses `shepherd.io` as the domain, but kubebuilder generates `shepherd.shepherd.io` (group.domain). Consider using `shepherd.io` as domain with a different API group (e.g., `core`), or accept the stutter.
+3. **Runner image distribution** - ko builds the shepherd binary. The runner image (with Claude Code) needs a separate Dockerfile. This is out of scope for MVP but needs planning.
