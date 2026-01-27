@@ -1159,6 +1159,245 @@ Then `make manifests` to regenerate RBAC.
 
 ---
 
+## Phase 6: Ko Build + E2E Test Infrastructure
+
+### Overview
+
+Set up ko builds, kind image loading, kustomize overlay for e2e, and chainsaw-based e2e tests. Following the pattern from [application-credentials](~/go/src/github.com/NissesSenap/application-credentials).
+
+### Changes Required
+
+#### 1. Makefile Targets
+
+Add to the kubebuilder-generated `Makefile`:
+
+```makefile
+## Ko
+KO_VERSION ?= v0.17.1
+KO ?= $(LOCALBIN)/ko-$(KO_VERSION)
+KO_DOCKER_REPO ?= ko.local/nissessenap/shepherd
+
+.PHONY: ko
+ko: $(KO)
+$(KO): $(LOCALBIN)
+	$(call go-install-tool,$(KO),github.com/google/ko,$(KO_VERSION))
+
+.PHONY: ko-build-local
+ko-build-local: ko
+	$(KO) build --sbom=none --bare cmd/shepherd/main.go
+
+.PHONY: ko-build-kind
+ko-build-kind: ko
+	export KO_DOCKER_REPO=$(KO_DOCKER_REPO) ;\
+	$(KO) build --sbom=none --bare cmd/shepherd/main.go ;\
+	kind load docker-image $$KO_DOCKER_REPO
+
+## Chainsaw (e2e testing)
+CHAINSAW_VERSION ?= v0.2.11
+CHAINSAW ?= $(LOCALBIN)/chainsaw-$(CHAINSAW_VERSION)
+
+.PHONY: chainsaw
+chainsaw: $(CHAINSAW)
+$(CHAINSAW): $(LOCALBIN)
+	$(call go-install-tool,$(CHAINSAW),github.com/kyverno/chainsaw,$(CHAINSAW_VERSION))
+
+.PHONY: e2e
+e2e: chainsaw ko-build-kind deploy-e2e
+	$(CHAINSAW) test --test-dir ./test/e2e
+
+.PHONY: deploy-e2e
+deploy-e2e: manifests kustomize
+	$(KUSTOMIZE) build config/e2e-overlay | kubectl apply -f -
+	@echo "Waiting for shepherd operator to be ready..."
+	kubectl wait --for=condition=ready pod -l control-plane=controller-manager -n shepherd-system --timeout=120s
+```
+
+#### 2. Kustomize E2E Overlay
+
+**File**: `config/e2e-overlay/kustomization.yaml` (new file)
+
+```yaml
+resources:
+  - ../default
+
+patches:
+  - path: deployment-patch.yaml
+    target:
+      group: apps
+      kind: Deployment
+      version: v1
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+images:
+  - name: controller:latest
+    newName: ko.local/nissessenap/shepherd
+    newTag: latest
+```
+
+**File**: `config/e2e-overlay/deployment-patch.yaml` (new file)
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: controller-manager
+spec:
+  template:
+    spec:
+      containers:
+        - name: manager
+          imagePullPolicy: Never
+          resources:
+            limits:
+              cpu: 400m
+              memory: 512Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+```
+
+Key: `imagePullPolicy: Never` tells kind to use the pre-loaded ko image instead of pulling from a registry.
+
+#### 3. Chainsaw Test Configuration
+
+**File**: `test/e2e/.chainsaw.yaml` (new file)
+
+```yaml
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Configuration
+metadata:
+  name: configuration
+spec:
+  timeouts:
+    assert: 2m0s
+    cleanup: 3m0s
+    delete: 2m0s
+    error: 2m0s
+    exec: 2m0s
+```
+
+#### 4. E2E Test: Basic AgentTask Lifecycle
+
+**File**: `test/e2e/basic/chainsaw-test.yaml` (new file)
+
+```yaml
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: basic-agenttask
+spec:
+  steps:
+  - name: create-agenttask
+    try:
+      - apply:
+          file: resources.yaml
+      - assert:
+          timeout: 30s
+          file: assert-pending.yaml
+  - name: verify-job-created
+    try:
+      - assert:
+          timeout: 60s
+          file: assert-job-exists.yaml
+```
+
+**File**: `test/e2e/basic/resources.yaml` (new file)
+
+```yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: shepherd-test
+---
+apiVersion: toolkit.shepherd.io/v1alpha1
+kind: AgentTask
+metadata:
+  name: test-task
+  namespace: shepherd-test
+  labels:
+    shepherd.io/repo: test-org-test-repo
+    shepherd.io/issue: "1"
+spec:
+  repo:
+    url: "https://github.com/test-org/test-repo.git"
+    ref: "main"
+  task:
+    description: "Test task for e2e"
+  callback:
+    url: "http://localhost:9999/callback"
+  runner:
+    image: "busybox:latest"
+    timeout: 5m
+```
+
+**File**: `test/e2e/basic/assert-pending.yaml` (new file)
+
+```yaml
+apiVersion: toolkit.shepherd.io/v1alpha1
+kind: AgentTask
+metadata:
+  name: test-task
+  namespace: shepherd-test
+status:
+  conditions:
+    - type: Succeeded
+      status: "Unknown"
+```
+
+**File**: `test/e2e/basic/assert-job-exists.yaml` (new file)
+
+```yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: test-task-job
+  namespace: shepherd-test
+  labels:
+    shepherd.io/task: test-task
+```
+
+### Success Criteria
+
+#### Automated Verification:
+
+- [ ] `make ko-build-local` builds the binary successfully
+- [ ] `make ko-build-kind` builds and loads image into kind cluster
+- [ ] `make deploy-e2e` deploys the operator into kind using the overlay
+- [ ] `make e2e` runs chainsaw tests and they pass
+- [ ] Operator pod is running with `imagePullPolicy: Never`
+
+#### Manual Verification:
+
+- [ ] Verify the ko-built image appears in `kind get nodes -o json | jq` image list
+- [ ] Verify `kubectl get agenttasks -n shepherd-test` shows the test task with correct status columns
+
+**Implementation Note**: E2e tests require a running kind cluster. Run `kind create cluster` before `make e2e`.
+
+---
+
+## Makefile Cleanup Note
+
+Kubebuilder generates a Makefile with many targets. After scaffolding (Phase 1), review and identify targets that are unnecessary for this project. Candidates to evaluate:
+
+- **Docker targets** (`docker-build`, `docker-push`, `docker-buildx`) — replaced by ko. Remove or comment out.
+- **`deploy`/`undeploy`** — may keep for dev convenience, but `make deploy-e2e` is the primary deployment path for testing.
+- **`catalog-*` targets** — OLM catalog targets. Not needed unless publishing to OperatorHub. Remove.
+- **`bundle-*` targets** — OLM bundle targets. Same as above. Remove.
+
+Keep:
+- `make generate` — deepcopy generation
+- `make manifests` — CRD + RBAC YAML generation
+- `make test` — envtest unit/integration tests
+- `make fmt` / `make vet` / `make lint` — code quality
+- `make install` / `make uninstall` — CRD install into cluster
+- Tool download targets (`controller-gen`, `envtest`, `kustomize`, `golangci-lint`)
+
+This cleanup should happen during Phase 1 after scaffolding, but doesn't need to be exhaustive — just remove the obviously wrong targets (docker, OLM) and leave the rest.
+
+---
+
 ## Testing Strategy
 
 ### Unit Tests (testify)
