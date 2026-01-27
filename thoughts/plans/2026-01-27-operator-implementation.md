@@ -30,7 +30,7 @@ A working K8s operator that:
 
 - REST API server (`shepherd api`)
 - GitHub adapter (`shepherd github`)
-- `shepherd all` mode (dropped — run components separately)
+- `shepherd all` mode (intentional deviation from design doc — deferred, not dropped. Can be added later by composing the three Run functions with errgroup.)
 - Helm charts (separate plan)
 - Runner/init container images
 - Callback notifications to adapters (API responsibility)
@@ -137,11 +137,12 @@ type CallbackSpec struct {
 type RunnerSpec struct {
     // +kubebuilder:default="shepherd-runner:latest"
     Image              string                      `json:"image,omitempty"`
-    // +kubebuilder:default="30m"
     Timeout            metav1.Duration             `json:"timeout,omitempty"`
     ServiceAccountName string                      `json:"serviceAccountName,omitempty"`
     Resources          corev1.ResourceRequirements `json:"resources,omitempty"`
 }
+// Note: metav1.Duration cannot use kubebuilder default markers (struct type).
+// Default timeout (30m) is applied in the reconciler/buildJob code instead.
 
 type AgentTaskStatus struct {
     ObservedGeneration int64              `json:"observedGeneration,omitempty"`
@@ -307,16 +308,20 @@ import (
 )
 
 type OperatorCmd struct {
-    MetricsAddr    string `help:"Metrics address" default:":9090" env:"SHEPHERD_METRICS_ADDR"`
-    HealthAddr     string `help:"Health probe address" default:":8081" env:"SHEPHERD_HEALTH_ADDR"`
-    LeaderElection bool   `help:"Enable leader election" default:"false" env:"SHEPHERD_LEADER_ELECTION"`
+    MetricsAddr        string `help:"Metrics address" default:":9090" env:"SHEPHERD_METRICS_ADDR"`
+    HealthAddr         string `help:"Health probe address" default:":8081" env:"SHEPHERD_HEALTH_ADDR"`
+    LeaderElection     bool   `help:"Enable leader election" default:"false" env:"SHEPHERD_LEADER_ELECTION"`
+    AllowedRunnerImage string `help:"Allowed runner image (full registry path including tag)" required:"" env:"SHEPHERD_RUNNER_IMAGE"`
+    RunnerSecretName   string `help:"GitHub App private key secret name" default:"shepherd-runner-app-key" env:"SHEPHERD_RUNNER_SECRET"`
 }
 
 func (c *OperatorCmd) Run(globals *CLI) error {
     return operator.Run(operator.Options{
-        MetricsAddr:    c.MetricsAddr,
-        HealthAddr:     c.HealthAddr,
-        LeaderElection: c.LeaderElection,
+        MetricsAddr:        c.MetricsAddr,
+        HealthAddr:         c.HealthAddr,
+        LeaderElection:     c.LeaderElection,
+        AllowedRunnerImage: c.AllowedRunnerImage,
+        RunnerSecretName:   c.RunnerSecretName,
     })
 }
 ```
@@ -354,9 +359,11 @@ func init() {
 }
 
 type Options struct {
-    MetricsAddr    string
-    HealthAddr     string
-    LeaderElection bool
+    MetricsAddr        string
+    HealthAddr         string
+    LeaderElection     bool
+    AllowedRunnerImage string
+    RunnerSecretName   string
 }
 
 func Run(opts Options) error {
@@ -379,9 +386,11 @@ func Run(opts Options) error {
     }
 
     if err := (&controller.AgentTaskReconciler{
-        Client:   mgr.GetClient(),
-        Scheme:   mgr.GetScheme(),
-        Recorder: mgr.GetEventRecorderFor("shepherd-operator"),
+        Client:             mgr.GetClient(),
+        Scheme:             mgr.GetScheme(),
+        Recorder:           mgr.GetEventRecorderFor("shepherd-operator"),
+        AllowedRunnerImage: opts.AllowedRunnerImage,
+        RunnerSecretName:   opts.RunnerSecretName,
     }).SetupWithManager(mgr); err != nil {
         return fmt.Errorf("setting up controller: %w", err)
     }
@@ -405,13 +414,15 @@ func Run(opts Options) error {
 
 **File**: `internal/controller/agenttask_controller.go`
 
-Update the kubebuilder-generated reconciler to include the event recorder field:
+Update the kubebuilder-generated reconciler to include the event recorder and config fields:
 
 ```go
 type AgentTaskReconciler struct {
     client.Client
-    Scheme   *runtime.Scheme
-    Recorder record.EventRecorder
+    Scheme             *runtime.Scheme
+    Recorder           record.EventRecorder
+    AllowedRunnerImage string
+    RunnerSecretName   string
 }
 ```
 
@@ -477,8 +488,10 @@ import (
 
 type AgentTaskReconciler struct {
     client.Client
-    Scheme   *runtime.Scheme
-    Recorder record.EventRecorder
+    Scheme             *runtime.Scheme
+    Recorder           record.EventRecorder
+    AllowedRunnerImage string
+    RunnerSecretName   string
 }
 
 // +kubebuilder:rbac:groups=toolkit.shepherd.io,resources=agenttasks,verbs=get;list;watch;create;update;patch;delete
@@ -674,26 +687,66 @@ Build the Job spec from an AgentTask:
 package controller
 
 import (
+    "fmt"
+    "time"
+
     batchv1 "k8s.io/api/batch/v1"
     corev1 "k8s.io/api/core/v1"
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+    "k8s.io/apimachinery/pkg/runtime"
     "sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
     toolkitv1alpha1 "github.com/NissesSenap/shepherd/api/v1alpha1"
 )
 
-func buildJob(task *toolkitv1alpha1.AgentTask, scheme *runtime.Scheme) (*batchv1.Job, error) {
-    // Job name derived from task name
-    jobName := task.Name + "-job"
+// jobConfig holds operator-level configuration needed to build Jobs.
+type jobConfig struct {
+    AllowedRunnerImage string
+    RunnerSecretName   string
+    Scheme             *runtime.Scheme
+}
+
+const defaultTimeout = 30 * time.Minute
+
+func buildJob(task *toolkitv1alpha1.AgentTask, cfg jobConfig) (*batchv1.Job, error) {
+    // Validate runner image against operator-configured allowlist.
+    // For MVP, the operator admin sets SHEPHERD_RUNNER_IMAGE and only that
+    // image is permitted. The spec.runner.image field is ignored — the admin
+    // controls what runs in the cluster.
+    if cfg.AllowedRunnerImage == "" {
+        return nil, fmt.Errorf("no allowed runner image configured (set SHEPHERD_RUNNER_IMAGE)")
+    }
+
+    // Job name includes generation to avoid collision on delete/recreate
+    jobName := fmt.Sprintf("%s-%d-job", task.Name, task.Generation)
 
     // backoffLimit: 0 — no K8s-level retries, operator handles retries
     backoffLimit := int32(0)
 
-    // activeDeadlineSeconds from spec.runner.timeout
-    var activeDeadlineSeconds *int64
-    if task.Spec.Runner.Timeout.Duration > 0 {
-        secs := int64(task.Spec.Runner.Timeout.Duration.Seconds())
-        activeDeadlineSeconds = &secs
+    // activeDeadlineSeconds from spec.runner.timeout, defaulting to 30m
+    timeout := task.Spec.Runner.Timeout.Duration
+    if timeout == 0 {
+        timeout = defaultTimeout
+    }
+    activeDeadlineSecs := int64(timeout.Seconds())
+
+    // Build init container env — include ref if specified
+    initEnv := []corev1.EnvVar{
+        {Name: "REPO_URL", Value: task.Spec.Repo.URL},
+    }
+    if task.Spec.Repo.Ref != "" {
+        initEnv = append(initEnv, corev1.EnvVar{Name: "REPO_REF", Value: task.Spec.Repo.Ref})
+    }
+
+    // Build main container env — include ref if specified
+    runnerEnv := []corev1.EnvVar{
+        {Name: "SHEPHERD_TASK_ID", Value: task.Name},
+        {Name: "SHEPHERD_REPO_URL", Value: task.Spec.Repo.URL},
+        {Name: "SHEPHERD_TASK_DESCRIPTION", Value: task.Spec.Task.Description},
+        {Name: "SHEPHERD_CALLBACK_URL", Value: task.Spec.Callback.URL},
+    }
+    if task.Spec.Repo.Ref != "" {
+        runnerEnv = append(runnerEnv, corev1.EnvVar{Name: "SHEPHERD_REPO_REF", Value: task.Spec.Repo.Ref})
     }
 
     job := &batchv1.Job{
@@ -706,7 +759,7 @@ func buildJob(task *toolkitv1alpha1.AgentTask, scheme *runtime.Scheme) (*batchv1
         },
         Spec: batchv1.JobSpec{
             BackoffLimit:          &backoffLimit,
-            ActiveDeadlineSeconds: activeDeadlineSeconds,
+            ActiveDeadlineSeconds: &activeDeadlineSecs,
             Template: corev1.PodTemplateSpec{
                 ObjectMeta: metav1.ObjectMeta{
                     Labels: map[string]string{
@@ -718,11 +771,9 @@ func buildJob(task *toolkitv1alpha1.AgentTask, scheme *runtime.Scheme) (*batchv1
                     RestartPolicy:      corev1.RestartPolicyNever,
                     InitContainers: []corev1.Container{
                         {
-                            Name:  "github-auth",
-                            Image: "shepherd-init:latest",
-                            Env: []corev1.EnvVar{
-                                {Name: "REPO_URL", Value: task.Spec.Repo.URL},
-                            },
+                            Name:         "github-auth",
+                            Image:        "shepherd-init:latest",
+                            Env:          initEnv,
                             VolumeMounts: []corev1.VolumeMount{
                                 {Name: "github-creds", MountPath: "/creds"},
                                 {Name: "runner-app-key", MountPath: "/secrets/runner-app-key", ReadOnly: true},
@@ -731,14 +782,9 @@ func buildJob(task *toolkitv1alpha1.AgentTask, scheme *runtime.Scheme) (*batchv1
                     },
                     Containers: []corev1.Container{
                         {
-                            Name:  "runner",
-                            Image: task.Spec.Runner.Image,
-                            Env: []corev1.EnvVar{
-                                {Name: "SHEPHERD_TASK_ID", Value: task.Name},
-                                {Name: "SHEPHERD_REPO_URL", Value: task.Spec.Repo.URL},
-                                {Name: "SHEPHERD_TASK_DESCRIPTION", Value: task.Spec.Task.Description},
-                                {Name: "SHEPHERD_CALLBACK_URL", Value: task.Spec.Callback.URL},
-                            },
+                            Name:      "runner",
+                            Image:     cfg.AllowedRunnerImage,
+                            Env:       runnerEnv,
                             Resources: task.Spec.Runner.Resources,
                             VolumeMounts: []corev1.VolumeMount{
                                 {Name: "github-creds", MountPath: "/creds", ReadOnly: true},
@@ -756,7 +802,7 @@ func buildJob(task *toolkitv1alpha1.AgentTask, scheme *runtime.Scheme) (*batchv1
                             Name: "runner-app-key",
                             VolumeSource: corev1.VolumeSource{
                                 Secret: &corev1.SecretVolumeSource{
-                                    SecretName: "shepherd-runner-app-key",
+                                    SecretName: cfg.RunnerSecretName,
                                 },
                             },
                         },
@@ -767,7 +813,7 @@ func buildJob(task *toolkitv1alpha1.AgentTask, scheme *runtime.Scheme) (*batchv1
     }
 
     // Set owner reference so Job is garbage-collected with the AgentTask
-    if err := controllerutil.SetControllerReference(task, job, scheme); err != nil {
+    if err := controllerutil.SetControllerReference(task, job, cfg.Scheme); err != nil {
         return nil, err
     }
 
@@ -799,9 +845,9 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
         // ... same as Phase 3
     }
 
-    // Look for existing Job
+    // Look for existing Job (name includes generation to avoid collision on delete/recreate)
     var job batchv1.Job
-    jobName := task.Name + "-job"
+    jobName := fmt.Sprintf("%s-%d-job", task.Name, task.Generation)
     jobKey := client.ObjectKey{Namespace: task.Namespace, Name: jobName}
 
     err := r.Get(ctx, jobKey, &job)
@@ -811,7 +857,11 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
     if err != nil {
         // Job doesn't exist — create it
-        newJob, buildErr := buildJob(&task, r.Scheme)
+        newJob, buildErr := buildJob(&task, jobConfig{
+            AllowedRunnerImage: r.AllowedRunnerImage,
+            RunnerSecretName:   r.RunnerSecretName,
+            Scheme:             r.Scheme,
+        })
         if buildErr != nil {
             return ctrl.Result{}, fmt.Errorf("building job: %w", buildErr)
         }
@@ -905,14 +955,19 @@ func (r *AgentTaskReconciler) markFailed(ctx context.Context, task *toolkitv1alp
 **File**: `internal/controller/job_builder_test.go` (new file)
 
 ```go
-// Test: Job name matches task name + "-job"
+// Test: Job name matches task name + generation + "-job"
 // Test: backoffLimit is 0
 // Test: activeDeadlineSeconds derived from timeout
-// Test: init container has REPO_URL env
-// Test: main container has SHEPHERD_* env vars
+// Test: activeDeadlineSeconds defaults to 30m when timeout is zero
+// Test: init container has REPO_URL and REPO_REF env vars
+// Test: main container has SHEPHERD_* env vars including SHEPHERD_REPO_REF
+// Test: REPO_REF / SHEPHERD_REPO_REF omitted when spec.repo.ref is empty
+// Test: runner image uses AllowedRunnerImage, NOT spec.runner.image
+// Test: buildJob returns error when AllowedRunnerImage is empty
 // Test: owner reference set correctly
 // Test: resources from spec applied to container
 // Test: volumes and mounts configured correctly
+// Test: runner-app-key secret name comes from config (RunnerSecretName)
 ```
 
 #### 4. Integration Tests
@@ -923,9 +978,11 @@ Extend envtest tests:
 // Test: Creating AgentTask creates a Job
 // Test: Job completion → task Succeeded=True
 // Test: Job failure → task Succeeded=False
-// Test: Job name stored in status.jobName
+// Test: Job name stored in status.jobName (includes generation)
 // Test: startTime set when Job created
 // Test: completionTime set when Job finishes
+// Test: Job uses AllowedRunnerImage, not spec.runner.image
+// Test: Job env vars include REPO_REF when spec.repo.ref is set
 ```
 
 ### Success Criteria
@@ -1352,7 +1409,7 @@ status:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: test-task-job
+  name: test-task-1-job
   namespace: shepherd-test
   labels:
     shepherd.io/task: test-task
