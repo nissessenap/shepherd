@@ -990,11 +990,11 @@ Extend envtest tests:
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `make test` passes all tests
-- [ ] `go vet ./...` clean
-- [ ] Job builder unit tests cover all spec fields
-- [ ] envtest: AgentTask → Job → Succeeded lifecycle works
-- [ ] envtest: AgentTask → Job → Failed lifecycle works
+- [x] `make test` passes all tests
+- [x] `go vet ./...` clean
+- [x] Job builder unit tests cover all spec fields
+- [x] envtest: AgentTask → Job → Succeeded lifecycle works
+- [x] envtest: AgentTask → Job → Failed lifecycle works
 
 #### Manual Verification:
 - [ ] Review Job spec matches design doc (init container, main container, volumes)
