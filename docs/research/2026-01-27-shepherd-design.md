@@ -22,8 +22,8 @@ Inspired by:
 
 ### Future
 
-3. **Fleet migrations** - Running the same transformation across many repos
-4. **Interactive sessions** - Long-running dev environments with remote access
+1. **Fleet migrations** - Running the same transformation across many repos
+2. **Interactive sessions** - Long-running dev environments with remote access
 
 ## Architecture
 
