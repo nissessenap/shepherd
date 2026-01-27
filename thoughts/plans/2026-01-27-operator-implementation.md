@@ -388,7 +388,7 @@ func Run(opts Options) error {
     if err := (&controller.AgentTaskReconciler{
         Client:             mgr.GetClient(),
         Scheme:             mgr.GetScheme(),
-        Recorder:           mgr.GetEventRecorderFor("shepherd-operator"),
+        Recorder:           mgr.GetEventRecorder("shepherd-operator"), // new API (not deprecated GetEventRecorderFor)
         AllowedRunnerImage: opts.AllowedRunnerImage,
         RunnerSecretName:   opts.RunnerSecretName,
     }).SetupWithManager(mgr); err != nil {
@@ -420,7 +420,7 @@ Update the kubebuilder-generated reconciler to include the event recorder and co
 type AgentTaskReconciler struct {
     client.Client
     Scheme             *runtime.Scheme
-    Recorder           record.EventRecorder
+    Recorder           events.EventRecorder // k8s.io/client-go/tools/events (new API, via mgr.GetEventRecorder())
     AllowedRunnerImage string
     RunnerSecretName   string
 }
@@ -478,7 +478,7 @@ import (
     "k8s.io/apimachinery/pkg/api/meta"
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
     "k8s.io/apimachinery/pkg/runtime"
-    "k8s.io/client-go/tools/record"
+    "k8s.io/client-go/tools/events"
     ctrl "sigs.k8s.io/controller-runtime"
     "sigs.k8s.io/controller-runtime/pkg/client"
     "sigs.k8s.io/controller-runtime/pkg/log"
@@ -489,7 +489,7 @@ import (
 type AgentTaskReconciler struct {
     client.Client
     Scheme             *runtime.Scheme
-    Recorder           record.EventRecorder
+    Recorder           events.EventRecorder // new API via mgr.GetEventRecorder()
     AllowedRunnerImage string
     RunnerSecretName   string
 }
@@ -528,9 +528,11 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
         if err := r.Status().Update(ctx, &task); err != nil {
             return ctrl.Result{}, fmt.Errorf("updating initial status: %w", err)
         }
-        r.Recorder.Event(&task, "Normal", "Pending", "Task accepted, waiting for job creation")
+        r.Recorder.Eventf(&task, nil, "Normal", "Pending", "Reconcile", "Task accepted, waiting for job creation")
         log.Info("initialized task status", "task", req.NamespacedName)
-        return ctrl.Result{Requeue: true}, nil
+        // Note: ctrl.Result{Requeue: true} is deprecated in controller-runtime v0.23+.
+        // Use RequeueAfter with a minimal duration instead.
+        return ctrl.Result{RequeueAfter: time.Second}, nil
     }
 
     // TODO Phase 4: Create/monitor Job here
@@ -657,10 +659,10 @@ import (
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `make test` passes (all unit + envtest tests)
-- [ ] `go vet ./...` clean
-- [ ] Unit tests cover: isTerminal, hasCondition, setCondition helpers
-- [ ] envtest: creating AgentTask results in Pending condition being set
+- [x] `make test` passes (all unit + envtest tests)
+- [x] `go vet ./...` clean
+- [x] Unit tests cover: isTerminal, hasCondition, setCondition helpers
+- [x] envtest: creating AgentTask results in Pending condition being set
 
 #### Manual Verification:
 - [ ] Review reconciler logic matches the condition state machine from design doc
@@ -883,7 +885,7 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
         if statusErr := r.Status().Update(ctx, &task); statusErr != nil {
             return ctrl.Result{}, fmt.Errorf("updating status after job creation: %w", statusErr)
         }
-        r.Recorder.Event(&task, "Normal", "JobCreated", "Created job "+newJob.Name)
+        r.Recorder.Eventf(&task, nil, "Normal", "JobCreated", "Reconcile", "Created job %s", newJob.Name)
         log.Info("created job", "job", newJob.Name)
         return ctrl.Result{}, nil
     }
@@ -927,7 +929,7 @@ func (r *AgentTaskReconciler) markSucceeded(ctx context.Context, task *toolkitv1
     if err := r.Status().Update(ctx, task); err != nil {
         return ctrl.Result{}, fmt.Errorf("marking succeeded: %w", err)
     }
-    r.Recorder.Event(task, "Normal", "Succeeded", message)
+    r.Recorder.Eventf(task, nil, "Normal", "Succeeded", "Reconcile", message)
     return ctrl.Result{}, nil
 }
 
@@ -945,7 +947,7 @@ func (r *AgentTaskReconciler) markFailed(ctx context.Context, task *toolkitv1alp
     if err := r.Status().Update(ctx, task); err != nil {
         return ctrl.Result{}, fmt.Errorf("marking failed: %w", err)
     }
-    r.Recorder.Event(task, "Warning", reason, message)
+    r.Recorder.Eventf(task, nil, "Warning", reason, "Reconcile", message)
     return ctrl.Result{}, nil
 }
 ```
@@ -1129,12 +1131,14 @@ func (r *AgentTaskReconciler) retryJob(ctx context.Context, task *toolkitv1alpha
         return ctrl.Result{}, fmt.Errorf("updating retry count: %w", err)
     }
 
-    r.Recorder.Event(task, "Warning", "RetryingJob",
-        fmt.Sprintf("Retrying after infrastructure failure (attempt %d/%d): %s", retries+1, maxInfraRetries, reason))
+    r.Recorder.Eventf(task, nil, "Warning", "RetryingJob", "Reconcile",
+        "Retrying after infrastructure failure (attempt %d/%d): %s", retries+1, maxInfraRetries, reason)
     log.Info("retrying job after infrastructure failure", "attempt", retries+1, "reason", reason)
 
     // Requeue — next reconcile will create a new Job
-    return ctrl.Result{Requeue: true}, nil
+    // Note: ctrl.Result{Requeue: true} is deprecated in controller-runtime v0.23+.
+    // Use RequeueAfter with a minimal duration instead.
+    return ctrl.Result{RequeueAfter: time.Second}, nil
 }
 
 // Retry count stored in annotation to survive reconciler restarts.
@@ -1216,11 +1220,19 @@ Then `make manifests` to regenerate RBAC.
 
 ---
 
-## Phase 6: Ko Build + E2E Test Infrastructure
+## Phase 6: Ko Build + Build Smoke Test
 
 ### Overview
 
-Set up ko builds, kind image loading, kustomize overlay for e2e, and chainsaw-based e2e tests. Following the pattern from [application-credentials](~/go/src/github.com/NissesSenap/application-credentials).
+Set up ko builds and a build smoke test target. No e2e/chainsaw tests — envtest integration tests provide sufficient coverage for the operator's K8s interactions (real API server, CRD validation, RBAC, status subresource). E2e tests in kind would require mocking external dependencies (GitHub auth, runner containers) without testing meaningful additional operator logic.
+
+### Rationale for Dropping E2E
+
+- **envtest already uses a real API server** (etcd + kube-apiserver) — not mocks
+- **Jobs can't run meaningfully in kind** without a real GitHub App, runner image, and callback endpoint — you'd be testing mock containers, not the operator
+- **The operator's logic is condition-based** — it reacts to Job status conditions, which envtest can simulate directly by setting Job status
+- **RBAC correctness** is verified by `make manifests` generating the ClusterRole from kubebuilder markers; runtime RBAC issues surface immediately on first reconcile in any real cluster
+- **Real e2e** should happen in a staging environment with actual GitHub integration, not a hermetic kind cluster with fakes
 
 ### Changes Required
 
@@ -1243,176 +1255,10 @@ $(KO): $(LOCALBIN)
 ko-build-local: ko
 	$(KO) build --sbom=none --bare cmd/shepherd/main.go
 
-.PHONY: ko-build-kind
-ko-build-kind: ko
-	export KO_DOCKER_REPO=$(KO_DOCKER_REPO) ;\
-	$(KO) build --sbom=none --bare cmd/shepherd/main.go ;\
-	kind load docker-image $$KO_DOCKER_REPO
-
-## Chainsaw (e2e testing)
-CHAINSAW_VERSION ?= v0.2.11
-CHAINSAW ?= $(LOCALBIN)/chainsaw-$(CHAINSAW_VERSION)
-
-.PHONY: chainsaw
-chainsaw: $(CHAINSAW)
-$(CHAINSAW): $(LOCALBIN)
-	$(call go-install-tool,$(CHAINSAW),github.com/kyverno/chainsaw,$(CHAINSAW_VERSION))
-
-.PHONY: e2e
-e2e: chainsaw ko-build-kind deploy-e2e
-	$(CHAINSAW) test --test-dir ./test/e2e
-
-.PHONY: deploy-e2e
-deploy-e2e: manifests kustomize
-	$(KUSTOMIZE) build config/e2e-overlay | kubectl apply -f -
-	@echo "Waiting for shepherd operator to be ready..."
-	kubectl wait --for=condition=ready pod -l control-plane=controller-manager -n shepherd-system --timeout=120s
-```
-
-#### 2. Kustomize E2E Overlay
-
-**File**: `config/e2e-overlay/kustomization.yaml` (new file)
-
-```yaml
-resources:
-  - ../default
-
-patches:
-  - path: deployment-patch.yaml
-    target:
-      group: apps
-      kind: Deployment
-      version: v1
-
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
-
-images:
-  - name: controller:latest
-    newName: ko.local/nissessenap/shepherd
-    newTag: latest
-```
-
-**File**: `config/e2e-overlay/deployment-patch.yaml` (new file)
-
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: controller-manager
-spec:
-  template:
-    spec:
-      containers:
-        - name: manager
-          imagePullPolicy: Never
-          resources:
-            limits:
-              cpu: 400m
-              memory: 512Mi
-            requests:
-              cpu: 100m
-              memory: 128Mi
-```
-
-Key: `imagePullPolicy: Never` tells kind to use the pre-loaded ko image instead of pulling from a registry.
-
-#### 3. Chainsaw Test Configuration
-
-**File**: `test/e2e/.chainsaw.yaml` (new file)
-
-```yaml
-apiVersion: chainsaw.kyverno.io/v1alpha1
-kind: Configuration
-metadata:
-  name: configuration
-spec:
-  timeouts:
-    assert: 2m0s
-    cleanup: 3m0s
-    delete: 2m0s
-    error: 2m0s
-    exec: 2m0s
-```
-
-#### 4. E2E Test: Basic AgentTask Lifecycle
-
-**File**: `test/e2e/basic/chainsaw-test.yaml` (new file)
-
-```yaml
-apiVersion: chainsaw.kyverno.io/v1alpha1
-kind: Test
-metadata:
-  name: basic-agenttask
-spec:
-  steps:
-  - name: create-agenttask
-    try:
-      - apply:
-          file: resources.yaml
-      - assert:
-          timeout: 30s
-          file: assert-pending.yaml
-  - name: verify-job-created
-    try:
-      - assert:
-          timeout: 60s
-          file: assert-job-exists.yaml
-```
-
-**File**: `test/e2e/basic/resources.yaml` (new file)
-
-```yaml
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: shepherd-test
----
-apiVersion: toolkit.shepherd.io/v1alpha1
-kind: AgentTask
-metadata:
-  name: test-task
-  namespace: shepherd-test
-  labels:
-    shepherd.io/repo: test-org-test-repo
-    shepherd.io/issue: "1"
-spec:
-  repo:
-    url: "https://github.com/test-org/test-repo.git"
-    ref: "main"
-  task:
-    description: "Test task for e2e"
-  callback:
-    url: "http://localhost:9999/callback"
-  runner:
-    image: "busybox:latest"
-    timeout: 5m
-```
-
-**File**: `test/e2e/basic/assert-pending.yaml` (new file)
-
-```yaml
-apiVersion: toolkit.shepherd.io/v1alpha1
-kind: AgentTask
-metadata:
-  name: test-task
-  namespace: shepherd-test
-status:
-  conditions:
-    - type: Succeeded
-      status: "Unknown"
-```
-
-**File**: `test/e2e/basic/assert-job-exists.yaml` (new file)
-
-```yaml
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: test-task-1-job
-  namespace: shepherd-test
-  labels:
-    shepherd.io/task: test-task
+.PHONY: build-smoke
+build-smoke: ko-build-local manifests kustomize ## Verify ko build + kustomize render
+	$(KUSTOMIZE) build config/default > /dev/null
+	@echo "Build smoke test passed: ko image built, kustomize renders cleanly"
 ```
 
 ### Success Criteria
@@ -1420,17 +1266,12 @@ metadata:
 #### Automated Verification:
 
 - [ ] `make ko-build-local` builds the binary successfully
-- [ ] `make ko-build-kind` builds and loads image into kind cluster
-- [ ] `make deploy-e2e` deploys the operator into kind using the overlay
-- [ ] `make e2e` runs chainsaw tests and they pass
-- [ ] Operator pod is running with `imagePullPolicy: Never`
+- [ ] `make build-smoke` builds image and verifies kustomize renders cleanly
+- [ ] No chainsaw, kind, or e2e infrastructure needed
 
 #### Manual Verification:
 
-- [ ] Verify the ko-built image appears in `kind get nodes -o json | jq` image list
-- [ ] Verify `kubectl get agenttasks -n shepherd-test` shows the test task with correct status columns
-
-**Implementation Note**: E2e tests require a running kind cluster. Run `kind create cluster` before `make e2e`.
+- [ ] `make build-smoke` exits 0
 
 ---
 
@@ -1469,6 +1310,11 @@ This cleanup should happen during Phase 1 after scaffolding, but doesn't need to
 - Retry: infrastructure failure → delete Job → create new Job → succeed
 - Terminal state: no re-reconciliation after Succeeded/Failed
 - Idempotency: reconciling same state doesn't create duplicate Jobs
+
+### Build Smoke Test
+- `make build-smoke`: verifies ko builds and kustomize renders cleanly
+- No e2e/chainsaw tests — envtest covers K8s API interactions with a real API server
+- Real e2e testing deferred to staging environment with actual GitHub integration
 
 ### Test Patterns
 - Use `Eventually()` from gomega for async assertions in envtest

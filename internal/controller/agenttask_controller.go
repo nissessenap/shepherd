@@ -18,8 +18,12 @@ package controller
 
 import (
 	"context"
+	"fmt"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -44,19 +48,43 @@ type AgentTaskReconciler struct {
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
-// Reconcile is part of the main kubernetes reconciliation loop which aims to
-// move the current state of the cluster closer to the desired state.
-// TODO(user): Modify the Reconcile function to compare the state specified by
-// the AgentTask object against the actual cluster state, and then
-// perform operations to make the cluster state reflect the state specified by
-// the user.
-//
-// For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.23.0/pkg/reconcile
 func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	_ = logf.FromContext(ctx)
+	log := logf.FromContext(ctx)
 
-	// TODO(user): your logic here
+	// Fetch the AgentTask
+	var task toolkitv1alpha1.AgentTask
+	if err := r.Get(ctx, req.NamespacedName, &task); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	// Skip if already in terminal state
+	if isTerminal(&task) {
+		log.V(1).Info("skipping reconcile for terminal task", "task", req.NamespacedName)
+		return ctrl.Result{}, nil
+	}
+
+	// Initialize condition if not set
+	if !hasCondition(&task, toolkitv1alpha1.ConditionSucceeded) {
+		setCondition(&task, metav1.Condition{
+			Type:               toolkitv1alpha1.ConditionSucceeded,
+			Status:             metav1.ConditionUnknown,
+			Reason:             toolkitv1alpha1.ReasonPending,
+			Message:            "Waiting for job to start",
+			ObservedGeneration: task.Generation,
+		})
+		task.Status.ObservedGeneration = task.Generation
+
+		if err := r.Status().Update(ctx, &task); err != nil {
+			return ctrl.Result{}, fmt.Errorf("updating initial status: %w", err)
+		}
+		r.Recorder.Eventf(&task, nil, "Normal", "Pending", "Reconcile", "Task accepted, waiting for job creation")
+		log.Info("initialized task status", "task", req.NamespacedName)
+		// Use RequeueAfter instead of deprecated Requeue: true (controller-runtime v0.23+ PR #3107)
+		return ctrl.Result{RequeueAfter: time.Second}, nil
+	}
+
+	// TODO Phase 4: Create/monitor Job here
+	log.Info("reconcile complete (job creation not yet implemented)", "task", req.NamespacedName)
 
 	return ctrl.Result{}, nil
 }
@@ -67,4 +95,23 @@ func (r *AgentTaskReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&toolkitv1alpha1.AgentTask{}).
 		Owns(&batchv1.Job{}).
 		Complete(r)
+}
+
+// isTerminal returns true if the task has reached a terminal condition.
+func isTerminal(task *toolkitv1alpha1.AgentTask) bool {
+	cond := meta.FindStatusCondition(task.Status.Conditions, toolkitv1alpha1.ConditionSucceeded)
+	if cond == nil {
+		return false
+	}
+	return cond.Status != metav1.ConditionUnknown
+}
+
+// hasCondition returns true if the named condition exists.
+func hasCondition(task *toolkitv1alpha1.AgentTask, condType string) bool {
+	return meta.FindStatusCondition(task.Status.Conditions, condType) != nil
+}
+
+// setCondition sets or updates a condition on the task.
+func setCondition(task *toolkitv1alpha1.AgentTask, condition metav1.Condition) {
+	meta.SetStatusCondition(&task.Status.Conditions, condition)
 }
