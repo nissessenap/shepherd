@@ -45,7 +45,7 @@ Inspired by:
 | Logging | zap via `sigs.k8s.io/controller-runtime/pkg/log/zap` |
 | GitHub | `github.com/google/go-github`, `github.com/bradleyfalzon/ghinstallation/v2` |
 | Unit Testing | `github.com/stretchr/testify` |
-| Integration Testing | `github.com/onsi/gomega` (envtest, `Eventually()`) |
+| Integration Testing | `github.com/onsi/gomega` for operator (envtest, `Eventually()`) |
 | Metrics | `github.com/prometheus/client_golang` (via controller-runtime) |
 | Container Builds | ko |
 | Deployment | Helm (kubebuilder Kustomize for CRD generation only) |
@@ -178,7 +178,7 @@ Step 11 ensures the adapter is notified even if the runner crashes without calli
 ## CRD Specification
 
 ```yaml
-apiVersion: shepherd.io/v1alpha1
+apiVersion: toolkit.shepherd.io/v1alpha1
 kind: AgentTask
 metadata:
   name: task-abc123
@@ -531,8 +531,16 @@ require (
 - **Interactive sessions**: Long-running environments with VS Code remote access
 - **OpenCode/SDK integration**: More control over agent execution and metrics
 
+## Kubebuilder Scaffolding
+
+```bash
+kubebuilder init --domain shepherd.io
+kubebuilder create api --group toolkit --version v1alpha1 --kind AgentTask
+```
+
+This produces `toolkit.shepherd.io/v1alpha1` as the API group (following Flux's `toolkit.fluxcd.io` precedent).
+
 ## Open Questions
 
-1. **CRD group naming** - kubebuilder generates `shepherd.shepherd.io` (group.domain). Consider using a different API group to avoid the stutter, or accept it.
-2. **Runner image distribution** - ko builds the shepherd binary. The runner image (with Claude Code) needs a separate Dockerfile. Out of scope for MVP but needs planning.
-3. **go-github version** - Pin to latest at implementation time (calendar versioning).
+1. **Runner image distribution** - ko builds the shepherd binary. The runner image (with Claude Code) needs a separate Dockerfile. Out of scope for MVP but needs planning.
+2. **go-github version** - Pin to latest at implementation time (calendar versioning).
