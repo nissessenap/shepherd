@@ -33,6 +33,7 @@ import (
 type jobConfig struct {
 	AllowedRunnerImage string
 	RunnerSecretName   string
+	InitImage          string
 	Scheme             *runtime.Scheme
 }
 
@@ -46,9 +47,15 @@ func buildJob(task *toolkitv1alpha1.AgentTask, cfg jobConfig) (*batchv1.Job, err
 	if cfg.AllowedRunnerImage == "" {
 		return nil, fmt.Errorf("no allowed runner image configured (set SHEPHERD_RUNNER_IMAGE)")
 	}
+	if cfg.InitImage == "" {
+		return nil, fmt.Errorf("no init image configured (set SHEPHERD_INIT_IMAGE)")
+	}
 
 	// Job name includes generation to avoid collision on delete/recreate
 	jobName := fmt.Sprintf("%s-%d-job", task.Name, task.Generation)
+	if len(jobName) > 63 {
+		return nil, fmt.Errorf("generated job name %q exceeds 63-character limit (task name too long)", jobName)
+	}
 
 	// backoffLimit: 0 — no K8s-level retries, operator handles retries
 	backoffLimit := int32(0)
@@ -102,7 +109,7 @@ func buildJob(task *toolkitv1alpha1.AgentTask, cfg jobConfig) (*batchv1.Job, err
 					InitContainers: []corev1.Container{
 						{
 							Name:  "github-auth",
-							Image: "shepherd-init:latest",
+							Image: cfg.InitImage,
 							Env:   initEnv,
 							VolumeMounts: []corev1.VolumeMount{
 								{Name: "github-creds", MountPath: "/creds"},

@@ -45,6 +45,7 @@ var _ = Describe("AgentTask Controller", func() {
 			Recorder:           events.NewFakeRecorder(10),
 			AllowedRunnerImage: "shepherd-runner:latest",
 			RunnerSecretName:   "shepherd-runner-app-key",
+			InitImage:          "shepherd-init:latest",
 		}
 	})
 

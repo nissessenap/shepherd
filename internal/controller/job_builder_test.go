@@ -62,6 +62,7 @@ func baseCfg() jobConfig {
 	return jobConfig{
 		AllowedRunnerImage: "registry.example.com/shepherd-runner:v1",
 		RunnerSecretName:   "shepherd-runner-app-key",
+		InitImage:          "shepherd-init:latest",
 		Scheme:             testScheme(),
 	}
 }
@@ -109,6 +110,17 @@ func TestBuildJob_ActiveDeadlineSeconds_Custom(t *testing.T) {
 
 	require.NotNil(t, job.Spec.ActiveDeadlineSeconds)
 	assert.Equal(t, int64(600), *job.Spec.ActiveDeadlineSeconds, "should use custom timeout")
+}
+
+func TestBuildJob_InitContainerImage_UsesConfiguredImage(t *testing.T) {
+	cfg := baseCfg()
+	cfg.InitImage = "custom-registry.io/shepherd-init:v2.0"
+
+	job, err := buildJob(baseTask(), cfg)
+	require.NoError(t, err)
+
+	initContainer := job.Spec.Template.Spec.InitContainers[0]
+	assert.Equal(t, "custom-registry.io/shepherd-init:v2.0", initContainer.Image)
 }
 
 func TestBuildJob_InitContainerEnv(t *testing.T) {
@@ -180,6 +192,25 @@ func TestBuildJob_EmptyAllowedRunnerImage_ReturnsError(t *testing.T) {
 	_, err := buildJob(baseTask(), cfg)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no allowed runner image configured")
+}
+
+func TestBuildJob_EmptyInitImage_ReturnsError(t *testing.T) {
+	cfg := baseCfg()
+	cfg.InitImage = ""
+
+	_, err := buildJob(baseTask(), cfg)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "no init image configured")
+}
+
+func TestBuildJob_JobNameTooLong_ReturnsError(t *testing.T) {
+	task := baseTask()
+	task.Name = "this-is-a-very-long-task-name-that-will-exceed-the-kubernetes-limit"
+	task.Generation = 999999999
+
+	_, err := buildJob(task, baseCfg())
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "exceeds 63-character limit")
 }
 
 func TestBuildJob_OwnerReference(t *testing.T) {

@@ -43,6 +43,7 @@ type AgentTaskReconciler struct {
 	Recorder           events.EventRecorder
 	AllowedRunnerImage string
 	RunnerSecretName   string
+	InitImage          string
 }
 
 // +kubebuilder:rbac:groups=toolkit.shepherd.io,resources=agenttasks,verbs=get;list;watch;create;update;patch;delete
@@ -101,10 +102,12 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		newJob, buildErr := buildJob(&task, jobConfig{
 			AllowedRunnerImage: r.AllowedRunnerImage,
 			RunnerSecretName:   r.RunnerSecretName,
+			InitImage:          r.InitImage,
 			Scheme:             r.Scheme,
 		})
 		if buildErr != nil {
-			return ctrl.Result{}, fmt.Errorf("building job: %w", buildErr)
+			return r.markFailed(ctx, &task, toolkitv1alpha1.ReasonFailed,
+				fmt.Sprintf("failed to build job: %v", buildErr))
 		}
 		if createErr := r.Create(ctx, newJob); createErr != nil {
 			return ctrl.Result{}, fmt.Errorf("creating job: %w", createErr)

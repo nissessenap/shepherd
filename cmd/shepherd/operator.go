@@ -26,6 +26,7 @@ type OperatorCmd struct {
 	LeaderElection     bool   `help:"Enable leader election" default:"false" env:"SHEPHERD_LEADER_ELECTION"`
 	AllowedRunnerImage string `help:"Allowed runner image" required:"" env:"SHEPHERD_RUNNER_IMAGE"`
 	RunnerSecretName   string `help:"Runner app key secret" default:"shepherd-runner-app-key" env:"SHEPHERD_RUNNER_SECRET"`
+	InitImage          string `help:"Init container image" default:"shepherd-init:latest" env:"SHEPHERD_INIT_IMAGE"`
 }
 
 func (c *OperatorCmd) Run(_ *CLI) error {
@@ -35,5 +36,6 @@ func (c *OperatorCmd) Run(_ *CLI) error {
 		LeaderElection:     c.LeaderElection,
 		AllowedRunnerImage: c.AllowedRunnerImage,
 		RunnerSecretName:   c.RunnerSecretName,
+		InitImage:          c.InitImage,
 	})
 }
