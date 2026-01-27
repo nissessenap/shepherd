@@ -59,6 +59,7 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	// Skip if already in terminal state
 	if isTerminal(&task) {
+		log.V(1).Info("skipping reconcile for terminal task", "task", req.NamespacedName)
 		return ctrl.Result{}, nil
 	}
 
@@ -78,6 +79,7 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 		r.Recorder.Eventf(&task, nil, "Normal", "Pending", "Reconcile", "Task accepted, waiting for job creation")
 		log.Info("initialized task status", "task", req.NamespacedName)
+		// Use RequeueAfter instead of deprecated Requeue: true (controller-runtime v0.23+ PR #3107)
 		return ctrl.Result{RequeueAfter: time.Second}, nil
 	}
 

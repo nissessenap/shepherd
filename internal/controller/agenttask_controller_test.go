@@ -17,8 +17,6 @@ limitations under the License.
 package controller
 
 import (
-	"context"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -154,7 +152,7 @@ var _ = Describe("AgentTask Controller", func() {
 
 	Context("When reconciling a deleted AgentTask", func() {
 		It("should return without error for a non-existent resource", func() {
-			result, err := reconciler.Reconcile(context.Background(), reconcile.Request{
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: types.NamespacedName{
 					Name:      "does-not-exist",
 					Namespace: resourceNamespace,
