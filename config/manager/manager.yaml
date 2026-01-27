@@ -59,10 +59,16 @@ spec:
           type: RuntimeDefault
       containers:
       - command:
-        - /manager
+        - /shepherd
         args:
-          - --leader-elect
-          - --health-probe-bind-address=:8081
+          - operator
+          - --leader-election
+          - --health-addr=:8081
+          - --metrics-addr=:9090
+          - --allowed-runner-image=$(SHEPHERD_RUNNER_IMAGE)
+        env:
+        - name: SHEPHERD_RUNNER_IMAGE
+          value: shepherd-runner:latest
         image: controller:latest
         name: manager
         ports: []

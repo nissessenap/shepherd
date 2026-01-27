@@ -1,5 +1,5 @@
 # Image URL to use all building/pushing image targets
-IMG ?= controller:latest
+IMG ?= shepherd:latest
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -74,8 +74,8 @@ build: manifests generate fmt vet ## Build manager binary.
 	go build -o bin/shepherd ./cmd/shepherd/
 
 .PHONY: run
-run: manifests generate fmt vet ## Run a controller from your host.
-	go run ./cmd/shepherd/
+run: manifests generate fmt vet ## Run the operator from your host.
+	SHEPHERD_RUNNER_IMAGE=shepherd-runner:latest go run ./cmd/shepherd/ operator --leader-election=false
 
 ##@ Deployment
 
