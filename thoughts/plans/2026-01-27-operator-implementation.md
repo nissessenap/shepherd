@@ -990,15 +990,132 @@ Extend envtest tests:
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `make test` passes all tests
-- [ ] `go vet ./...` clean
-- [ ] Job builder unit tests cover all spec fields
-- [ ] envtest: AgentTask → Job → Succeeded lifecycle works
-- [ ] envtest: AgentTask → Job → Failed lifecycle works
+- [x] `make test` passes all tests
+- [x] `go vet ./...` clean
+- [x] Job builder unit tests cover all spec fields
+- [x] envtest: AgentTask → Job → Succeeded lifecycle works
+- [x] envtest: AgentTask → Job → Failed lifecycle works
 
 #### Manual Verification:
 - [ ] Review Job spec matches design doc (init container, main container, volumes)
 - [ ] Owner references ensure garbage collection
+
+**Pause for manual review before Phase 4.5.**
+
+---
+
+## Phase 4.5: Init Container Context Decompression
+
+### Overview
+
+Extend the init container's responsibilities and the Job spec to handle gzip-decompressed context. The design doc specifies that the API gzip-compresses the context field before creating the CRD. Currently `SHEPHERD_TASK_DESCRIPTION` is passed as a plain env var to the runner, which won't scale to large prompts or compressed context. The init container already runs before the main container and has write access to a shared volume — extend it to also write task input files.
+
+### Rationale
+
+- **Design doc compliance**: `docs/research/2026-01-27-shepherd-design.md` line 335 specifies gzip compression of the context field
+- **Env var size limits**: Large prompts + context can exceed practical env var sizes (~1-2MB due to pod spec in etcd)
+- **File-based input is standard**: More robust than env vars for multi-line text with special characters
+- **Init container already exists**: Zero additional pod overhead — just extend its responsibilities
+
+### Changes Required
+
+#### 1. Update Job Builder
+
+**File**: `internal/controller/job_builder.go`
+
+Changes:
+- Remove `SHEPHERD_TASK_DESCRIPTION` from runner container env vars
+- Add `TASK_DESCRIPTION`, `TASK_CONTEXT`, and `CONTEXT_ENCODING` to init container env vars
+- Add `SHEPHERD_TASK_FILE=/task/description.txt` and `SHEPHERD_CONTEXT_FILE=/task/context.txt` to runner container env vars
+- Add `task-files` emptyDir volume, mounted read-write in init container and read-only in runner
+
+Init container env changes:
+```go
+initEnv := []corev1.EnvVar{
+    {Name: "REPO_URL", Value: task.Spec.Repo.URL},
+    {Name: "TASK_DESCRIPTION", Value: task.Spec.Task.Description},
+}
+if task.Spec.Repo.Ref != "" {
+    initEnv = append(initEnv, corev1.EnvVar{Name: "REPO_REF", Value: task.Spec.Repo.Ref})
+}
+if task.Spec.Task.Context != "" {
+    initEnv = append(initEnv, corev1.EnvVar{
+        Name: "TASK_CONTEXT", Value: task.Spec.Task.Context,
+    })
+}
+if task.Spec.Task.ContextEncoding != "" {
+    initEnv = append(initEnv, corev1.EnvVar{
+        Name: "CONTEXT_ENCODING", Value: task.Spec.Task.ContextEncoding,
+    })
+}
+```
+
+Runner container env changes:
+```go
+// Remove SHEPHERD_TASK_DESCRIPTION, add file paths instead:
+{Name: "SHEPHERD_TASK_FILE", Value: "/task/description.txt"},
+{Name: "SHEPHERD_CONTEXT_FILE", Value: "/task/context.txt"},
+```
+
+Volume changes:
+```yaml
+volumes:
+  - name: task-files
+    emptyDir: {}
+
+initContainers:
+  - name: github-auth
+    volumeMounts:
+      - name: task-files
+        mountPath: /task
+
+containers:
+  - name: runner
+    volumeMounts:
+      - name: task-files
+        mountPath: /task
+        readOnly: true
+```
+
+#### 2. Update Job Builder Tests
+
+**File**: `internal/controller/job_builder_test.go`
+
+- Verify init container env includes `TASK_DESCRIPTION` and `TASK_CONTEXT` (when set)
+- Verify runner env includes `SHEPHERD_TASK_FILE` and `SHEPHERD_CONTEXT_FILE`
+- Verify runner env does NOT include `SHEPHERD_TASK_DESCRIPTION`
+- Verify `task-files` volume exists and is mounted correctly (init: read-write, runner: read-only)
+- Verify `TASK_CONTEXT` and `CONTEXT_ENCODING` are omitted when spec fields are empty
+
+#### 3. Update Integration Tests
+
+**File**: `internal/controller/agenttask_controller_test.go`
+
+- Verify created Job has the `task-files` volume
+- Verify runner container mounts `/task` read-only
+
+### Out of Scope
+
+- Init container binary implementation (separate image build plan)
+- Runner image entrypoint updates (separate image build plan)
+- This phase only updates the Job spec generation in the operator
+
+### Phase Ordering
+
+This phase must complete before implementing the API, since the API creates CRDs with gzip context and the Job spec must match the expected contract.
+
+### Success Criteria
+
+#### Automated Verification:
+- [ ] `make test` passes all tests
+- [ ] `go vet ./...` clean
+- [ ] Job builder unit tests verify init container receives `TASK_DESCRIPTION`, `TASK_CONTEXT`, `CONTEXT_ENCODING`
+- [ ] Job builder unit tests verify runner receives `SHEPHERD_TASK_FILE` and `SHEPHERD_CONTEXT_FILE`
+- [ ] Job builder unit tests verify runner does NOT receive `SHEPHERD_TASK_DESCRIPTION`
+- [ ] Job builder unit tests verify `task-files` volume mounts
+
+#### Manual Verification:
+- [ ] Review Job spec matches updated contract (init writes files, runner reads files)
 
 **Pause for manual review before Phase 5.**
 

@@ -48,6 +48,7 @@ type Options struct {
 	LeaderElection     bool
 	AllowedRunnerImage string
 	RunnerSecretName   string
+	InitImage          string
 }
 
 // Run starts the operator with the given options.
@@ -76,6 +77,7 @@ func Run(opts Options) error {
 		Recorder:           mgr.GetEventRecorder("shepherd-operator"),
 		AllowedRunnerImage: opts.AllowedRunnerImage,
 		RunnerSecretName:   opts.RunnerSecretName,
+		InitImage:          opts.InitImage,
 	}).SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("setting up controller: %w", err)
 	}
