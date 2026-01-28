@@ -183,6 +183,10 @@ func (r *AgentTaskReconciler) reconcileJobStatus(ctx context.Context, task *tool
 					return r.markFailed(ctx, task, toolkitv1alpha1.ReasonTimedOut,
 						"Job exceeded timeout")
 				default:
+					if c.Reason == "PodFailurePolicy" {
+						log.Info("PodFailurePolicy failure not classified as OOM — message format may have changed",
+							"reason", c.Reason, "message", c.Message)
+					}
 					return r.markFailed(ctx, task, toolkitv1alpha1.ReasonFailed, c.Message)
 				}
 			}

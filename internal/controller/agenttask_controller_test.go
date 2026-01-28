@@ -340,6 +340,8 @@ var _ = Describe("AgentTask Controller", func() {
 
 			now := metav1.Now()
 			job.Status.StartTime = &now
+			// JobFailureTarget is set for realism (Kubernetes sets both conditions)
+			// but classifyJobFailure only examines the JobFailed condition.
 			job.Status.Conditions = append(job.Status.Conditions,
 				batchv1.JobCondition{
 					Type:   batchv1.JobFailureTarget,
@@ -433,6 +435,8 @@ var _ = Describe("AgentTask Controller", func() {
 
 			now := metav1.Now()
 			job.Status.StartTime = &now
+			// JobFailureTarget is set for realism (Kubernetes sets both conditions)
+			// but classifyJobFailure only examines the JobFailed condition.
 			job.Status.Conditions = append(job.Status.Conditions,
 				batchv1.JobCondition{
 					Type:   batchv1.JobFailureTarget,
