@@ -33,8 +33,9 @@ type AgentTask struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitzero"`
 
-	Spec   AgentTaskSpec   `json:"spec,omitempty"`
-	Status AgentTaskStatus `json:"status,omitempty"`
+	Spec AgentTaskSpec `json:"spec,omitzero"`
+	// +optional
+	Status AgentTaskStatus `json:"status,omitzero"`
 }
 
 type AgentTaskSpec struct {
@@ -43,7 +44,8 @@ type AgentTaskSpec struct {
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="task is immutable"
 	Task     TaskSpec     `json:"task"`
 	Callback CallbackSpec `json:"callback"`
-	Runner   RunnerSpec   `json:"runner,omitempty"`
+	// +optional
+	Runner RunnerSpec `json:"runner,omitzero"`
 }
 
 type RepoSpec struct {
@@ -56,8 +58,11 @@ type RepoSpec struct {
 type TaskSpec struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
-	Description     string `json:"description"`
-	Context         string `json:"context,omitempty"`
+	Description string `json:"description"`
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Context string `json:"context"`
+	// +kubebuilder:validation:Enum="";gzip
 	ContextEncoding string `json:"contextEncoding,omitempty"`
 	ContextURL      string `json:"contextUrl,omitempty"`
 }
@@ -71,10 +76,13 @@ type CallbackSpec struct {
 
 type RunnerSpec struct {
 	// +kubebuilder:default="shepherd-runner:latest"
-	Image              string                      `json:"image,omitempty"`
-	Timeout            metav1.Duration             `json:"timeout,omitempty"`
-	ServiceAccountName string                      `json:"serviceAccountName,omitempty"`
-	Resources          corev1.ResourceRequirements `json:"resources,omitempty"`
+	Image string `json:"image,omitempty"`
+	// +optional
+	Timeout metav1.Duration `json:"timeout,omitzero"`
+	// +optional
+	ServiceAccountName string `json:"serviceAccountName,omitempty"`
+	// +optional
+	Resources corev1.ResourceRequirements `json:"resources,omitzero"`
 }
 
 type AgentTaskStatus struct {
@@ -85,7 +93,8 @@ type AgentTaskStatus struct {
 	// +listMapKey=type
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 	JobName    string             `json:"jobName,omitempty"`
-	Result     TaskResult         `json:"result,omitempty"`
+	// +optional
+	Result TaskResult `json:"result,omitzero"`
 }
 
 type TaskResult struct {

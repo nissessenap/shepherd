@@ -1107,12 +1107,12 @@ This phase must complete before implementing the API, since the API creates CRDs
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `make test` passes all tests
-- [ ] `go vet ./...` clean
-- [ ] Job builder unit tests verify init container receives `TASK_DESCRIPTION`, `TASK_CONTEXT`, `CONTEXT_ENCODING`
-- [ ] Job builder unit tests verify runner receives `SHEPHERD_TASK_FILE` and `SHEPHERD_CONTEXT_FILE`
-- [ ] Job builder unit tests verify runner does NOT receive `SHEPHERD_TASK_DESCRIPTION`
-- [ ] Job builder unit tests verify `task-files` volume mounts
+- [x] `make test` passes all tests
+- [x] `go vet ./...` clean
+- [x] Job builder unit tests verify init container receives `TASK_DESCRIPTION`, `TASK_CONTEXT`, `CONTEXT_ENCODING`
+- [x] Job builder unit tests verify runner receives `SHEPHERD_TASK_FILE` and `SHEPHERD_CONTEXT_FILE`
+- [x] Job builder unit tests verify runner does NOT receive `SHEPHERD_TASK_DESCRIPTION`
+- [x] Job builder unit tests verify `task-files` volume mounts
 
 #### Manual Verification:
 - [ ] Review Job spec matches updated contract (init writes files, runner reads files)
