@@ -1322,13 +1322,13 @@ Then `make manifests` to regenerate RBAC.
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `make test` passes all tests
-- [ ] `make manifests` generates updated RBAC with pod list permission
-- [ ] Unit tests cover all failure classification cases
-- [ ] envtest: infrastructure failure triggers retry
-- [ ] envtest: max retries exceeded marks task failed
-- [ ] envtest: application failure marks task failed immediately
-- [ ] envtest: timeout marks task timed out
+- [x] `make test` passes all tests
+- [x] `make manifests` generates updated RBAC with pod list permission
+- [x] Unit tests cover all failure classification cases
+- [x] envtest: infrastructure failure triggers retry
+- [x] envtest: max retries exceeded marks task failed
+- [x] envtest: application failure marks task failed immediately
+- [x] envtest: timeout marks task timed out
 
 #### Manual Verification:
 - [ ] Review retry logic matches design doc (infra → retry, app → fail, OOM → fail, timeout → fail)

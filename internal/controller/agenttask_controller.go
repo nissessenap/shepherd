@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -51,6 +52,7 @@ type AgentTaskReconciler struct {
 // +kubebuilder:rbac:groups=toolkit.shepherd.io,resources=agenttasks/finalizers,verbs=update
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 
 func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
@@ -136,6 +138,8 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	return r.reconcileJobStatus(ctx, &task, &job)
 }
 
+const maxInfraRetries = 3
+
 func (r *AgentTaskReconciler) reconcileJobStatus(ctx context.Context, task *toolkitv1alpha1.AgentTask, job *batchv1.Job) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
@@ -147,14 +151,95 @@ func (r *AgentTaskReconciler) reconcileJobStatus(ctx context.Context, task *tool
 			}
 		case batchv1.JobFailed:
 			if c.Status == corev1.ConditionTrue {
-				// Phase 5 will add infrastructure vs application failure distinction
-				return r.markFailed(ctx, task, toolkitv1alpha1.ReasonFailed, c.Message)
+				pods, err := r.listJobPods(ctx, job)
+				if err != nil {
+					return ctrl.Result{}, fmt.Errorf("listing job pods: %w", err)
+				}
+
+				ft := classifyJobFailure(job, pods)
+				switch ft {
+				case failureInfrastructure:
+					return r.retryJob(ctx, task, job, "Infrastructure failure: pod missing or evicted")
+				case failureOOM:
+					return r.markFailed(ctx, task, toolkitv1alpha1.ReasonFailed, "Container killed: OOMKilled")
+				case failureTimeout:
+					return r.markFailed(ctx, task, toolkitv1alpha1.ReasonTimedOut, "Job exceeded timeout")
+				default:
+					return r.markFailed(ctx, task, toolkitv1alpha1.ReasonFailed, c.Message)
+				}
 			}
 		}
 	}
 
 	log.V(1).Info("job still running", "job", job.Name)
 	return ctrl.Result{}, nil
+}
+
+func (r *AgentTaskReconciler) retryJob(ctx context.Context, task *toolkitv1alpha1.AgentTask, oldJob *batchv1.Job, reason string) (ctrl.Result, error) {
+	log := logf.FromContext(ctx)
+
+	retries := getRetryCount(task)
+	if retries >= maxInfraRetries {
+		return r.markFailed(ctx, task, toolkitv1alpha1.ReasonFailed,
+			fmt.Sprintf("Infrastructure failure after %d retries: %s", retries, reason))
+	}
+
+	// Delete old Job
+	if err := r.Delete(ctx, oldJob, client.PropagationPolicy(metav1.DeletePropagationBackground)); err != nil {
+		return ctrl.Result{}, fmt.Errorf("deleting failed job: %w", err)
+	}
+
+	// Increment retry count
+	setRetryCount(task, retries+1)
+	if err := r.Update(ctx, task); err != nil {
+		return ctrl.Result{}, fmt.Errorf("updating retry count: %w", err)
+	}
+
+	r.Recorder.Eventf(task, nil, "Warning", "RetryingJob", "Reconcile",
+		"Retrying after infrastructure failure (attempt %d/%d): %s", retries+1, maxInfraRetries, reason)
+	log.Info("retrying job after infrastructure failure", "attempt", retries+1, "reason", reason)
+
+	// Requeue — next reconcile will create a new Job
+	return ctrl.Result{RequeueAfter: time.Second}, nil
+}
+
+func (r *AgentTaskReconciler) listJobPods(ctx context.Context, job *batchv1.Job) ([]corev1.Pod, error) {
+	var podList corev1.PodList
+	// Use pod template labels rather than job.Spec.Selector.MatchLabels because
+	// the selector is set by the Job controller (which doesn't run in envtest).
+	// Our buildJob function always sets shepherd.io/task on the pod template.
+	if err := r.List(ctx, &podList,
+		client.InNamespace(job.Namespace),
+		client.MatchingLabels(job.Spec.Template.Labels),
+	); err != nil {
+		return nil, err
+	}
+	return podList.Items, nil
+}
+
+// Retry count stored in annotation to survive reconciler restarts.
+const retryAnnotation = "shepherd.io/retry-count"
+
+func getRetryCount(task *toolkitv1alpha1.AgentTask) int {
+	if task.Annotations == nil {
+		return 0
+	}
+	val, ok := task.Annotations[retryAnnotation]
+	if !ok {
+		return 0
+	}
+	n, err := strconv.Atoi(val)
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
+func setRetryCount(task *toolkitv1alpha1.AgentTask, count int) {
+	if task.Annotations == nil {
+		task.Annotations = make(map[string]string)
+	}
+	task.Annotations[retryAnnotation] = strconv.Itoa(count)
 }
 
 func (r *AgentTaskReconciler) markSucceeded(ctx context.Context, task *toolkitv1alpha1.AgentTask, message string) (ctrl.Result, error) {

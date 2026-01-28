@@ -322,17 +322,48 @@ var _ = Describe("AgentTask Controller", func() {
 			Expect(task.Status.CompletionTime).NotTo(BeNil())
 		})
 
-		It("should set Failed when Job fails", func() {
+		It("should set Failed when Job fails with application error", func() {
 			createAgentTask(taskName, resourceNamespace)
 			reconcileToPending()
 			jobName := reconcileToRunning()
 
-			By("Simulating Job failure")
+			By("Simulating Job failure with a failed pod (application error)")
 			var job batchv1.Job
 			Expect(k8sClient.Get(ctx, client.ObjectKey{
 				Namespace: resourceNamespace,
 				Name:      jobName,
 			}, &job)).To(Succeed())
+
+			// Create a Pod matching the Job's template labels so classifyJobFailure
+			// sees a pod with a non-OOM, non-eviction failure (→ application error).
+			pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      jobName + "-pod",
+					Namespace: resourceNamespace,
+					Labels:    job.Spec.Template.Labels,
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{Name: "runner", Image: "shepherd-runner:latest"},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, pod)).To(Succeed())
+			pod.Status = corev1.PodStatus{
+				Phase: corev1.PodFailed,
+				ContainerStatuses: []corev1.ContainerStatus{
+					{
+						Name: "runner",
+						State: corev1.ContainerState{
+							Terminated: &corev1.ContainerStateTerminated{
+								ExitCode: 1,
+								Reason:   "Error",
+							},
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Status().Update(ctx, pod)).To(Succeed())
 
 			now := metav1.Now()
 			job.Status.StartTime = &now
@@ -364,6 +395,9 @@ var _ = Describe("AgentTask Controller", func() {
 			Expect(cond.Reason).To(Equal(toolkitv1alpha1.ReasonFailed))
 			Expect(task.Status.CompletionTime).NotTo(BeNil())
 			Expect(task.Status.Result.Error).To(Equal("BackoffLimitExceeded"))
+
+			// Clean up pod
+			_ = k8sClient.Delete(ctx, pod)
 		})
 
 		It("should include REPO_REF env var when ref is set", func() {
@@ -420,6 +454,268 @@ var _ = Describe("AgentTask Controller", func() {
 				client.MatchingLabels{"shepherd.io/task": taskName})).To(Succeed())
 			Expect(jobList.Items).To(HaveLen(1))
 			Expect(jobList.Items[0].Name).To(Equal(jobName))
+		})
+
+		It("should retry on infrastructure failure (no pods) and requeue", func() {
+			createAgentTask(taskName, resourceNamespace)
+			reconcileToPending()
+			jobName := reconcileToRunning()
+
+			By("Simulating infrastructure failure — Job failed with no pods")
+			var job batchv1.Job
+			Expect(k8sClient.Get(ctx, client.ObjectKey{
+				Namespace: resourceNamespace,
+				Name:      jobName,
+			}, &job)).To(Succeed())
+
+			now := metav1.Now()
+			job.Status.StartTime = &now
+			job.Status.Conditions = append(job.Status.Conditions,
+				batchv1.JobCondition{
+					Type:   batchv1.JobFailureTarget,
+					Status: corev1.ConditionTrue,
+				},
+				batchv1.JobCondition{
+					Type:    batchv1.JobFailed,
+					Status:  corev1.ConditionTrue,
+					Message: "Job failed",
+				},
+			)
+			Expect(k8sClient.Status().Update(ctx, &job)).To(Succeed())
+
+			By("Reconciling — should retry (delete Job, set annotation, requeue)")
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: taskNN})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(BeNumerically(">", 0), "should requeue for retry")
+
+			By("Verifying retry count annotation")
+			var task toolkitv1alpha1.AgentTask
+			Expect(k8sClient.Get(ctx, taskNN, &task)).To(Succeed())
+			Expect(task.Annotations).To(HaveKeyWithValue("shepherd.io/retry-count", "1"))
+
+			By("Verifying task is NOT terminal (still running)")
+			cond := meta.FindStatusCondition(task.Status.Conditions, toolkitv1alpha1.ConditionSucceeded)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Status).To(Equal(metav1.ConditionUnknown), "task should still be in-progress during retry")
+		})
+
+		It("should mark Failed after max infrastructure retries", func() {
+			createAgentTask(taskName, resourceNamespace)
+			reconcileToPending()
+			jobName := reconcileToRunning()
+
+			By("Setting retry count to max (3)")
+			var task toolkitv1alpha1.AgentTask
+			Expect(k8sClient.Get(ctx, taskNN, &task)).To(Succeed())
+			if task.Annotations == nil {
+				task.Annotations = make(map[string]string)
+			}
+			task.Annotations["shepherd.io/retry-count"] = "3"
+			Expect(k8sClient.Update(ctx, &task)).To(Succeed())
+
+			By("Simulating another infrastructure failure")
+			var job batchv1.Job
+			Expect(k8sClient.Get(ctx, client.ObjectKey{
+				Namespace: resourceNamespace,
+				Name:      jobName,
+			}, &job)).To(Succeed())
+
+			now := metav1.Now()
+			job.Status.StartTime = &now
+			job.Status.Conditions = append(job.Status.Conditions,
+				batchv1.JobCondition{
+					Type:   batchv1.JobFailureTarget,
+					Status: corev1.ConditionTrue,
+				},
+				batchv1.JobCondition{
+					Type:    batchv1.JobFailed,
+					Status:  corev1.ConditionTrue,
+					Message: "Job failed",
+				},
+			)
+			Expect(k8sClient.Status().Update(ctx, &job)).To(Succeed())
+
+			By("Reconciling — should fail permanently")
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: taskNN})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(BeZero())
+
+			By("Verifying task is Failed")
+			Expect(k8sClient.Get(ctx, taskNN, &task)).To(Succeed())
+			cond := meta.FindStatusCondition(task.Status.Conditions, toolkitv1alpha1.ConditionSucceeded)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(cond.Reason).To(Equal(toolkitv1alpha1.ReasonFailed))
+			Expect(task.Status.Result.Error).To(ContainSubstring("Infrastructure failure after 3 retries"))
+		})
+
+		It("should set TimedOut when Job exceeds deadline", func() {
+			createAgentTask(taskName, resourceNamespace)
+			reconcileToPending()
+			jobName := reconcileToRunning()
+
+			By("Simulating timeout failure")
+			var job batchv1.Job
+			Expect(k8sClient.Get(ctx, client.ObjectKey{
+				Namespace: resourceNamespace,
+				Name:      jobName,
+			}, &job)).To(Succeed())
+
+			now := metav1.Now()
+			job.Status.StartTime = &now
+			job.Status.Conditions = append(job.Status.Conditions,
+				batchv1.JobCondition{
+					Type:   batchv1.JobFailureTarget,
+					Status: corev1.ConditionTrue,
+				},
+				batchv1.JobCondition{
+					Type:    batchv1.JobFailed,
+					Status:  corev1.ConditionTrue,
+					Reason:  "DeadlineExceeded",
+					Message: "Job was active longer than specified deadline",
+				},
+			)
+			Expect(k8sClient.Status().Update(ctx, &job)).To(Succeed())
+
+			By("Reconciling after timeout")
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: taskNN})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(BeZero())
+
+			By("Verifying task is TimedOut")
+			var task toolkitv1alpha1.AgentTask
+			Expect(k8sClient.Get(ctx, taskNN, &task)).To(Succeed())
+
+			cond := meta.FindStatusCondition(task.Status.Conditions, toolkitv1alpha1.ConditionSucceeded)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(cond.Reason).To(Equal(toolkitv1alpha1.ReasonTimedOut))
+			Expect(task.Status.Result.Error).To(Equal("Job exceeded timeout"))
+		})
+
+		It("should set Failed with OOMKilled when container is OOM killed", func() {
+			createAgentTask(taskName, resourceNamespace)
+			reconcileToPending()
+			jobName := reconcileToRunning()
+
+			By("Creating a pod with OOMKilled status")
+			var job batchv1.Job
+			Expect(k8sClient.Get(ctx, client.ObjectKey{
+				Namespace: resourceNamespace,
+				Name:      jobName,
+			}, &job)).To(Succeed())
+
+			pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      jobName + "-oom-pod",
+					Namespace: resourceNamespace,
+					Labels:    job.Spec.Template.Labels,
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{Name: "runner", Image: "shepherd-runner:latest"},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, pod)).To(Succeed())
+			pod.Status = corev1.PodStatus{
+				Phase: corev1.PodFailed,
+				ContainerStatuses: []corev1.ContainerStatus{
+					{
+						Name: "runner",
+						State: corev1.ContainerState{
+							Terminated: &corev1.ContainerStateTerminated{
+								ExitCode: 137,
+								Reason:   "OOMKilled",
+							},
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Status().Update(ctx, pod)).To(Succeed())
+
+			By("Simulating Job failure")
+			now := metav1.Now()
+			job.Status.StartTime = &now
+			job.Status.Conditions = append(job.Status.Conditions,
+				batchv1.JobCondition{
+					Type:   batchv1.JobFailureTarget,
+					Status: corev1.ConditionTrue,
+				},
+				batchv1.JobCondition{
+					Type:    batchv1.JobFailed,
+					Status:  corev1.ConditionTrue,
+					Message: "BackoffLimitExceeded",
+				},
+			)
+			Expect(k8sClient.Status().Update(ctx, &job)).To(Succeed())
+
+			By("Reconciling after OOM failure")
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: taskNN})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(BeZero())
+
+			By("Verifying task is Failed with OOM message")
+			var task toolkitv1alpha1.AgentTask
+			Expect(k8sClient.Get(ctx, taskNN, &task)).To(Succeed())
+
+			cond := meta.FindStatusCondition(task.Status.Conditions, toolkitv1alpha1.ConditionSucceeded)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(cond.Reason).To(Equal(toolkitv1alpha1.ReasonFailed))
+			Expect(task.Status.Result.Error).To(Equal("Container killed: OOMKilled"))
+
+			// Clean up pod
+			_ = k8sClient.Delete(ctx, pod)
+		})
+
+		It("should create new Job after infrastructure retry", func() {
+			createAgentTask(taskName, resourceNamespace)
+			reconcileToPending()
+			firstJobName := reconcileToRunning()
+
+			By("Simulating infrastructure failure — Job failed with no pods")
+			var job batchv1.Job
+			Expect(k8sClient.Get(ctx, client.ObjectKey{
+				Namespace: resourceNamespace,
+				Name:      firstJobName,
+			}, &job)).To(Succeed())
+
+			now := metav1.Now()
+			job.Status.StartTime = &now
+			job.Status.Conditions = append(job.Status.Conditions,
+				batchv1.JobCondition{
+					Type:   batchv1.JobFailureTarget,
+					Status: corev1.ConditionTrue,
+				},
+				batchv1.JobCondition{
+					Type:    batchv1.JobFailed,
+					Status:  corev1.ConditionTrue,
+					Message: "Job failed",
+				},
+			)
+			Expect(k8sClient.Status().Update(ctx, &job)).To(Succeed())
+
+			By("First retry reconcile — deletes old Job, requeues")
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: taskNN})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(BeNumerically(">", 0))
+
+			By("Next reconcile — creates new Job")
+			result, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: taskNN})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying new Job was created")
+			var task toolkitv1alpha1.AgentTask
+			Expect(k8sClient.Get(ctx, taskNN, &task)).To(Succeed())
+			Expect(task.Status.JobName).To(Equal(firstJobName), "Job name should be the same since generation hasn't changed")
+
+			// The old job was deleted and a new one created with the same name
+			var newJob batchv1.Job
+			Expect(k8sClient.Get(ctx, client.ObjectKey{
+				Namespace: resourceNamespace,
+				Name:      firstJobName,
+			}, &newJob)).To(Succeed())
 		})
 	})
 })

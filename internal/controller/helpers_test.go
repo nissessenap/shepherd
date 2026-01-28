@@ -127,6 +127,82 @@ func TestSetCondition(t *testing.T) {
 	assert.Equal(t, metav1.ConditionTrue, task.Status.Conditions[0].Status)
 }
 
+func TestGetRetryCount(t *testing.T) {
+	tests := []struct {
+		name     string
+		task     *toolkitv1alpha1.AgentTask
+		expected int
+	}{
+		{
+			name:     "nil annotations",
+			task:     &toolkitv1alpha1.AgentTask{},
+			expected: 0,
+		},
+		{
+			name: "no retry annotation",
+			task: &toolkitv1alpha1.AgentTask{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{"other": "value"},
+				},
+			},
+			expected: 0,
+		},
+		{
+			name: "retry count 2",
+			task: &toolkitv1alpha1.AgentTask{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{retryAnnotation: "2"},
+				},
+			},
+			expected: 2,
+		},
+		{
+			name: "invalid value returns 0",
+			task: &toolkitv1alpha1.AgentTask{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{retryAnnotation: "not-a-number"},
+				},
+			},
+			expected: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, getRetryCount(tt.task))
+		})
+	}
+}
+
+func TestSetRetryCount(t *testing.T) {
+	t.Run("sets on nil annotations", func(t *testing.T) {
+		task := &toolkitv1alpha1.AgentTask{}
+		setRetryCount(task, 1)
+		assert.Equal(t, "1", task.Annotations[retryAnnotation])
+	})
+
+	t.Run("sets on existing annotations", func(t *testing.T) {
+		task := &toolkitv1alpha1.AgentTask{
+			ObjectMeta: metav1.ObjectMeta{
+				Annotations: map[string]string{"existing": "value"},
+			},
+		}
+		setRetryCount(task, 3)
+		assert.Equal(t, "3", task.Annotations[retryAnnotation])
+		assert.Equal(t, "value", task.Annotations["existing"])
+	})
+
+	t.Run("overwrites existing retry count", func(t *testing.T) {
+		task := &toolkitv1alpha1.AgentTask{
+			ObjectMeta: metav1.ObjectMeta{
+				Annotations: map[string]string{retryAnnotation: "1"},
+			},
+		}
+		setRetryCount(task, 2)
+		assert.Equal(t, "2", task.Annotations[retryAnnotation])
+	})
+}
+
 func taskWithCondition(status metav1.ConditionStatus, reason string) *toolkitv1alpha1.AgentTask {
 	task := &toolkitv1alpha1.AgentTask{}
 	setCondition(task, metav1.Condition{
