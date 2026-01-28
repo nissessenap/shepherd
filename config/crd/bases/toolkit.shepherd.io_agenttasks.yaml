@@ -173,6 +173,9 @@ spec:
                     minLength: 1
                     type: string
                   contextEncoding:
+                    enum:
+                    - ""
+                    - gzip
                     type: string
                   contextUrl:
                     type: string

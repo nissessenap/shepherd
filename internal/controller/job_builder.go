@@ -22,6 +22,7 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -161,7 +162,9 @@ func buildJob(task *toolkitv1alpha1.AgentTask, cfg jobConfig) (*batchv1.Job, err
 						{
 							Name: "task-files",
 							VolumeSource: corev1.VolumeSource{
-								EmptyDir: &corev1.EmptyDirVolumeSource{},
+								EmptyDir: &corev1.EmptyDirVolumeSource{
+									SizeLimit: resource.NewQuantity(10*1024*1024, resource.BinarySI), // 10Mi
+								},
 							},
 						},
 					},

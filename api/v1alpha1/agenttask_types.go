@@ -61,7 +61,8 @@ type TaskSpec struct {
 	Description string `json:"description"`
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
-	Context         string `json:"context"`
+	Context string `json:"context"`
+	// +kubebuilder:validation:Enum="";gzip
 	ContextEncoding string `json:"contextEncoding,omitempty"`
 	ContextURL      string `json:"contextUrl,omitempty"`
 }
