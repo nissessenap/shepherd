@@ -189,6 +189,12 @@ func (r *AgentTaskReconciler) retryJob(ctx context.Context, task *toolkitv1alpha
 		return ctrl.Result{}, fmt.Errorf("deleting failed job: %w", err)
 	}
 
+	// Clear jobName from status to prevent stale Job re-fetch during deletion
+	task.Status.JobName = ""
+	if err := r.Status().Update(ctx, task); err != nil {
+		return ctrl.Result{}, fmt.Errorf("clearing job name: %w", err)
+	}
+
 	// Increment retry count
 	setRetryCount(task, retries+1)
 	if err := r.Update(ctx, task); err != nil {
@@ -205,12 +211,11 @@ func (r *AgentTaskReconciler) retryJob(ctx context.Context, task *toolkitv1alpha
 
 func (r *AgentTaskReconciler) listJobPods(ctx context.Context, job *batchv1.Job) ([]corev1.Pod, error) {
 	var podList corev1.PodList
-	// Use pod template labels rather than job.Spec.Selector.MatchLabels because
-	// the selector is set by the Job controller (which doesn't run in envtest).
-	// Our buildJob function always sets shepherd.io/task on the pod template.
+	// Use batch.kubernetes.io/job-name label to ensure only pods from this specific Job are returned,
+	// not stale pods from previous retries.
 	if err := r.List(ctx, &podList,
 		client.InNamespace(job.Namespace),
-		client.MatchingLabels(job.Spec.Template.Labels),
+		client.MatchingLabels{"batch.kubernetes.io/job-name": job.Name},
 	); err != nil {
 		return nil, err
 	}
@@ -230,6 +235,8 @@ func getRetryCount(task *toolkitv1alpha1.AgentTask) int {
 	}
 	n, err := strconv.Atoi(val)
 	if err != nil {
+		log := logf.Log.WithName("getRetryCount")
+		log.Info("corrupt retry annotation, treating as 0", "value", val, "error", err)
 		return 0
 	}
 	return n

@@ -18,6 +18,7 @@ package controller
 
 import (
 	"fmt"
+	"maps"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -336,11 +337,14 @@ var _ = Describe("AgentTask Controller", func() {
 
 			// Create a Pod matching the Job's template labels so classifyJobFailure
 			// sees a pod with a non-OOM, non-eviction failure (→ application error).
+			podLabels := make(map[string]string)
+			maps.Copy(podLabels, job.Spec.Template.Labels)
+			podLabels["batch.kubernetes.io/job-name"] = job.Name
 			pod := &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      jobName + "-pod",
 					Namespace: resourceNamespace,
-					Labels:    job.Spec.Template.Labels,
+					Labels:    podLabels,
 				},
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
@@ -349,6 +353,7 @@ var _ = Describe("AgentTask Controller", func() {
 				},
 			}
 			Expect(k8sClient.Create(ctx, pod)).To(Succeed())
+			DeferCleanup(func() { _ = k8sClient.Delete(ctx, pod) })
 			pod.Status = corev1.PodStatus{
 				Phase: corev1.PodFailed,
 				ContainerStatuses: []corev1.ContainerStatus{
@@ -395,9 +400,6 @@ var _ = Describe("AgentTask Controller", func() {
 			Expect(cond.Reason).To(Equal(toolkitv1alpha1.ReasonFailed))
 			Expect(task.Status.CompletionTime).NotTo(BeNil())
 			Expect(task.Status.Result.Error).To(Equal("BackoffLimitExceeded"))
-
-			// Clean up pod
-			_ = k8sClient.Delete(ctx, pod)
 		})
 
 		It("should include REPO_REF env var when ref is set", func() {
@@ -605,11 +607,14 @@ var _ = Describe("AgentTask Controller", func() {
 				Name:      jobName,
 			}, &job)).To(Succeed())
 
+			podLabels := make(map[string]string)
+			maps.Copy(podLabels, job.Spec.Template.Labels)
+			podLabels["batch.kubernetes.io/job-name"] = job.Name
 			pod := &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      jobName + "-oom-pod",
 					Namespace: resourceNamespace,
-					Labels:    job.Spec.Template.Labels,
+					Labels:    podLabels,
 				},
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
@@ -618,6 +623,7 @@ var _ = Describe("AgentTask Controller", func() {
 				},
 			}
 			Expect(k8sClient.Create(ctx, pod)).To(Succeed())
+			DeferCleanup(func() { _ = k8sClient.Delete(ctx, pod) })
 			pod.Status = corev1.PodStatus{
 				Phase: corev1.PodFailed,
 				ContainerStatuses: []corev1.ContainerStatus{
@@ -664,9 +670,6 @@ var _ = Describe("AgentTask Controller", func() {
 			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 			Expect(cond.Reason).To(Equal(toolkitv1alpha1.ReasonFailed))
 			Expect(task.Status.Result.Error).To(Equal("Container killed: OOMKilled"))
-
-			// Clean up pod
-			_ = k8sClient.Delete(ctx, pod)
 		})
 
 		It("should create new Job after infrastructure retry", func() {

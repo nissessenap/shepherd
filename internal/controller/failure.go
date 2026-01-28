@@ -24,11 +24,10 @@ import (
 type failureType int
 
 const (
-	failureNone           failureType = iota
-	failureInfrastructure             // pod missing, evicted — retryable
-	failureApplication                // non-zero exit — permanent
-	failureOOM                        // OOMKilled — permanent
-	failureTimeout                    // activeDeadlineSeconds exceeded — permanent
+	failureInfrastructure failureType = iota // pod missing, evicted — retryable
+	failureApplication                       // non-zero exit — permanent
+	failureOOM                               // OOMKilled — permanent
+	failureTimeout                           // activeDeadlineSeconds exceeded — permanent
 )
 
 // classifyJobFailure examines a failed Job and its Pods to determine
