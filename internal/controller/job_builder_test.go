@@ -50,6 +50,7 @@ func baseTask() *toolkitv1alpha1.AgentTask {
 			},
 			Task: toolkitv1alpha1.TaskSpec{
 				Description: "Fix the login bug",
+				Context:     "Issue #42: login page throws NPE on empty password",
 			},
 			Callback: toolkitv1alpha1.CallbackSpec{
 				URL: "https://example.com/callback",
@@ -137,6 +138,7 @@ func TestBuildJob_InitContainerEnv(t *testing.T) {
 	envMap := envToMap(initContainer.Env)
 	assert.Equal(t, "https://github.com/test-org/test-repo.git", envMap["REPO_URL"])
 	assert.Equal(t, "feature-branch", envMap["REPO_REF"])
+	assert.Equal(t, "Fix the login bug", envMap["TASK_DESCRIPTION"])
 }
 
 func TestBuildJob_InitContainerEnv_NoRef(t *testing.T) {
@@ -146,7 +148,37 @@ func TestBuildJob_InitContainerEnv_NoRef(t *testing.T) {
 	initContainer := job.Spec.Template.Spec.InitContainers[0]
 	envMap := envToMap(initContainer.Env)
 	assert.Contains(t, envMap, "REPO_URL")
+	assert.Contains(t, envMap, "TASK_DESCRIPTION")
+	assert.Contains(t, envMap, "TASK_CONTEXT", "TASK_CONTEXT should be present when context is set")
 	assert.NotContains(t, envMap, "REPO_REF", "REPO_REF should be omitted when ref is empty")
+	assert.NotContains(t, envMap, "CONTEXT_ENCODING", "CONTEXT_ENCODING should be omitted when contextEncoding is empty")
+}
+
+func TestBuildJob_InitContainerEnv_WithContext(t *testing.T) {
+	task := baseTask()
+	task.Spec.Task.Context = "base64-encoded-gzip-data"
+	task.Spec.Task.ContextEncoding = "gzip"
+
+	job, err := buildJob(task, baseCfg())
+	require.NoError(t, err)
+
+	initContainer := job.Spec.Template.Spec.InitContainers[0]
+	envMap := envToMap(initContainer.Env)
+	assert.Equal(t, "base64-encoded-gzip-data", envMap["TASK_CONTEXT"])
+	assert.Equal(t, "gzip", envMap["CONTEXT_ENCODING"])
+}
+
+func TestBuildJob_InitContainerEnv_ContextWithoutEncoding(t *testing.T) {
+	task := baseTask()
+	task.Spec.Task.Context = "plain-context-data"
+
+	job, err := buildJob(task, baseCfg())
+	require.NoError(t, err)
+
+	initContainer := job.Spec.Template.Spec.InitContainers[0]
+	envMap := envToMap(initContainer.Env)
+	assert.Equal(t, "plain-context-data", envMap["TASK_CONTEXT"])
+	assert.NotContains(t, envMap, "CONTEXT_ENCODING", "CONTEXT_ENCODING should be omitted when contextEncoding is empty")
 }
 
 func TestBuildJob_RunnerContainerEnv(t *testing.T) {
@@ -162,9 +194,12 @@ func TestBuildJob_RunnerContainerEnv(t *testing.T) {
 	envMap := envToMap(runner.Env)
 	assert.Equal(t, "my-task", envMap["SHEPHERD_TASK_ID"])
 	assert.Equal(t, "https://github.com/test-org/test-repo.git", envMap["SHEPHERD_REPO_URL"])
-	assert.Equal(t, "Fix the login bug", envMap["SHEPHERD_TASK_DESCRIPTION"])
 	assert.Equal(t, "https://example.com/callback", envMap["SHEPHERD_CALLBACK_URL"])
+	assert.Equal(t, "/task/description.txt", envMap["SHEPHERD_TASK_FILE"])
+	assert.Equal(t, "/task/context.txt", envMap["SHEPHERD_CONTEXT_FILE"])
 	assert.Equal(t, "main", envMap["SHEPHERD_REPO_REF"])
+	assert.NotContains(t, envMap, "SHEPHERD_TASK_DESCRIPTION",
+		"SHEPHERD_TASK_DESCRIPTION should not be set — runner reads from file instead")
 }
 
 func TestBuildJob_RunnerContainerEnv_NoRef(t *testing.T) {
@@ -251,7 +286,7 @@ func TestBuildJob_Volumes(t *testing.T) {
 	require.NoError(t, err)
 
 	volumes := job.Spec.Template.Spec.Volumes
-	require.Len(t, volumes, 2)
+	require.Len(t, volumes, 3)
 
 	// github-creds volume (emptyDir)
 	assert.Equal(t, "github-creds", volumes[0].Name)
@@ -261,6 +296,10 @@ func TestBuildJob_Volumes(t *testing.T) {
 	assert.Equal(t, "runner-app-key", volumes[1].Name)
 	require.NotNil(t, volumes[1].Secret)
 	assert.Equal(t, "shepherd-runner-app-key", volumes[1].Secret.SecretName)
+
+	// task-files volume (emptyDir)
+	assert.Equal(t, "task-files", volumes[2].Name)
+	assert.NotNil(t, volumes[2].EmptyDir)
 }
 
 func TestBuildJob_VolumeMounts(t *testing.T) {
@@ -269,20 +308,26 @@ func TestBuildJob_VolumeMounts(t *testing.T) {
 
 	// Init container mounts
 	initMounts := job.Spec.Template.Spec.InitContainers[0].VolumeMounts
-	require.Len(t, initMounts, 2)
+	require.Len(t, initMounts, 3)
 	assert.Equal(t, "github-creds", initMounts[0].Name)
 	assert.Equal(t, "/creds", initMounts[0].MountPath)
 	assert.False(t, initMounts[0].ReadOnly)
 	assert.Equal(t, "runner-app-key", initMounts[1].Name)
 	assert.Equal(t, "/secrets/runner-app-key", initMounts[1].MountPath)
 	assert.True(t, initMounts[1].ReadOnly)
+	assert.Equal(t, "task-files", initMounts[2].Name)
+	assert.Equal(t, "/task", initMounts[2].MountPath)
+	assert.False(t, initMounts[2].ReadOnly, "init container needs write access to task-files")
 
 	// Runner container mounts
 	runnerMounts := job.Spec.Template.Spec.Containers[0].VolumeMounts
-	require.Len(t, runnerMounts, 1)
+	require.Len(t, runnerMounts, 2)
 	assert.Equal(t, "github-creds", runnerMounts[0].Name)
 	assert.Equal(t, "/creds", runnerMounts[0].MountPath)
 	assert.True(t, runnerMounts[0].ReadOnly)
+	assert.Equal(t, "task-files", runnerMounts[1].Name)
+	assert.Equal(t, "/task", runnerMounts[1].MountPath)
+	assert.True(t, runnerMounts[1].ReadOnly, "runner should have read-only access to task-files")
 }
 
 func TestBuildJob_RunnerSecretName_FromConfig(t *testing.T) {

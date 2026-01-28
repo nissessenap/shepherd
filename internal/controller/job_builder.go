@@ -68,19 +68,32 @@ func buildJob(task *toolkitv1alpha1.AgentTask, cfg jobConfig) (*batchv1.Job, err
 	activeDeadlineSecs := int64(timeout.Seconds())
 
 	// Build init container env — include ref if specified
+	// Init container writes task description and context files for the runner.
 	initEnv := []corev1.EnvVar{
 		{Name: "REPO_URL", Value: task.Spec.Repo.URL},
+		{Name: "TASK_DESCRIPTION", Value: task.Spec.Task.Description},
 	}
 	if task.Spec.Repo.Ref != "" {
 		initEnv = append(initEnv, corev1.EnvVar{Name: "REPO_REF", Value: task.Spec.Repo.Ref})
 	}
+	if task.Spec.Task.Context != "" {
+		initEnv = append(initEnv, corev1.EnvVar{
+			Name: "TASK_CONTEXT", Value: task.Spec.Task.Context,
+		})
+	}
+	if task.Spec.Task.ContextEncoding != "" {
+		initEnv = append(initEnv, corev1.EnvVar{
+			Name: "CONTEXT_ENCODING", Value: task.Spec.Task.ContextEncoding,
+		})
+	}
 
-	// Build main container env — include ref if specified
+	// Build main container env — runner reads task input from files written by init container
 	runnerEnv := []corev1.EnvVar{
 		{Name: "SHEPHERD_TASK_ID", Value: task.Name},
 		{Name: "SHEPHERD_REPO_URL", Value: task.Spec.Repo.URL},
-		{Name: "SHEPHERD_TASK_DESCRIPTION", Value: task.Spec.Task.Description},
 		{Name: "SHEPHERD_CALLBACK_URL", Value: task.Spec.Callback.URL},
+		{Name: "SHEPHERD_TASK_FILE", Value: "/task/description.txt"},
+		{Name: "SHEPHERD_CONTEXT_FILE", Value: "/task/context.txt"},
 	}
 	if task.Spec.Repo.Ref != "" {
 		runnerEnv = append(runnerEnv, corev1.EnvVar{Name: "SHEPHERD_REPO_REF", Value: task.Spec.Repo.Ref})
@@ -114,6 +127,7 @@ func buildJob(task *toolkitv1alpha1.AgentTask, cfg jobConfig) (*batchv1.Job, err
 							VolumeMounts: []corev1.VolumeMount{
 								{Name: "github-creds", MountPath: "/creds"},
 								{Name: "runner-app-key", MountPath: "/secrets/runner-app-key", ReadOnly: true},
+								{Name: "task-files", MountPath: "/task"},
 							},
 						},
 					},
@@ -125,6 +139,7 @@ func buildJob(task *toolkitv1alpha1.AgentTask, cfg jobConfig) (*batchv1.Job, err
 							Resources: task.Spec.Runner.Resources,
 							VolumeMounts: []corev1.VolumeMount{
 								{Name: "github-creds", MountPath: "/creds", ReadOnly: true},
+								{Name: "task-files", MountPath: "/task", ReadOnly: true},
 							},
 						},
 					},
@@ -141,6 +156,12 @@ func buildJob(task *toolkitv1alpha1.AgentTask, cfg jobConfig) (*batchv1.Job, err
 								Secret: &corev1.SecretVolumeSource{
 									SecretName: cfg.RunnerSecretName,
 								},
+							},
+						},
+						{
+							Name: "task-files",
+							VolumeSource: corev1.VolumeSource{
+								EmptyDir: &corev1.EmptyDirVolumeSource{},
 							},
 						},
 					},

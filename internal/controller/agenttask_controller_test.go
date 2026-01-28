@@ -61,6 +61,7 @@ var _ = Describe("AgentTask Controller", func() {
 				},
 				Task: toolkitv1alpha1.TaskSpec{
 					Description: "Test task for reconciler",
+					Context:     "Issue body with relevant details for the LLM",
 				},
 				Callback: toolkitv1alpha1.CallbackSpec{
 					URL: "https://example.com/callback",
@@ -240,6 +241,33 @@ var _ = Describe("AgentTask Controller", func() {
 			By("Verifying Job uses AllowedRunnerImage")
 			Expect(job.Spec.Template.Spec.Containers[0].Image).To(Equal("shepherd-runner:latest"))
 
+			By("Verifying task-files volume exists")
+			volumeNames := make([]string, len(job.Spec.Template.Spec.Volumes))
+			for i, v := range job.Spec.Template.Spec.Volumes {
+				volumeNames[i] = v.Name
+			}
+			Expect(volumeNames).To(ContainElement("task-files"))
+
+			By("Verifying runner mounts /task read-only")
+			runnerMounts := job.Spec.Template.Spec.Containers[0].VolumeMounts
+			var taskFilesMount *corev1.VolumeMount
+			for i := range runnerMounts {
+				if runnerMounts[i].Name == "task-files" {
+					taskFilesMount = &runnerMounts[i]
+					break
+				}
+			}
+			Expect(taskFilesMount).NotTo(BeNil(), "runner should mount task-files volume")
+			Expect(taskFilesMount.MountPath).To(Equal("/task"))
+			Expect(taskFilesMount.ReadOnly).To(BeTrue(), "runner should have read-only access to task-files")
+
+			By("Verifying runner has file path env vars instead of inline description")
+			runnerEnv := job.Spec.Template.Spec.Containers[0].Env
+			Expect(envVarValue(runnerEnv, "SHEPHERD_TASK_FILE")).To(Equal("/task/description.txt"))
+			Expect(envVarValue(runnerEnv, "SHEPHERD_CONTEXT_FILE")).To(Equal("/task/context.txt"))
+			Expect(envVarValue(runnerEnv, "SHEPHERD_TASK_DESCRIPTION")).To(BeEmpty(),
+				"runner should not have SHEPHERD_TASK_DESCRIPTION — reads from file instead")
+
 			By("Verifying task status")
 			var task toolkitv1alpha1.AgentTask
 			Expect(k8sClient.Get(ctx, taskNN, &task)).To(Succeed())
@@ -351,6 +379,7 @@ var _ = Describe("AgentTask Controller", func() {
 					},
 					Task: toolkitv1alpha1.TaskSpec{
 						Description: "Test task with ref",
+						Context:     "Issue body with relevant details for the LLM",
 					},
 					Callback: toolkitv1alpha1.CallbackSpec{
 						URL: "https://example.com/callback",
