@@ -77,6 +77,15 @@ build: manifests generate fmt vet ## Build manager binary.
 run: manifests generate fmt vet ## Run the operator from your host.
 	SHEPHERD_RUNNER_IMAGE=shepherd-runner:latest go run ./cmd/shepherd/ operator --leader-election=false
 
+.PHONY: ko-build-local
+ko-build-local: ko ## Build container image locally with ko.
+	KO_DOCKER_REPO=$(KO_DOCKER_REPO) "$(KO)" build --sbom=none --bare ./cmd/shepherd/
+
+.PHONY: build-smoke
+build-smoke: ko-build-local manifests kustomize ## Verify ko build + kustomize render.
+	"$(KUSTOMIZE)" build config/default > /dev/null
+	@echo "Build smoke test passed: ko image built, kustomize renders cleanly"
+
 ##@ Deployment
 
 ifndef ignore-not-found
@@ -115,10 +124,15 @@ KUSTOMIZE ?= $(LOCALBIN)/kustomize
 CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
 ENVTEST ?= $(LOCALBIN)/setup-envtest
 GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
+KO ?= $(LOCALBIN)/ko
 
 ## Tool Versions
 KUSTOMIZE_VERSION ?= v5.7.1
 CONTROLLER_TOOLS_VERSION ?= v0.20.0
+KO_VERSION ?= v0.17.1
+
+## Ko
+KO_DOCKER_REPO ?= ko.local/nissessenap/shepherd
 
 #ENVTEST_VERSION is the version of controller-runtime release branch to fetch the envtest setup script (i.e. release-0.20)
 ENVTEST_VERSION ?= $(shell v='$(call gomodver,sigs.k8s.io/controller-runtime)'; \
@@ -158,6 +172,11 @@ $(ENVTEST): $(LOCALBIN)
 golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
 $(GOLANGCI_LINT): $(LOCALBIN)
 	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/v2/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
+
+.PHONY: ko
+ko: $(KO) ## Download ko locally if necessary.
+$(KO): $(LOCALBIN)
+	$(call go-install-tool,$(KO),github.com/google/ko,$(KO_VERSION))
 
 # go-install-tool will 'go install' any package with custom target and name of binary, if it doesn't exist
 # $1 - target path with name of binary

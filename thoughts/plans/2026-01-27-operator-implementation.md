@@ -1382,9 +1382,9 @@ build-smoke: ko-build-local manifests kustomize ## Verify ko build + kustomize r
 
 #### Automated Verification:
 
-- [ ] `make ko-build-local` builds the binary successfully
-- [ ] `make build-smoke` builds image and verifies kustomize renders cleanly
-- [ ] No chainsaw, kind, or e2e infrastructure needed
+- [x] `make ko-build-local` builds the binary successfully
+- [x] `make build-smoke` builds image and verifies kustomize renders cleanly
+- [x] No chainsaw, kind, or e2e infrastructure needed
 
 #### Manual Verification:
 
