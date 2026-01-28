@@ -184,8 +184,8 @@ func (r *AgentTaskReconciler) retryJob(ctx context.Context, task *toolkitv1alpha
 			fmt.Sprintf("Infrastructure failure after %d retries: %s", retries, reason))
 	}
 
-	// Delete old Job
-	if err := r.Delete(ctx, oldJob, client.PropagationPolicy(metav1.DeletePropagationBackground)); err != nil {
+	// Delete old Job (ignore if already deleted)
+	if err := r.Delete(ctx, oldJob, client.PropagationPolicy(metav1.DeletePropagationBackground)); client.IgnoreNotFound(err) != nil {
 		return ctrl.Result{}, fmt.Errorf("deleting failed job: %w", err)
 	}
 
@@ -193,6 +193,11 @@ func (r *AgentTaskReconciler) retryJob(ctx context.Context, task *toolkitv1alpha
 	task.Status.JobName = ""
 	if err := r.Status().Update(ctx, task); err != nil {
 		return ctrl.Result{}, fmt.Errorf("clearing job name: %w", err)
+	}
+
+	// Refetch task after Status().Update() to get latest ResourceVersion before doing Update()
+	if err := r.Get(ctx, client.ObjectKeyFromObject(task), task); err != nil {
+		return ctrl.Result{}, fmt.Errorf("refetching task after status update: %w", err)
 	}
 
 	// Increment retry count
@@ -237,6 +242,12 @@ func getRetryCount(task *toolkitv1alpha1.AgentTask) int {
 	if err != nil {
 		log := logf.Log.WithName("getRetryCount")
 		log.Info("corrupt retry annotation, treating as 0", "value", val, "error", err)
+		return 0
+	}
+	// Clamp negative values to 0
+	if n < 0 {
+		log := logf.Log.WithName("getRetryCount")
+		log.Info("negative retry count detected, clamping to 0", "value", n)
 		return 0
 	}
 	return n
