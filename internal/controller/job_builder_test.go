@@ -22,6 +22,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -357,6 +358,27 @@ func TestBuildJob_ServiceAccountName(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, "custom-sa", job.Spec.Template.Spec.ServiceAccountName)
+}
+
+func TestBuildJob_PodFailurePolicy(t *testing.T) {
+	job, err := buildJob(baseTask(), baseCfg())
+	require.NoError(t, err)
+
+	require.NotNil(t, job.Spec.PodFailurePolicy)
+	rules := job.Spec.PodFailurePolicy.Rules
+	require.Len(t, rules, 2)
+
+	// Rule 0: exit code 137 → FailJob
+	assert.Equal(t, batchv1.PodFailurePolicyActionFailJob, rules[0].Action)
+	require.NotNil(t, rules[0].OnExitCodes)
+	assert.Equal(t, batchv1.PodFailurePolicyOnExitCodesOpIn, rules[0].OnExitCodes.Operator)
+	assert.Equal(t, []int32{137}, rules[0].OnExitCodes.Values)
+
+	// Rule 1: DisruptionTarget → Ignore
+	assert.Equal(t, batchv1.PodFailurePolicyActionIgnore, rules[1].Action)
+	require.Len(t, rules[1].OnPodConditions, 1)
+	assert.Equal(t, corev1.DisruptionTarget, rules[1].OnPodConditions[0].Type)
+	assert.Equal(t, corev1.ConditionTrue, rules[1].OnPodConditions[0].Status)
 }
 
 // envToMap converts a slice of EnvVar to a map for easy lookup.

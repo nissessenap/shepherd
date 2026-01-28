@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -136,6 +137,32 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	return r.reconcileJobStatus(ctx, &task, &job)
 }
 
+// failureClass represents the type of Job failure.
+type failureClass int
+
+const (
+	failureApplication failureClass = iota // Non-zero exit — permanent
+	failureOOM                             // Exit code 137 (SIGKILL/OOM) — permanent
+	failureTimeout                         // ActiveDeadlineSeconds exceeded — permanent
+)
+
+// classifyJobFailure examines a Job's Failed condition to determine the failure type.
+// It relies on podFailurePolicy surfacing exit code 137 as reason "PodFailurePolicy"
+// with a message containing "exit code 137".
+func classifyJobFailure(cond batchv1.JobCondition) failureClass {
+	switch cond.Reason {
+	case "DeadlineExceeded":
+		return failureTimeout
+	case "PodFailurePolicy":
+		if strings.Contains(cond.Message, "exit code 137") {
+			return failureOOM
+		}
+		return failureApplication
+	default:
+		return failureApplication
+	}
+}
+
 func (r *AgentTaskReconciler) reconcileJobStatus(ctx context.Context, task *toolkitv1alpha1.AgentTask, job *batchv1.Job) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
@@ -147,8 +174,17 @@ func (r *AgentTaskReconciler) reconcileJobStatus(ctx context.Context, task *tool
 			}
 		case batchv1.JobFailed:
 			if c.Status == corev1.ConditionTrue {
-				// Phase 5 will add infrastructure vs application failure distinction
-				return r.markFailed(ctx, task, toolkitv1alpha1.ReasonFailed, c.Message)
+				fc := classifyJobFailure(c)
+				switch fc {
+				case failureOOM:
+					return r.markFailed(ctx, task, toolkitv1alpha1.ReasonOOM,
+						"Container killed: exit code 137 (OOM)")
+				case failureTimeout:
+					return r.markFailed(ctx, task, toolkitv1alpha1.ReasonTimedOut,
+						"Job exceeded timeout")
+				default:
+					return r.markFailed(ctx, task, toolkitv1alpha1.ReasonFailed, c.Message)
+				}
 			}
 		}
 	}

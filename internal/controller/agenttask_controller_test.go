@@ -238,6 +238,10 @@ var _ = Describe("AgentTask Controller", func() {
 				Name:      jobName,
 			}, &job)).To(Succeed())
 
+			By("Verifying podFailurePolicy is configured")
+			Expect(job.Spec.PodFailurePolicy).NotTo(BeNil())
+			Expect(job.Spec.PodFailurePolicy.Rules).To(HaveLen(2))
+
 			By("Verifying Job uses AllowedRunnerImage")
 			Expect(job.Spec.Template.Spec.Containers[0].Image).To(Equal("shepherd-runner:latest"))
 
@@ -344,7 +348,8 @@ var _ = Describe("AgentTask Controller", func() {
 				batchv1.JobCondition{
 					Type:    batchv1.JobFailed,
 					Status:  corev1.ConditionTrue,
-					Message: "BackoffLimitExceeded",
+					Reason:  "BackoffLimitExceeded",
+					Message: "Job has reached the specified backoff limit",
 				},
 			)
 			Expect(k8sClient.Status().Update(ctx, &job)).To(Succeed())
@@ -363,7 +368,100 @@ var _ = Describe("AgentTask Controller", func() {
 			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 			Expect(cond.Reason).To(Equal(toolkitv1alpha1.ReasonFailed))
 			Expect(task.Status.CompletionTime).NotTo(BeNil())
-			Expect(task.Status.Result.Error).To(Equal("BackoffLimitExceeded"))
+			Expect(task.Status.Result.Error).To(Equal("Job has reached the specified backoff limit"))
+		})
+
+		It("should set OOM reason when Job fails with PodFailurePolicy exit code 137", func() {
+			createAgentTask(taskName, resourceNamespace)
+			reconcileToPending()
+			jobName := reconcileToRunning()
+
+			By("Simulating PodFailurePolicy OOM failure")
+			var job batchv1.Job
+			Expect(k8sClient.Get(ctx, client.ObjectKey{
+				Namespace: resourceNamespace,
+				Name:      jobName,
+			}, &job)).To(Succeed())
+
+			now := metav1.Now()
+			job.Status.StartTime = &now
+			// JobFailureTarget is set for realism (Kubernetes sets both conditions)
+			// but classifyJobFailure only examines the JobFailed condition.
+			job.Status.Conditions = append(job.Status.Conditions,
+				batchv1.JobCondition{
+					Type:   batchv1.JobFailureTarget,
+					Status: corev1.ConditionTrue,
+				},
+				batchv1.JobCondition{
+					Type:    batchv1.JobFailed,
+					Status:  corev1.ConditionTrue,
+					Reason:  "PodFailurePolicy",
+					Message: "Container runner for pod default/test-pod failed with exit code 137 matching FailJob rule at index 0",
+				},
+			)
+			Expect(k8sClient.Status().Update(ctx, &job)).To(Succeed())
+
+			By("Reconciling after OOM failure")
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: taskNN})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(BeZero())
+
+			By("Verifying task has OOM reason")
+			var task toolkitv1alpha1.AgentTask
+			Expect(k8sClient.Get(ctx, taskNN, &task)).To(Succeed())
+
+			cond := meta.FindStatusCondition(task.Status.Conditions, toolkitv1alpha1.ConditionSucceeded)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(cond.Reason).To(Equal(toolkitv1alpha1.ReasonOOM))
+			Expect(cond.Message).To(ContainSubstring("exit code 137"))
+			Expect(task.Status.CompletionTime).NotTo(BeNil())
+			Expect(task.Status.Result.Error).To(ContainSubstring("exit code 137"))
+		})
+
+		It("should set TimedOut reason when Job fails with DeadlineExceeded", func() {
+			createAgentTask(taskName, resourceNamespace)
+			reconcileToPending()
+			jobName := reconcileToRunning()
+
+			By("Simulating timeout failure")
+			var job batchv1.Job
+			Expect(k8sClient.Get(ctx, client.ObjectKey{
+				Namespace: resourceNamespace,
+				Name:      jobName,
+			}, &job)).To(Succeed())
+
+			now := metav1.Now()
+			job.Status.StartTime = &now
+			job.Status.Conditions = append(job.Status.Conditions,
+				batchv1.JobCondition{
+					Type:   batchv1.JobFailureTarget,
+					Status: corev1.ConditionTrue,
+				},
+				batchv1.JobCondition{
+					Type:    batchv1.JobFailed,
+					Status:  corev1.ConditionTrue,
+					Reason:  "DeadlineExceeded",
+					Message: "Job was active longer than specified deadline",
+				},
+			)
+			Expect(k8sClient.Status().Update(ctx, &job)).To(Succeed())
+
+			By("Reconciling after timeout")
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: taskNN})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(BeZero())
+
+			By("Verifying task has TimedOut reason")
+			var task toolkitv1alpha1.AgentTask
+			Expect(k8sClient.Get(ctx, taskNN, &task)).To(Succeed())
+
+			cond := meta.FindStatusCondition(task.Status.Conditions, toolkitv1alpha1.ConditionSucceeded)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(cond.Reason).To(Equal(toolkitv1alpha1.ReasonTimedOut))
+			Expect(cond.Message).To(ContainSubstring("timeout"))
+			Expect(task.Status.CompletionTime).NotTo(BeNil())
 		})
 
 		It("should include REPO_REF env var when ref is set", func() {

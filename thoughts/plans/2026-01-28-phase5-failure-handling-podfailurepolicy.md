@@ -157,8 +157,8 @@ func TestBuildJob_PodFailurePolicy(t *testing.T) {
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `make test` passes — including new `TestBuildJob_PodFailurePolicy`
-- [ ] `go vet ./...` clean
+- [x] `make test` passes — including new `TestBuildJob_PodFailurePolicy`
+- [x] `go vet ./...` clean
 
 #### Manual Verification:
 - [ ] Review that rule ordering is correct (exit code 137 before DisruptionTarget)
@@ -272,9 +272,9 @@ Add `"strings"` to the import block in `agenttask_controller.go`.
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `make test` passes
-- [ ] `go vet ./...` clean
-- [ ] `make generate && make manifests` succeeds (no RBAC changes needed — no pod permissions)
+- [x] `make test` passes
+- [x] `go vet ./...` clean
+- [x] `make generate && make manifests` succeeds (no RBAC changes needed — no pod permissions)
 
 #### Manual Verification:
 - [ ] Review that RBAC in `config/rbac/role.yaml` does NOT include `pods` resource
@@ -503,13 +503,13 @@ Expect(job.Spec.PodFailurePolicy.Rules).To(HaveLen(2))
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `make test` passes all tests
-- [ ] `go vet ./...` clean
-- [ ] Unit tests cover: timeout, OOM, application failure (3+ reasons), unknown reason, empty reason
-- [ ] envtest: OOM failure → `ReasonOOM` condition
-- [ ] envtest: timeout failure → `ReasonTimedOut` condition
-- [ ] envtest: application failure → `ReasonFailed` condition
-- [ ] envtest: created Job has `podFailurePolicy` with 2 rules
+- [x] `make test` passes all tests
+- [x] `go vet ./...` clean
+- [x] Unit tests cover: timeout, OOM, application failure (3+ reasons), unknown reason, empty reason
+- [x] envtest: OOM failure → `ReasonOOM` condition
+- [x] envtest: timeout failure → `ReasonTimedOut` condition
+- [x] envtest: application failure → `ReasonFailed` condition
+- [x] envtest: created Job has `podFailurePolicy` with 2 rules
 
 #### Manual Verification:
 - [ ] Review that failure classification matches the table in Design Decisions
