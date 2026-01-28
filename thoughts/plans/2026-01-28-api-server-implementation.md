@@ -259,6 +259,7 @@ The `CallbackSpec.SecretRef` removal will require updating any tests that set `S
 - [ ] `make build` compiles successfully
 - [ ] `make test` passes all existing tests (no breakage from SecretRef removal)
 - [ ] `go vet ./...` clean
+- [ ] `make lint-fix` passes (golangci-lint)
 - [ ] `SHEPHERD_CALLBACK_SECRET=test shepherd api --help` shows correct flags
 
 #### Manual Verification:
@@ -622,6 +623,7 @@ Use `httptest` and a fake K8s client:
 #### Automated Verification:
 - [ ] `make test` passes all tests (existing + new)
 - [ ] `go vet ./...` clean
+- [ ] `make lint-fix` passes (golangci-lint)
 - [ ] Unit tests cover validation, compression, CRD creation, error cases
 - [ ] `curl -X POST localhost:8080/api/v1/tasks -d '{"repo":{"url":"https://github.com/test/repo"},"task":{"description":"test"},"callbackUrl":"http://localhost/cb"}' -H 'Content-Type: application/json'` returns 201 (requires running API with kubeconfig)
 
@@ -770,6 +772,7 @@ The API passes these labels through to the CRD. The adapter is responsible for s
 #### Automated Verification:
 - [ ] `make test` passes all tests
 - [ ] `go vet ./...` clean
+- [ ] `make lint-fix` passes (golangci-lint)
 - [ ] Unit tests cover list, filter, detail, and error cases
 - [ ] Active filter correctly excludes Succeeded/Failed tasks
 
@@ -1034,6 +1037,7 @@ r.Post("/tasks/{taskID}/status", handler.updateTaskStatus)
 #### Automated Verification:
 - [ ] `make test` passes all tests
 - [ ] `go vet ./...` clean
+- [ ] `make lint-fix` passes (golangci-lint)
 - [ ] HMAC signature matches expected output for known input
 - [ ] Runner callback accepted even if adapter callback fails
 - [ ] Notified condition set after terminal callback
@@ -1302,6 +1306,7 @@ This is separate from the operator's RBAC. The API server does NOT need Job or P
 #### Automated Verification:
 - [ ] `make test` passes all tests
 - [ ] `go vet ./...` clean
+- [ ] `make lint-fix` passes (golangci-lint)
 - [ ] Watcher correctly detects terminal state transitions
 - [ ] Notified condition prevents duplicate callbacks
 - [ ] Callback failure is logged but doesn't crash the watcher

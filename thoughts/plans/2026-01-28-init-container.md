@@ -89,17 +89,20 @@ package main
 
 import (
     "fmt"
+    "log/slog"
     "os"
 )
 
 func main() {
     if err := run(); err != nil {
-        fmt.Fprintf(os.Stderr, "shepherd-init: %v\n", err)
+        slog.Error("shepherd-init failed", "error", err)
         os.Exit(1)
     }
 }
 
 func run() error {
+    slog.Info("shepherd-init starting")
+
     if err := writeTaskFiles(); err != nil {
         return fmt.Errorf("writing task files: %w", err)
     }
@@ -108,6 +111,7 @@ func run() error {
         return fmt.Errorf("generating github token: %w", err)
     }
 
+    slog.Info("shepherd-init completed successfully")
     return nil
 }
 ```
@@ -130,6 +134,7 @@ import (
     "encoding/base64"
     "fmt"
     "io"
+    "log/slog"
     "os"
     "path/filepath"
 )
@@ -146,14 +151,22 @@ func writeTaskFiles() error {
         return fmt.Errorf("TASK_DESCRIPTION is required")
     }
 
-    if err := writeFile(filepath.Join(taskDir, descriptionFilename), []byte(desc)); err != nil {
+    descPath := filepath.Join(taskDir, descriptionFilename)
+    descData := []byte(desc)
+    if err := writeFile(descPath, descData, 0644); err != nil {
         return fmt.Errorf("writing description: %w", err)
     }
+    slog.Info("wrote task file", "path", descPath, "bytes", len(descData))
 
     context := os.Getenv("TASK_CONTEXT")
     if context == "" {
         // Write empty file so runner doesn't need to check existence
-        return writeFile(filepath.Join(taskDir, contextFilename), nil)
+        contextPath := filepath.Join(taskDir, contextFilename)
+        if err := writeFile(contextPath, nil, 0644); err != nil {
+            return fmt.Errorf("writing empty context: %w", err)
+        }
+        slog.Info("wrote task file", "path", contextPath, "bytes", 0)
+        return nil
     }
 
     encoding := os.Getenv("CONTEXT_ENCODING")
@@ -162,7 +175,13 @@ func writeTaskFiles() error {
         return fmt.Errorf("decoding context: %w", err)
     }
 
-    return writeFile(filepath.Join(taskDir, contextFilename), data)
+    contextPath := filepath.Join(taskDir, contextFilename)
+    if err := writeFile(contextPath, data, 0644); err != nil {
+        return fmt.Errorf("writing context: %w", err)
+    }
+    slog.Info("wrote task file", "path", contextPath, "bytes", len(data))
+
+    return nil
 }
 
 func decodeContext(raw, encoding string) ([]byte, error) {
@@ -191,8 +210,8 @@ func decodeContext(raw, encoding string) ([]byte, error) {
     return decompressed, nil
 }
 
-func writeFile(path string, data []byte) error {
-    return os.WriteFile(path, data, 0644)
+func writeFile(path string, data []byte, perm os.FileMode) error {
+    return os.WriteFile(path, data, perm)
 }
 ```
 
@@ -201,7 +220,7 @@ func writeFile(path string, data []byte) error {
 **File**: `cmd/shepherd-init/taskfiles_test.go`
 
 ```go
-// Test: TASK_DESCRIPTION is written to description.txt
+// Test: TASK_DESCRIPTION is written to description.txt with correct permissions
 // Test: Empty TASK_DESCRIPTION returns error
 // Test: Empty TASK_CONTEXT writes empty context.txt
 // Test: Plaintext TASK_CONTEXT (no encoding) written as-is
@@ -210,6 +229,7 @@ func writeFile(path string, data []byte) error {
 // Test: Invalid gzip data returns error
 // Test: decodeContext with empty encoding returns raw bytes
 // Test: decodeContext with "gzip" encoding decompresses correctly
+// Test: writeFile respects permission parameter (0644 for task files, 0600 for token)
 ```
 
 Use `t.TempDir()` to avoid needing real `/task` mount — make `taskDir` configurable via a parameter or test helper.
@@ -263,12 +283,14 @@ go get github.com/golang-jwt/jwt/v5
 package main
 
 import (
+    "bytes"
     "crypto/rsa"
     "crypto/x509"
     "encoding/json"
     "encoding/pem"
     "fmt"
     "io"
+    "log/slog"
     "net/http"
     "net/url"
     "os"
@@ -325,6 +347,8 @@ func githubConfigFromEnv() (githubConfig, error) {
 }
 
 func generateGitHubToken() error {
+    slog.Info("generating GitHub installation token")
+
     cfg, err := githubConfigFromEnv()
     if err != nil {
         return err
@@ -340,17 +364,21 @@ func generateGitHubToken() error {
         return fmt.Errorf("creating JWT: %w", err)
     }
 
-    repoName := parseRepoName(cfg.RepoURL)
+    repoName, err := parseRepoName(cfg.RepoURL)
+    if err != nil {
+        return fmt.Errorf("parsing repo URL: %w", err)
+    }
 
     token, err := exchangeToken(cfg.BaseURL, cfg.InstallationID, jwtToken, repoName)
     if err != nil {
         return fmt.Errorf("exchanging token: %w", err)
     }
 
-    if err := writeFile(cfg.TokenPath, []byte(token)); err != nil {
+    if err := writeFile(cfg.TokenPath, []byte(token), 0600); err != nil {
         return fmt.Errorf("writing token: %w", err)
     }
 
+    slog.Info("GitHub installation token generated successfully")
     return nil
 }
 
@@ -394,20 +422,21 @@ func createJWT(appID int64, key *rsa.PrivateKey) (string, error) {
 }
 
 // parseRepoName extracts "repo" from "https://github.com/org/repo.git" or "https://github.com/org/repo".
-func parseRepoName(repoURL string) string {
+// Returns error if repoURL is non-empty but malformed.
+func parseRepoName(repoURL string) (string, error) {
     if repoURL == "" {
-        return ""
+        return "", nil
     }
     u, err := url.Parse(repoURL)
     if err != nil {
-        return ""
+        return "", fmt.Errorf("invalid repo URL: %w", err)
     }
     parts := strings.Split(strings.Trim(u.Path, "/"), "/")
     if len(parts) < 2 {
-        return ""
+        return "", fmt.Errorf("repo URL must contain owner/repo: %s", repoURL)
     }
     name := parts[1]
-    return strings.TrimSuffix(name, ".git")
+    return strings.TrimSuffix(name, ".git"), nil
 }
 
 // exchangeToken calls GitHub API to exchange JWT for an installation access token.
@@ -425,7 +454,7 @@ func exchangeToken(baseURL string, installationID int64, jwtToken, repoName stri
         if err != nil {
             return "", fmt.Errorf("marshaling request body: %w", err)
         }
-        bodyReader = strings.NewReader(string(bodyBytes))
+        bodyReader = bytes.NewReader(bodyBytes)
     }
 
     req, err := http.NewRequest("POST", endpoint, bodyReader)
@@ -438,7 +467,8 @@ func exchangeToken(baseURL string, installationID int64, jwtToken, repoName stri
         req.Header.Set("Content-Type", "application/json")
     }
 
-    resp, err := http.DefaultClient.Do(req)
+    client := &http.Client{Timeout: 30 * time.Second}
+    resp, err := client.Do(req)
     if err != nil {
         return "", fmt.Errorf("POST %s: %w", endpoint, err)
     }
@@ -472,10 +502,11 @@ func exchangeToken(baseURL string, installationID int64, jwtToken, repoName stri
 **File**: `cmd/shepherd-init/github_test.go`
 
 ```go
-// Test: parseRepoName("https://github.com/org/repo.git") → "repo"
-// Test: parseRepoName("https://github.com/org/repo") → "repo"
-// Test: parseRepoName("") → ""
-// Test: parseRepoName("https://github.com/org") → "" (invalid)
+// Test: parseRepoName("https://github.com/org/repo.git") → ("repo", nil)
+// Test: parseRepoName("https://github.com/org/repo") → ("repo", nil)
+// Test: parseRepoName("") → ("", nil)
+// Test: parseRepoName("https://github.com/org") → ("", error) (malformed)
+// Test: parseRepoName("not-a-url") → ("", error) (invalid URL)
 // Test: readPrivateKey reads PKCS1 PEM key
 // Test: readPrivateKey reads PKCS8 PEM key
 // Test: readPrivateKey returns error for non-PEM file
@@ -488,6 +519,7 @@ func exchangeToken(baseURL string, installationID int64, jwtToken, repoName stri
 // Test: exchangeToken sends no body when repoName is empty
 // Test: exchangeToken returns error on non-201 response
 // Test: exchangeToken returns error on empty token in response
+// Test: exchangeToken respects 30-second timeout
 // Test: githubConfigFromEnv reads all env vars correctly
 // Test: githubConfigFromEnv defaults BaseURL to api.github.com
 // Test: githubConfigFromEnv returns error for missing GITHUB_APP_ID
@@ -495,6 +527,8 @@ func exchangeToken(baseURL string, installationID int64, jwtToken, repoName stri
 ```
 
 Use `httptest.NewServer` for exchange token tests — mock the GitHub API endpoint. Use `crypto/rsa` `GenerateKey` to create test keys.
+
+**Note on testability**: The HTTP client with 30-second timeout is created inline in `exchangeToken`. For more advanced testing (e.g., timeout scenarios with custom test servers), consider making the `*http.Client` injectable via the `githubConfig` struct in future iterations.
 
 ### Success Criteria
 
@@ -532,6 +566,7 @@ type OperatorCmd struct {
     // ... existing fields ...
     GithubAppID          int64  `help:"GitHub Runner App ID" required:"" env:"SHEPHERD_GITHUB_APP_ID"`
     GithubInstallationID int64  `help:"GitHub Runner App installation ID" required:"" env:"SHEPHERD_GITHUB_INSTALLATION_ID"`
+    GithubAPIURL         string `help:"GitHub API base URL" default:"https://api.github.com" env:"SHEPHERD_GITHUB_API_URL"`
 }
 ```
 
@@ -543,6 +578,7 @@ func (c *OperatorCmd) Run(_ *CLI) error {
         // ... existing fields ...
         GithubAppID:          c.GithubAppID,
         GithubInstallationID: c.GithubInstallationID,
+        GithubAPIURL:         c.GithubAPIURL,
     })
 }
 ```
@@ -558,6 +594,7 @@ type Options struct {
     // ... existing fields ...
     GithubAppID          int64
     GithubInstallationID int64
+    GithubAPIURL         string
 }
 ```
 
@@ -568,6 +605,7 @@ Pass to `AgentTaskReconciler`:
     // ... existing fields ...
     GithubAppID:          opts.GithubAppID,
     GithubInstallationID: opts.GithubInstallationID,
+    GithubAPIURL:         opts.GithubAPIURL,
 }
 ```
 
@@ -582,6 +620,7 @@ type AgentTaskReconciler struct {
     // ... existing fields ...
     GithubAppID          int64
     GithubInstallationID int64
+    GithubAPIURL         string
 }
 ```
 
@@ -596,6 +635,7 @@ type jobConfig struct {
     // ... existing fields ...
     GithubAppID          int64
     GithubInstallationID int64
+    GithubAPIURL         string
 }
 ```
 
@@ -607,6 +647,7 @@ initEnv := []corev1.EnvVar{
     {Name: "TASK_DESCRIPTION", Value: task.Spec.Task.Description},
     {Name: "GITHUB_APP_ID", Value: strconv.FormatInt(cfg.GithubAppID, 10)},
     {Name: "GITHUB_INSTALLATION_ID", Value: strconv.FormatInt(cfg.GithubInstallationID, 10)},
+    {Name: "GITHUB_API_URL", Value: cfg.GithubAPIURL},
 }
 ```
 
@@ -614,7 +655,7 @@ initEnv := []corev1.EnvVar{
 
 **File**: `internal/controller/job_builder_test.go`
 
-- Verify init container env includes `GITHUB_APP_ID` and `GITHUB_INSTALLATION_ID`
+- Verify init container env includes `GITHUB_APP_ID`, `GITHUB_INSTALLATION_ID`, and `GITHUB_API_URL`
 - Verify values match the jobConfig
 
 **File**: `internal/controller/agenttask_controller_test.go`
@@ -627,7 +668,7 @@ initEnv := []corev1.EnvVar{
 - [ ] `make test` passes all tests
 - [ ] `make build` compiles
 - [ ] `go vet ./...` clean
-- [ ] Job builder tests verify GITHUB_APP_ID and GITHUB_INSTALLATION_ID env vars
+- [ ] Job builder tests verify GITHUB_APP_ID, GITHUB_INSTALLATION_ID, and GITHUB_API_URL env vars
 - [ ] Existing envtest integration tests still pass
 
 #### Manual Verification:
@@ -698,6 +739,7 @@ run: manifests generate fmt vet ## Run the operator from your host.
 	SHEPHERD_RUNNER_IMAGE=shepherd-runner:latest \
 	SHEPHERD_GITHUB_APP_ID=12345 \
 	SHEPHERD_GITHUB_INSTALLATION_ID=67890 \
+	SHEPHERD_GITHUB_API_URL=https://api.github.com \
 	go run ./cmd/shepherd/ operator --leader-election=false
 ```
 
@@ -734,7 +776,8 @@ run: manifests generate fmt vet ## Run the operator from your host.
 ### Operator Tests (internal/controller/)
 
 **Job builder (`job_builder_test.go`):**
-- Init container has GITHUB_APP_ID and GITHUB_INSTALLATION_ID env vars
+
+- Init container has GITHUB_APP_ID, GITHUB_INSTALLATION_ID, and GITHUB_API_URL env vars
 - Values correctly propagated from jobConfig
 
 ### Test Patterns
@@ -760,7 +803,8 @@ That's it. Everything else is stdlib:
 - `encoding/pem` — key parsing
 - `crypto/rsa`, `crypto/x509` — key parsing
 - `net/http` — one API call
-- `os`, `io`, `fmt`, `path/filepath`, `strings`, `strconv`, `time` — basics
+- `log/slog` — structured logging (Go 1.21+)
+- `os`, `io`, `fmt`, `path/filepath`, `strings`, `strconv`, `time`, `bytes` — basics
 
 ### Operator module (unchanged `go.mod`)
 
@@ -808,7 +852,7 @@ data:
 - **Private key isolation**: The private key is only accessible to the init container, never the runner. The runner only receives the short-lived token.
 - **Token scoping**: Installation token is restricted to the specific target repository via the `repositories` parameter.
 - **Token lifetime**: 1 hour (GitHub hardcoded). The Job's `activeDeadlineSeconds` (default 30m) ensures the Job completes before the token expires.
-- **File permissions**: Token file written with 0644. In production, consider 0600 — but since the pod has a single user context and the volume is ephemeral, 0644 is acceptable for MVP.
+- **File permissions**: Token file written with 0600 (owner read-write only) for security. Task files written with 0644 (readable by all pod containers).
 
 ## References
 
