@@ -26,5 +26,6 @@ const (
 	ReasonSucceeded = "Succeeded"
 	ReasonFailed    = "Failed"
 	ReasonTimedOut  = "TimedOut"
+	ReasonOOM       = "OOM"
 	ReasonCancelled = "Cancelled"
 )
