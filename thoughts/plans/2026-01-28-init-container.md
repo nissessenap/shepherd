@@ -382,6 +382,11 @@ func generateGitHubToken() error {
     return nil
 }
 
+// Note: The token is written with mode 0600 (owner read-write only). The Job spec must ensure
+// both init and runner containers run as the same UID (via securityContext.runAsUser), or use
+// group-readable permissions (0640) with a shared fsGroup in the pod security context. The
+// operator's job_builder.go should enforce this to ensure the runner container can read the token.
+
 func readPrivateKey(path string) (*rsa.PrivateKey, error) {
     data, err := os.ReadFile(path)
     if err != nil {
@@ -463,6 +468,7 @@ func exchangeToken(baseURL string, installationID int64, jwtToken, repoName stri
     }
     req.Header.Set("Authorization", "Bearer "+jwtToken)
     req.Header.Set("Accept", "application/vnd.github+json")
+    req.Header.Set("User-Agent", "shepherd-init")
     if bodyReader != nil {
         req.Header.Set("Content-Type", "application/json")
     }
