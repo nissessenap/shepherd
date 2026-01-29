@@ -52,9 +52,8 @@ vet: ## Run go vet against code.
 	go vet ./...
 
 .PHONY: test
-test: manifests generate fmt vet setup-envtest ## Run all tests.
+test: manifests generate fmt vet setup-envtest test-init ## Run all tests.
 	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
-	cd cmd/shepherd-init && go test ./... -coverprofile cover-init.out
 
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter
