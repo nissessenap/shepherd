@@ -185,7 +185,7 @@ func exchangeToken(baseURL string, installationID int64, jwtToken, repoName stri
 	// Build request body — scope to repo if provided
 	var bodyReader io.Reader
 	if repoName != "" {
-		body := map[string]interface{}{
+		body := map[string]any{
 			"repositories": []string{repoName},
 		}
 		bodyBytes, err := json.Marshal(body)
@@ -211,7 +211,7 @@ func exchangeToken(baseURL string, installationID int64, jwtToken, repoName stri
 	if err != nil {
 		return "", fmt.Errorf("POST %s: %w", endpoint, err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck // Best-effort close on read-only response body
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {

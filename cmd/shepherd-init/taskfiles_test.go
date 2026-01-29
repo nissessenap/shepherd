@@ -141,21 +141,21 @@ func TestWriteTaskFilesToDir_ContextPermissions(t *testing.T) {
 }
 
 func TestDecodeContext_EmptyEncoding_ReturnsRawBytes(t *testing.T) {
-	raw := "hello world"
+	raw := "raw context text"
 	data, err := decodeContext(raw, "")
 	require.NoError(t, err)
 	assert.Equal(t, []byte(raw), data)
 }
 
 func TestDecodeContext_PlainEncoding_ReturnsRawBytes(t *testing.T) {
-	raw := "hello world"
+	raw := "plain context text"
 	data, err := decodeContext(raw, "plain")
 	require.NoError(t, err)
 	assert.Equal(t, []byte(raw), data)
 }
 
 func TestDecodeContext_UnknownEncoding_ReturnsError(t *testing.T) {
-	raw := "hello world"
+	raw := "some context text"
 	_, err := decodeContext(raw, "unknown")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported encoding")

@@ -95,7 +95,7 @@ func decodeContext(raw, encoding string) ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("gzip reader: %w", err)
 		}
-		defer gr.Close()
+		defer gr.Close() //nolint:errcheck // Best-effort close on read-only gzip reader
 
 		decompressed, err := io.ReadAll(gr)
 		if err != nil {

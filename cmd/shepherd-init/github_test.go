@@ -180,7 +180,7 @@ func TestCreateJWT_ProducesValidRS256Token(t *testing.T) {
 	require.NoError(t, err)
 
 	// Parse and verify
-	token, err := jwt.ParseWithClaims(tokenStr, &jwt.RegisteredClaims{}, func(tok *jwt.Token) (interface{}, error) {
+	token, err := jwt.ParseWithClaims(tokenStr, &jwt.RegisteredClaims{}, func(tok *jwt.Token) (any, error) {
 		assert.Equal(t, jwt.SigningMethodRS256, tok.Method)
 		return &key.PublicKey, nil
 	})
@@ -195,7 +195,7 @@ func TestCreateJWT_CorrectIssuer(t *testing.T) {
 	tokenStr, err := createJWT(appID, key)
 	require.NoError(t, err)
 
-	token, err := jwt.ParseWithClaims(tokenStr, &jwt.RegisteredClaims{}, func(t *jwt.Token) (interface{}, error) {
+	token, err := jwt.ParseWithClaims(tokenStr, &jwt.RegisteredClaims{}, func(t *jwt.Token) (any, error) {
 		return &key.PublicKey, nil
 	})
 	require.NoError(t, err)
@@ -213,7 +213,7 @@ func TestCreateJWT_IssuedAt60SecondsInPast(t *testing.T) {
 
 	after := time.Now().Add(-60 * time.Second)
 
-	token, err := jwt.ParseWithClaims(tokenStr, &jwt.RegisteredClaims{}, func(t *jwt.Token) (interface{}, error) {
+	token, err := jwt.ParseWithClaims(tokenStr, &jwt.RegisteredClaims{}, func(t *jwt.Token) (any, error) {
 		return &key.PublicKey, nil
 	})
 	require.NoError(t, err)
@@ -233,7 +233,7 @@ func TestCreateJWT_ExpiresIn10Minutes(t *testing.T) {
 
 	after := time.Now().Add(10 * time.Minute)
 
-	token, err := jwt.ParseWithClaims(tokenStr, &jwt.RegisteredClaims{}, func(t *jwt.Token) (interface{}, error) {
+	token, err := jwt.ParseWithClaims(tokenStr, &jwt.RegisteredClaims{}, func(t *jwt.Token) (any, error) {
 		return &key.PublicKey, nil
 	})
 	require.NoError(t, err)
@@ -261,14 +261,14 @@ func TestExchangeToken_SuccessWithRepoScope(t *testing.T) {
 		// Verify body has repositories scope
 		body, err := io.ReadAll(r.Body)
 		require.NoError(t, err)
-		var payload map[string]interface{}
+		var payload map[string]any
 		require.NoError(t, json.Unmarshal(body, &payload))
-		repos, ok := payload["repositories"].([]interface{})
+		repos, ok := payload["repositories"].([]any)
 		require.True(t, ok)
-		assert.Equal(t, []interface{}{"my-repo"}, repos)
+		assert.Equal(t, []any{"my-repo"}, repos)
 
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(map[string]string{"token": "ghs_test_token_123"})
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]string{"token": "ghs_test_token_123"}))
 	}))
 	defer srv.Close()
 
@@ -288,7 +288,7 @@ func TestExchangeToken_SuccessWithoutRepoScope(t *testing.T) {
 		assert.Empty(t, body)
 
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(map[string]string{"token": "ghs_unscoped_token"})
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]string{"token": "ghs_unscoped_token"}))
 	}))
 	defer srv.Close()
 
@@ -300,7 +300,7 @@ func TestExchangeToken_SuccessWithoutRepoScope(t *testing.T) {
 func TestExchangeToken_Non201Response(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"message":"Bad credentials"}`))
+		_, _ = w.Write([]byte(`{"message":"Bad credentials"}`))
 	}))
 	defer srv.Close()
 
@@ -313,7 +313,7 @@ func TestExchangeToken_Non201Response(t *testing.T) {
 func TestExchangeToken_EmptyTokenInResponse(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(map[string]string{"token": ""})
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]string{"token": ""}))
 	}))
 	defer srv.Close()
 
@@ -325,7 +325,7 @@ func TestExchangeToken_EmptyTokenInResponse(t *testing.T) {
 func TestExchangeToken_InvalidJSON(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusCreated)
-		w.Write([]byte("not json"))
+		_, _ = w.Write([]byte("not json"))
 	}))
 	defer srv.Close()
 
@@ -339,7 +339,7 @@ func TestExchangeToken_CorrectEndpointPath(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(map[string]string{"token": "ghs_test"})
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]string{"token": "ghs_test"}))
 	}))
 	defer srv.Close()
 
@@ -422,7 +422,7 @@ func TestCreateJWT_RoundTrip_VerifiableWithPublicKey(t *testing.T) {
 	require.NoError(t, err)
 
 	// Parse with public key — should succeed
-	token, err := jwt.ParseWithClaims(tokenStr, &jwt.RegisteredClaims{}, func(tok *jwt.Token) (interface{}, error) {
+	token, err := jwt.ParseWithClaims(tokenStr, &jwt.RegisteredClaims{}, func(tok *jwt.Token) (any, error) {
 		if _, ok := tok.Method.(*jwt.SigningMethodRSA); !ok {
 			return nil, jwt.ErrSignatureInvalid
 		}
@@ -437,6 +437,6 @@ func TestCreateJWT_RoundTrip_VerifiableWithPublicKey(t *testing.T) {
 	assert.NotNil(t, claims.ExpiresAt)
 
 	// Verify timing: exp - iat should be ~11 minutes (10m future + 60s past)
-	diff := claims.ExpiresAt.Time.Sub(claims.IssuedAt.Time)
+	diff := claims.ExpiresAt.Sub(claims.IssuedAt.Time)
 	assert.InDelta(t, 11*time.Minute, diff, float64(2*time.Second))
 }

@@ -752,11 +752,11 @@ run: manifests generate fmt vet ## Run the operator from your host.
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `make test-init` passes
-- [ ] `make ko-build-init` builds successfully
-- [ ] `make build-smoke` includes init container build
-- [ ] `make lint-init` passes
-- [ ] `make vet-init` passes
+- [x] `make test-init` passes
+- [x] `make ko-build-init` builds successfully
+- [x] `make build-smoke` includes init container build
+- [x] `make lint-init` passes
+- [x] `make vet-init` passes
 
 #### Manual Verification:
 - [ ] `make build-smoke` exits 0
