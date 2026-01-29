@@ -539,11 +539,11 @@ Use `httptest.NewServer` for exchange token tests — mock the GitHub API endpoi
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `cd cmd/shepherd-init && go build .` compiles
-- [ ] `cd cmd/shepherd-init && go test ./...` passes all tests
-- [ ] `cd cmd/shepherd-init && go vet ./...` clean
-- [ ] JWT claims verified in tests (iss, iat, exp)
-- [ ] Token scoping (repositories field) verified in tests
+- [x] `cd cmd/shepherd-init && go build .` compiles
+- [x] `cd cmd/shepherd-init && go test ./...` passes all tests
+- [x] `cd cmd/shepherd-init && go vet ./...` clean
+- [x] JWT claims verified in tests (iss, iat, exp)
+- [x] Token scoping (repositories field) verified in tests
 
 #### Manual Verification:
 - [ ] Review JWT creation matches GitHub's requirements (RS256, correct claims)
