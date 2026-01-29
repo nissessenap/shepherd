@@ -237,9 +237,9 @@ Use `t.TempDir()` to avoid needing real `/task` mount — make `taskDir` configu
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `cd cmd/shepherd-init && go build .` compiles
-- [ ] `cd cmd/shepherd-init && go test ./...` passes all tests
-- [ ] `cd cmd/shepherd-init && go vet ./...` clean
+- [x] `cd cmd/shepherd-init && go build .` compiles
+- [x] `cd cmd/shepherd-init && go test ./...` passes all tests
+- [x] `cd cmd/shepherd-init && go vet ./...` clean
 
 #### Manual Verification:
 - [ ] Review that gzip decompression matches what the API will produce (base64(gzip(plaintext)))
