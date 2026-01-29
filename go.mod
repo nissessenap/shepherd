@@ -4,6 +4,7 @@ go 1.25.3
 
 require (
 	github.com/alecthomas/kong v1.13.0
+	github.com/go-chi/chi/v5 v5.2.4
 	github.com/onsi/ginkgo/v2 v2.27.2
 	github.com/onsi/gomega v1.38.2
 	github.com/stretchr/testify v1.11.1

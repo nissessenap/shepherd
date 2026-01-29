@@ -28,4 +28,12 @@ const (
 	ReasonTimedOut  = "TimedOut"
 	ReasonOOM       = "OOM"
 	ReasonCancelled = "Cancelled"
+
+	// ConditionNotified indicates the adapter callback has been sent for a terminal state.
+	// Managed by the API server, not the operator.
+	ConditionNotified = "Notified"
+
+	// Reasons for ConditionNotified
+	ReasonCallbackSent   = "CallbackSent"
+	ReasonCallbackFailed = "CallbackFailed"
 )

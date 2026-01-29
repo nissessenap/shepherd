@@ -260,13 +260,13 @@ The `CallbackSpec.SecretRef` removal will require updating any tests that set `S
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `go get github.com/go-chi/chi/v5` adds chi to go.mod
-- [ ] `make generate && make manifests` succeeds after CRD changes
-- [ ] `make build` compiles successfully
-- [ ] `make test` passes all existing tests (no breakage from SecretRef removal)
-- [ ] `go vet ./...` clean
-- [ ] `make lint-fix` passes (golangci-lint)
-- [ ] `SHEPHERD_CALLBACK_SECRET=test shepherd api --help` shows correct flags
+- [x] `go get github.com/go-chi/chi/v5` adds chi to go.mod
+- [x] `make generate && make manifests` succeeds after CRD changes
+- [x] `make build` compiles successfully
+- [x] `make test` passes all existing tests (no breakage from SecretRef removal)
+- [x] `go vet ./...` clean
+- [x] `make lint-fix` passes (golangci-lint)
+- [x] `SHEPHERD_CALLBACK_SECRET=test shepherd api --help` shows correct flags
 
 #### Manual Verification:
 - [ ] `SHEPHERD_CALLBACK_SECRET=test shepherd api` starts and responds to `/healthz` with 200

@@ -35,14 +35,6 @@ type CLI struct {
 	DevMode  bool `help:"Enable development mode logging" default:"false"`
 }
 
-type APICmd struct {
-	ListenAddr string `help:"API listen address" default:":8080" env:"SHEPHERD_API_ADDR"`
-}
-
-func (c *APICmd) Run(globals *CLI) error {
-	return fmt.Errorf("api server not implemented yet")
-}
-
 type GitHubCmd struct {
 	ListenAddr    string `help:"GitHub adapter listen address" default:":8082" env:"SHEPHERD_GITHUB_ADDR"`
 	WebhookSecret string `help:"GitHub webhook secret" env:"SHEPHERD_GITHUB_WEBHOOK_SECRET"`

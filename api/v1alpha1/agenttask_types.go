@@ -70,8 +70,7 @@ type TaskSpec struct {
 type CallbackSpec struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Pattern=`^https?://`
-	URL       string                    `json:"url"`
-	SecretRef *corev1.SecretKeySelector `json:"secretRef,omitempty"`
+	URL string `json:"url"`
 }
 
 type RunnerSpec struct {
