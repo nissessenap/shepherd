@@ -170,8 +170,8 @@ func parseRepoName(repoURL string) (string, error) {
 		return "", fmt.Errorf("invalid repo URL: %w", err)
 	}
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
-	if len(parts) < 2 {
-		return "", fmt.Errorf("repo URL must contain owner/repo: %s", repoURL)
+	if len(parts) != 2 {
+		return "", fmt.Errorf("repo URL must be owner/repo format: %s", repoURL)
 	}
 	name := parts[1]
 	return strings.TrimSuffix(name, ".git"), nil
@@ -213,7 +213,7 @@ func exchangeToken(baseURL string, installationID int64, jwtToken, repoName stri
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return "", fmt.Errorf("reading response: %w", err)
 	}

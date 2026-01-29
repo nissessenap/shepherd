@@ -17,6 +17,8 @@ limitations under the License.
 package main
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -102,6 +104,12 @@ func TestParseRepoName_HostOnly(t *testing.T) {
 	assert.Contains(t, err.Error(), "owner/repo")
 }
 
+func TestParseRepoName_ExtraPathSegments(t *testing.T) {
+	_, err := parseRepoName("https://github.com/org/repo/tree/main")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "owner/repo")
+}
+
 // --- readPrivateKey tests ---
 
 func TestReadPrivateKey_PKCS1(t *testing.T) {
@@ -145,22 +153,21 @@ func TestReadPrivateKey_NonRSAKey(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "ec-key.pem")
 
-	// Create a valid PEM block but with garbage bytes that won't parse as PKCS1 or PKCS8 RSA
-	// We use a real EC key in PKCS8 format to get the "not RSA" error path
-	ecKey, err := rsa.GenerateKey(rand.Reader, 2048) // We'll abuse by writing invalid content
+	ecKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
-	_ = ecKey
 
-	// Write invalid key data that will parse as PEM but not as RSA
+	pkcs8Bytes, err := x509.MarshalPKCS8PrivateKey(ecKey)
+	require.NoError(t, err)
+
 	data := pem.EncodeToMemory(&pem.Block{
 		Type:  "PRIVATE KEY",
-		Bytes: []byte("not-a-valid-key"),
+		Bytes: pkcs8Bytes,
 	})
 	require.NoError(t, os.WriteFile(path, data, 0600))
 
 	_, err = readPrivateKey(path)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "parsing private key")
+	assert.Contains(t, err.Error(), "private key is not RSA")
 }
 
 // --- createJWT tests ---

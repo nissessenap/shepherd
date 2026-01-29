@@ -31,7 +31,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	// Suppress log output during tests
+	// Suppress log output during ALL tests in this package (affects github_test.go too).
 	logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	os.Exit(m.Run())
 }
