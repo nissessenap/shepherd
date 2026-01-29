@@ -18,6 +18,7 @@ package controller
 
 import (
 	"fmt"
+	"strconv"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -32,10 +33,13 @@ import (
 
 // jobConfig holds operator-level configuration needed to build Jobs.
 type jobConfig struct {
-	AllowedRunnerImage string
-	RunnerSecretName   string
-	InitImage          string
-	Scheme             *runtime.Scheme
+	AllowedRunnerImage   string
+	RunnerSecretName     string
+	InitImage            string
+	Scheme               *runtime.Scheme
+	GithubAppID          int64
+	GithubInstallationID int64
+	GithubAPIURL         string
 }
 
 const defaultTimeout = 30 * time.Minute
@@ -87,6 +91,13 @@ func buildJob(task *toolkitv1alpha1.AgentTask, cfg jobConfig) (*batchv1.Job, err
 			Name: "CONTEXT_ENCODING", Value: task.Spec.Task.ContextEncoding,
 		})
 	}
+
+	// GitHub App configuration for token generation
+	initEnv = append(initEnv,
+		corev1.EnvVar{Name: "GITHUB_APP_ID", Value: strconv.FormatInt(cfg.GithubAppID, 10)},
+		corev1.EnvVar{Name: "GITHUB_INSTALLATION_ID", Value: strconv.FormatInt(cfg.GithubInstallationID, 10)},
+		corev1.EnvVar{Name: "GITHUB_API_URL", Value: cfg.GithubAPIURL},
+	)
 
 	// Build main container env — runner reads task input from files written by init container
 	runnerEnv := []corev1.EnvVar{

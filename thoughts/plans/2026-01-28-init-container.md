@@ -671,11 +671,11 @@ initEnv := []corev1.EnvVar{
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `make test` passes all tests
-- [ ] `make build` compiles
-- [ ] `go vet ./...` clean
-- [ ] Job builder tests verify GITHUB_APP_ID, GITHUB_INSTALLATION_ID, and GITHUB_API_URL env vars
-- [ ] Existing envtest integration tests still pass
+- [x] `make test` passes all tests
+- [x] `make build` compiles
+- [x] `go vet ./...` clean
+- [x] Job builder tests verify GITHUB_APP_ID, GITHUB_INSTALLATION_ID, and GITHUB_API_URL env vars
+- [x] Existing envtest integration tests still pass
 
 #### Manual Verification:
 - [ ] `./bin/shepherd operator --help` shows new flags

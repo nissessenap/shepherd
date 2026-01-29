@@ -62,10 +62,13 @@ func baseTask() *toolkitv1alpha1.AgentTask {
 
 func baseCfg() jobConfig {
 	return jobConfig{
-		AllowedRunnerImage: "registry.example.com/shepherd-runner:v1",
-		RunnerSecretName:   "shepherd-runner-app-key",
-		InitImage:          "shepherd-init:latest",
-		Scheme:             testScheme(),
+		AllowedRunnerImage:   "registry.example.com/shepherd-runner:v1",
+		RunnerSecretName:     "shepherd-runner-app-key",
+		InitImage:            "shepherd-init:latest",
+		Scheme:               testScheme(),
+		GithubAppID:          12345,
+		GithubInstallationID: 67890,
+		GithubAPIURL:         "https://api.github.com",
 	}
 }
 
@@ -180,6 +183,33 @@ func TestBuildJob_InitContainerEnv_ContextWithoutEncoding(t *testing.T) {
 	envMap := envToMap(initContainer.Env)
 	assert.Equal(t, "plain-context-data", envMap["TASK_CONTEXT"])
 	assert.NotContains(t, envMap, "CONTEXT_ENCODING", "CONTEXT_ENCODING should be omitted when contextEncoding is empty")
+}
+
+func TestBuildJob_InitContainerEnv_GithubAppConfig(t *testing.T) {
+	job, err := buildJob(baseTask(), baseCfg())
+	require.NoError(t, err)
+
+	initContainer := job.Spec.Template.Spec.InitContainers[0]
+	envMap := envToMap(initContainer.Env)
+	assert.Equal(t, "12345", envMap["GITHUB_APP_ID"])
+	assert.Equal(t, "67890", envMap["GITHUB_INSTALLATION_ID"])
+	assert.Equal(t, "https://api.github.com", envMap["GITHUB_API_URL"])
+}
+
+func TestBuildJob_InitContainerEnv_GithubAppConfig_CustomValues(t *testing.T) {
+	cfg := baseCfg()
+	cfg.GithubAppID = 99999
+	cfg.GithubInstallationID = 11111
+	cfg.GithubAPIURL = "https://github.example.com/api/v3"
+
+	job, err := buildJob(baseTask(), cfg)
+	require.NoError(t, err)
+
+	initContainer := job.Spec.Template.Spec.InitContainers[0]
+	envMap := envToMap(initContainer.Env)
+	assert.Equal(t, "99999", envMap["GITHUB_APP_ID"])
+	assert.Equal(t, "11111", envMap["GITHUB_INSTALLATION_ID"])
+	assert.Equal(t, "https://github.example.com/api/v3", envMap["GITHUB_API_URL"])
 }
 
 func TestBuildJob_RunnerContainerEnv(t *testing.T) {

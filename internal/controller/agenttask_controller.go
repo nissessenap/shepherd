@@ -40,11 +40,14 @@ import (
 // AgentTaskReconciler reconciles a AgentTask object
 type AgentTaskReconciler struct {
 	client.Client
-	Scheme             *runtime.Scheme
-	Recorder           events.EventRecorder
-	AllowedRunnerImage string
-	RunnerSecretName   string
-	InitImage          string
+	Scheme               *runtime.Scheme
+	Recorder             events.EventRecorder
+	AllowedRunnerImage   string
+	RunnerSecretName     string
+	InitImage            string
+	GithubAppID          int64
+	GithubInstallationID int64
+	GithubAPIURL         string
 }
 
 // +kubebuilder:rbac:groups=toolkit.shepherd.io,resources=agenttasks,verbs=get;list;watch;create;update;patch;delete
@@ -101,10 +104,13 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	if err != nil {
 		// Job doesn't exist — create it
 		newJob, buildErr := buildJob(&task, jobConfig{
-			AllowedRunnerImage: r.AllowedRunnerImage,
-			RunnerSecretName:   r.RunnerSecretName,
-			InitImage:          r.InitImage,
-			Scheme:             r.Scheme,
+			AllowedRunnerImage:   r.AllowedRunnerImage,
+			RunnerSecretName:     r.RunnerSecretName,
+			InitImage:            r.InitImage,
+			Scheme:               r.Scheme,
+			GithubAppID:          r.GithubAppID,
+			GithubInstallationID: r.GithubInstallationID,
+			GithubAPIURL:         r.GithubAPIURL,
 		})
 		if buildErr != nil {
 			return r.markFailed(ctx, &task, toolkitv1alpha1.ReasonFailed,

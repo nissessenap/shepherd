@@ -40,12 +40,15 @@ var _ = Describe("AgentTask Controller", func() {
 
 	BeforeEach(func() {
 		reconciler = &AgentTaskReconciler{
-			Client:             k8sClient,
-			Scheme:             k8sClient.Scheme(),
-			Recorder:           events.NewFakeRecorder(10),
-			AllowedRunnerImage: "shepherd-runner:latest",
-			RunnerSecretName:   "shepherd-runner-app-key",
-			InitImage:          "shepherd-init:latest",
+			Client:               k8sClient,
+			Scheme:               k8sClient.Scheme(),
+			Recorder:             events.NewFakeRecorder(10),
+			AllowedRunnerImage:   "shepherd-runner:latest",
+			RunnerSecretName:     "shepherd-runner-app-key",
+			InitImage:            "shepherd-init:latest",
+			GithubAppID:          12345,
+			GithubInstallationID: 67890,
+			GithubAPIURL:         "https://api.github.com",
 		}
 	})
 

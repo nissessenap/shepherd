@@ -21,21 +21,27 @@ import (
 )
 
 type OperatorCmd struct {
-	MetricsAddr        string `help:"Metrics address" default:":9090" env:"SHEPHERD_METRICS_ADDR"`
-	HealthAddr         string `help:"Health probe address" default:":8081" env:"SHEPHERD_HEALTH_ADDR"`
-	LeaderElection     bool   `help:"Enable leader election" default:"false" env:"SHEPHERD_LEADER_ELECTION"`
-	AllowedRunnerImage string `help:"Allowed runner image" required:"" env:"SHEPHERD_RUNNER_IMAGE"`
-	RunnerSecretName   string `help:"Runner app key secret" default:"shepherd-runner-app-key" env:"SHEPHERD_RUNNER_SECRET"`
-	InitImage          string `help:"Init container image" default:"shepherd-init:latest" env:"SHEPHERD_INIT_IMAGE"`
+	MetricsAddr          string `help:"Metrics address" default:":9090" env:"SHEPHERD_METRICS_ADDR"`
+	HealthAddr           string `help:"Health probe address" default:":8081" env:"SHEPHERD_HEALTH_ADDR"`
+	LeaderElection       bool   `help:"Enable leader election" default:"false" env:"SHEPHERD_LEADER_ELECTION"`
+	AllowedRunnerImage   string `help:"Allowed runner image" required:"" env:"SHEPHERD_RUNNER_IMAGE"`
+	RunnerSecretName     string `help:"Runner app key secret" default:"shepherd-runner-app-key" env:"SHEPHERD_RUNNER_SECRET"`
+	InitImage            string `help:"Init container image" default:"shepherd-init:latest" env:"SHEPHERD_INIT_IMAGE"`
+	GithubAppID          int64  `help:"GitHub Runner App ID" required:"" env:"SHEPHERD_GITHUB_APP_ID"`
+	GithubInstallationID int64  `help:"GitHub Runner App installation ID" required:"" env:"SHEPHERD_GITHUB_INSTALLATION_ID"`
+	GithubAPIURL         string `help:"GitHub API base URL" default:"https://api.github.com" env:"SHEPHERD_GITHUB_API_URL"`
 }
 
 func (c *OperatorCmd) Run(_ *CLI) error {
 	return operator.Run(operator.Options{
-		MetricsAddr:        c.MetricsAddr,
-		HealthAddr:         c.HealthAddr,
-		LeaderElection:     c.LeaderElection,
-		AllowedRunnerImage: c.AllowedRunnerImage,
-		RunnerSecretName:   c.RunnerSecretName,
-		InitImage:          c.InitImage,
+		MetricsAddr:          c.MetricsAddr,
+		HealthAddr:           c.HealthAddr,
+		LeaderElection:       c.LeaderElection,
+		AllowedRunnerImage:   c.AllowedRunnerImage,
+		RunnerSecretName:     c.RunnerSecretName,
+		InitImage:            c.InitImage,
+		GithubAppID:          c.GithubAppID,
+		GithubInstallationID: c.GithubInstallationID,
+		GithubAPIURL:         c.GithubAPIURL,
 	})
 }
