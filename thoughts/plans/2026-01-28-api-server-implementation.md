@@ -2,7 +2,7 @@
 
 ## Overview
 
-Implement the Shepherd REST API server (`shepherd api`) — the component that serves HTTP endpoints for task creation, status queries, and runner callbacks. It creates AgentTask CRDs, watches CRD status changes via a client-go informer, and notifies adapters via HMAC-signed callback URLs. This is the bridge between external adapters (GitHub, future GitLab) and the K8s operator.
+Implement the Shepherd REST API server (`shepherd api`) — the component that serves HTTP endpoints for task creation, status queries, and runner callbacks. It creates AgentTask CRDs, watches CRD status changes via a controller-runtime standalone cache, and notifies adapters via HMAC-signed callback URLs. This is the bridge between external adapters (GitHub, future GitLab) and the K8s operator.
 
 ## Current State Analysis
 
@@ -55,7 +55,7 @@ A working API server that:
 
 ## Implementation Approach
 
-Follow the same pattern as the operator: `pkg/api/` wrapper package with a `Run()` function, wired through Kong CLI. Use chi for HTTP routing, raw client-go for the CRD informer (user preference over controller-runtime for the API server), and the existing K8s client for CRD CRUD operations.
+Follow the same pattern as the operator: `pkg/api/` wrapper package with a `Run()` function, wired through Kong CLI. Use chi for HTTP routing, controller-runtime `cache.New()` for the CRD status watcher (typed objects without the full manager overhead), and `controller-runtime/pkg/client` for CRD CRUD operations. This avoids the dynamic client's unstructured conversion while keeping the API server lightweight — no manager lifecycle, no metrics server, no leader election.
 
 ---
 
@@ -131,12 +131,13 @@ import (
 
     "github.com/go-chi/chi/v5"
     "github.com/go-chi/chi/v5/middleware"
+    "time"
+
     "k8s.io/apimachinery/pkg/runtime"
     utilruntime "k8s.io/apimachinery/pkg/util/runtime"
     clientgoscheme "k8s.io/client-go/kubernetes/scheme"
-    "k8s.io/client-go/dynamic"
-    "k8s.io/client-go/kubernetes"
     ctrl "sigs.k8s.io/controller-runtime"
+    "sigs.k8s.io/controller-runtime/pkg/cache"
     "sigs.k8s.io/controller-runtime/pkg/client"
 
     toolkitv1alpha1 "github.com/NissesSenap/shepherd/api/v1alpha1"
@@ -1056,7 +1057,13 @@ r.Post("/tasks/{taskID}/status", handler.updateTaskStatus)
 
 ### Overview
 
-Implement the CRD status informer using raw client-go. The API watches AgentTask resources for terminal conditions (`Succeeded=True` or `Succeeded=False`). When detected, it sends an adapter callback and sets the `Notified` condition to prevent duplicates. This is the safety net path (design doc step 11) that ensures adapters are notified even if the runner crashes.
+Implement the CRD status watcher using a standalone controller-runtime cache (`cache.New()`). The API watches AgentTask resources for terminal conditions (`Succeeded=True` or `Succeeded=False`). When detected, it sends an adapter callback and sets the `Notified` condition to prevent duplicates. This is the safety net path (design doc step 11) that ensures adapters are notified even if the runner crashes.
+
+**Why `cache.New()` instead of raw `dynamic.Interface` or `ctrl.NewManager`:**
+- `cache.New()` provides typed `*AgentTask` objects in event handlers — no manual unstructured conversion
+- No manager lifecycle overhead (no metrics server, health probes, leader election, webhook server)
+- The API server's `Run()` function stays in control of shutdown — `cache.Start(ctx)` stops via context cancellation
+- We already depend on `controller-runtime/pkg/client` for CRUD, so `pkg/cache` adds no new module dependency
 
 ### Changes Required
 
@@ -1070,73 +1077,70 @@ package api
 import (
     "context"
     "fmt"
-    "time"
 
-    "k8s.io/apimachinery/pkg/api/meta"
+    apimeta "k8s.io/apimachinery/pkg/api/meta"
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-    "k8s.io/apimachinery/pkg/runtime"
-    "k8s.io/apimachinery/pkg/watch"
-    "k8s.io/client-go/dynamic"
-    "k8s.io/client-go/dynamic/dynamicinformer"
-    "k8s.io/client-go/tools/cache"
+    toolscache "k8s.io/client-go/tools/cache"
     ctrl "sigs.k8s.io/controller-runtime"
+    ctrlcache "sigs.k8s.io/controller-runtime/pkg/cache"
     "sigs.k8s.io/controller-runtime/pkg/client"
 
     toolkitv1alpha1 "github.com/NissesSenap/shepherd/api/v1alpha1"
 )
 
 // statusWatcher watches AgentTask resources for terminal states
-// and sends adapter callbacks.
+// and sends adapter callbacks. Uses a standalone controller-runtime
+// cache for typed informers without the full manager overhead.
 type statusWatcher struct {
     client   client.Client
     callback *callbackSender
-    scheme   *runtime.Scheme
+    cache    ctrlcache.Cache
 }
 
-// run starts the informer and blocks until the context is cancelled.
-func (w *statusWatcher) run(ctx context.Context, dynamicClient dynamic.Interface, namespace string) error {
+// run starts the cache informer and blocks until the context is cancelled.
+func (w *statusWatcher) run(ctx context.Context) error {
     log := ctrl.Log.WithName("status-watcher")
 
-    gvr := toolkitv1alpha1.GroupVersion.WithResource("agenttasks")
+    // Get a typed informer for AgentTask — no unstructured conversion needed
+    informer, err := w.cache.GetInformer(ctx, &toolkitv1alpha1.AgentTask{})
+    if err != nil {
+        return fmt.Errorf("getting AgentTask informer: %w", err)
+    }
 
-    factory := dynamicinformer.NewFilteredDynamicSharedInformerFactory(
-        dynamicClient,
-        30*time.Minute, // resync period
-        namespace,
-        nil,
-    )
-
-    informer := factory.ForResource(gvr).Informer()
-
-    informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+    _, err = informer.AddEventHandler(toolscache.ResourceEventHandlerFuncs{
         UpdateFunc: func(oldObj, newObj interface{}) {
-            w.handleUpdate(ctx, oldObj, newObj)
+            // Objects are typed *AgentTask, safe to assert directly
+            newTask, ok := newObj.(*toolkitv1alpha1.AgentTask)
+            if !ok {
+                log.Error(nil, "unexpected object type in update", "type", fmt.Sprintf("%T", newObj))
+                return
+            }
+            w.handleTerminalTransition(ctx, newTask)
         },
     })
+    if err != nil {
+        return fmt.Errorf("adding event handler: %w", err)
+    }
 
-    log.Info("starting CRD status watcher", "namespace", namespace)
-    informer.Run(ctx.Done())
+    log.Info("status watcher ready")
+    // Block until context is cancelled (cache.Start is called separately in server.go)
+    <-ctx.Done()
     return nil
 }
 
-func (w *statusWatcher) handleUpdate(ctx context.Context, oldObj, newObj interface{}) {
+// handleTerminalTransition checks if a task has reached a terminal state
+// and sends the adapter callback if not already notified.
+func (w *statusWatcher) handleTerminalTransition(ctx context.Context, task *toolkitv1alpha1.AgentTask) {
     log := ctrl.Log.WithName("status-watcher")
 
-    // Convert unstructured to AgentTask
-    newTask, err := w.toAgentTask(newObj)
-    if err != nil {
-        log.Error(err, "failed to convert new object to AgentTask")
-        return
-    }
-
-    // Check if task just became terminal
-    succeededCond := findCondition(newTask.Status.Conditions, toolkitv1alpha1.ConditionSucceeded)
+    // Check if task is terminal
+    succeededCond := apimeta.FindStatusCondition(task.Status.Conditions, toolkitv1alpha1.ConditionSucceeded)
     if succeededCond == nil || succeededCond.Status == metav1.ConditionUnknown {
         return // not terminal
     }
 
     // Check if already notified
-    notifiedCond := findCondition(newTask.Status.Conditions, toolkitv1alpha1.ConditionNotified)
+    notifiedCond := apimeta.FindStatusCondition(task.Status.Conditions, toolkitv1alpha1.ConditionNotified)
     if notifiedCond != nil && notifiedCond.Status == metav1.ConditionTrue {
         return // already notified
     }
@@ -1149,35 +1153,35 @@ func (w *statusWatcher) handleUpdate(ctx context.Context, oldObj, newObj interfa
 
     // Build callback payload
     payload := CallbackPayload{
-        TaskID:  newTask.Name,
+        TaskID:  task.Name,
         Event:   event,
         Message: succeededCond.Message,
         Details: map[string]interface{}{},
     }
-    if newTask.Status.Result.PRUrl != "" {
-        payload.Details["pr_url"] = newTask.Status.Result.PRUrl
+    if task.Status.Result.PRUrl != "" {
+        payload.Details["pr_url"] = task.Status.Result.PRUrl
     }
-    if newTask.Status.Result.Error != "" {
-        payload.Details["error"] = newTask.Status.Result.Error
+    if task.Status.Result.Error != "" {
+        payload.Details["error"] = task.Status.Result.Error
     }
 
     // Send callback
-    callbackURL := newTask.Spec.Callback.URL
+    callbackURL := task.Spec.Callback.URL
     if err := w.callback.send(ctx, callbackURL, payload); err != nil {
         log.Error(err, "failed to send terminal callback",
-            "task", newTask.Name, "event", event, "callbackURL", callbackURL)
+            "task", task.Name, "event", event, "callbackURL", callbackURL)
 
         // Set Notified condition as failed
-        w.setNotifiedCondition(ctx, newTask, toolkitv1alpha1.ReasonCallbackFailed,
+        w.setNotifiedCondition(ctx, task, toolkitv1alpha1.ReasonCallbackFailed,
             fmt.Sprintf("Callback failed: %v", err))
         return
     }
 
     log.Info("sent terminal callback to adapter",
-        "task", newTask.Name, "event", event, "callbackURL", callbackURL)
+        "task", task.Name, "event", event, "callbackURL", callbackURL)
 
     // Set Notified condition as sent
-    w.setNotifiedCondition(ctx, newTask, toolkitv1alpha1.ReasonCallbackSent,
+    w.setNotifiedCondition(ctx, task, toolkitv1alpha1.ReasonCallbackSent,
         fmt.Sprintf("Adapter notified: %s", event))
 }
 
@@ -1191,7 +1195,7 @@ func (w *statusWatcher) setNotifiedCondition(ctx context.Context, task *toolkitv
         return
     }
 
-    statusMeta.SetStatusCondition(&fresh.Status.Conditions, metav1.Condition{
+    apimeta.SetStatusCondition(&fresh.Status.Conditions, metav1.Condition{
         Type:               toolkitv1alpha1.ConditionNotified,
         Status:             metav1.ConditionTrue,
         Reason:             reason,
@@ -1203,60 +1207,62 @@ func (w *statusWatcher) setNotifiedCondition(ctx context.Context, task *toolkitv
         log.Error(err, "failed to set Notified condition", "task", task.Name)
     }
 }
-
-func (w *statusWatcher) toAgentTask(obj interface{}) (*toolkitv1alpha1.AgentTask, error) {
-    unstructured, ok := obj.(*unstructured.Unstructured)
-    if !ok {
-        return nil, fmt.Errorf("expected *unstructured.Unstructured, got %T", obj)
-    }
-
-    var task toolkitv1alpha1.AgentTask
-    if err := runtime.DefaultUnstructuredConverter.FromUnstructured(unstructured.Object, &task); err != nil {
-        return nil, fmt.Errorf("converting unstructured to AgentTask: %w", err)
-    }
-    return &task, nil
-}
-
-func findCondition(conditions []metav1.Condition, condType string) *metav1.Condition {
-    for i := range conditions {
-        if conditions[i].Type == condType {
-            return &conditions[i]
-        }
-    }
-    return nil
-}
 ```
 
-#### 2. Integrate Watcher into Server
+**Key differences from the previous dynamic informer approach:**
+- No `dynamic.Interface` or `dynamicinformer` — uses `cache.GetInformer()` instead
+- No `toAgentTask()` conversion function — objects arrive as typed `*AgentTask`
+- No `findCondition()` helper — uses `apimeta.FindStatusCondition()` from the standard library
+- Consistent `apimeta` import alias across all files (fixes the `statusMeta` inconsistency)
+
+#### 2. Integrate Cache + Watcher into Server
 
 **File**: `pkg/api/server.go`
 
-Update `Run()` to start the watcher in a goroutine alongside the HTTP server:
+Update `Run()` to create the standalone cache and start the watcher:
 
 ```go
 func Run(opts Options) error {
-    // ... existing setup ...
+    // ... existing setup (signal context, logger, k8sClient, chi router) ...
 
-    // Build dynamic client for informer
-    dynamicClient, err := dynamic.NewForConfig(cfg)
+    // Create standalone cache for CRD status watching.
+    // This gives us typed informers without the full manager overhead.
+    taskCache, err := cache.New(cfg, cache.Options{
+        Scheme: scheme,
+        DefaultNamespaces: map[string]cache.Config{
+            opts.Namespace: {},
+        },
+    })
     if err != nil {
-        return fmt.Errorf("creating dynamic client: %w", err)
+        return fmt.Errorf("creating cache: %w", err)
+    }
+
+    // Start cache in background — stops when ctx is cancelled
+    go func() {
+        if err := taskCache.Start(ctx); err != nil {
+            log.Error(err, "cache failed")
+        }
+    }()
+
+    // Wait for cache to sync before starting HTTP server
+    if !taskCache.WaitForCacheSync(ctx) {
+        return fmt.Errorf("cache sync failed")
     }
 
     // Start CRD status watcher
     watcher := &statusWatcher{
         client:   k8sClient,
         callback: cb,
-        scheme:   scheme,
+        cache:    taskCache,
     }
 
     go func() {
-        if err := watcher.run(ctx, dynamicClient, opts.Namespace); err != nil {
+        if err := watcher.run(ctx); err != nil {
             log.Error(err, "status watcher failed")
         }
     }()
 
-    // ... existing HTTP server start ...
+    // ... existing HTTP server start + shutdown select ...
 }
 ```
 
@@ -1282,6 +1288,8 @@ This is separate from the operator's RBAC. The API server does NOT need Job or P
 #### 4. Unit Tests
 
 **File**: `pkg/api/watcher_test.go` (new file)
+
+Uses a fake `client.Client` and `httptest.NewServer` (mock adapter). Tests call `handleTerminalTransition` directly with typed `*AgentTask` objects (no unstructured conversion needed).
 
 ```go
 // Test: Terminal Succeeded=True triggers adapter callback
@@ -1346,8 +1354,8 @@ This is separate from the operator's RBAC. The API server does NOT need Job or P
 
 ## Performance Considerations
 
-- Client-go informer caches AgentTask objects locally — no per-request API server calls for the watcher
-- The informer's resync period (30 minutes) ensures eventual consistency if events are missed
+- The standalone controller-runtime cache caches AgentTask objects locally — no per-request K8s API server calls for the watcher
+- The cache's default resync period (10 hours) ensures eventual consistency if events are missed
 - Callback sender has a 10-second timeout to avoid blocking the handler
 - Adapter callback failures are logged but don't block runner callbacks
 
@@ -1365,4 +1373,4 @@ This is separate from the operator's RBAC. The API server does NOT need Job or P
 - Operator plan: `thoughts/plans/2026-01-27-operator-implementation.md`
 - OOM research: `thoughts/research/2026-01-28-oom-detection-without-pod-watching.md`
 - chi router: `https://github.com/go-chi/chi`
-- K8s dynamic informer: `https://pkg.go.dev/k8s.io/client-go/dynamic/dynamicinformer`
+- controller-runtime cache: `https://pkg.go.dev/sigs.k8s.io/controller-runtime/pkg/cache`
