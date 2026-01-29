@@ -81,8 +81,8 @@ func writeTaskFilesToDir(dir string) error {
 
 func decodeContext(raw, encoding string) ([]byte, error) {
 	switch encoding {
-	case "", "plain":
-		// Plaintext — return as-is
+	case "":
+		// No encoding — return as-is
 		return []byte(raw), nil
 	case "gzip":
 		// base64-decode, then gzip-decompress

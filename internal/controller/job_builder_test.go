@@ -411,6 +411,30 @@ func TestBuildJob_PodFailurePolicy(t *testing.T) {
 	assert.Equal(t, corev1.ConditionTrue, rules[1].OnPodConditions[0].Status)
 }
 
+func TestBuildJob_PodSecurityContext(t *testing.T) {
+	job, err := buildJob(baseTask(), baseCfg())
+	require.NoError(t, err)
+
+	secCtx := job.Spec.Template.Spec.SecurityContext
+	require.NotNil(t, secCtx, "SecurityContext should be set")
+
+	require.NotNil(t, secCtx.RunAsNonRoot)
+	assert.True(t, *secCtx.RunAsNonRoot, "RunAsNonRoot should be true")
+
+	require.NotNil(t, secCtx.RunAsUser)
+	assert.Equal(t, int64(65532), *secCtx.RunAsUser, "RunAsUser should be 65532")
+
+	require.NotNil(t, secCtx.RunAsGroup)
+	assert.Equal(t, int64(65532), *secCtx.RunAsGroup, "RunAsGroup should be 65532")
+
+	require.NotNil(t, secCtx.FSGroup)
+	assert.Equal(t, int64(65532), *secCtx.FSGroup, "FSGroup should be 65532")
+
+	require.NotNil(t, secCtx.SeccompProfile, "SeccompProfile should be set")
+	assert.Equal(t, corev1.SeccompProfileTypeRuntimeDefault, secCtx.SeccompProfile.Type,
+		"SeccompProfile type should be RuntimeDefault")
+}
+
 // envToMap converts a slice of EnvVar to a map for easy lookup.
 func envToMap(envVars []corev1.EnvVar) map[string]string {
 	m := make(map[string]string, len(envVars))

@@ -147,11 +147,12 @@ func TestDecodeContext_EmptyEncoding_ReturnsRawBytes(t *testing.T) {
 	assert.Equal(t, []byte(raw), data)
 }
 
-func TestDecodeContext_PlainEncoding_ReturnsRawBytes(t *testing.T) {
+func TestDecodeContext_PlainEncoding_ReturnsError(t *testing.T) {
 	raw := "plain context text"
-	data, err := decodeContext(raw, "plain")
-	require.NoError(t, err)
-	assert.Equal(t, []byte(raw), data)
+	_, err := decodeContext(raw, "plain")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported encoding")
+	assert.Contains(t, err.Error(), "plain")
 }
 
 func TestDecodeContext_UnknownEncoding_ReturnsError(t *testing.T) {
