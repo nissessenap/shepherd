@@ -130,15 +130,16 @@ import (
     "os/signal"
     "syscall"
 
+    "time"
+
     "github.com/go-chi/chi/v5"
     "github.com/go-chi/chi/v5/middleware"
-    "time"
 
     "k8s.io/apimachinery/pkg/runtime"
     utilruntime "k8s.io/apimachinery/pkg/util/runtime"
     clientgoscheme "k8s.io/client-go/kubernetes/scheme"
     ctrl "sigs.k8s.io/controller-runtime"
-    "sigs.k8s.io/controller-runtime/pkg/cache"
+    // cache import will be added in Phase 5
     "sigs.k8s.io/controller-runtime/pkg/client"
 
     toolkitv1alpha1 "github.com/NissesSenap/shepherd/api/v1alpha1"
@@ -170,6 +171,9 @@ func Run(opts Options) error {
     if err != nil {
         return fmt.Errorf("creating k8s client: %w", err)
     }
+
+    // Build callback sender (Phase 4)
+    cb := newCallbackSender(opts.CallbackSecret)
 
     // Build router
     r := chi.NewRouter()
@@ -394,6 +398,7 @@ import (
     apimeta "k8s.io/apimachinery/pkg/api/meta"
     "k8s.io/apimachinery/pkg/api/errors"
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+    "k8s.io/apimachinery/pkg/util/rand"
     "sigs.k8s.io/controller-runtime/pkg/client"
 
     toolkitv1alpha1 "github.com/NissesSenap/shepherd/api/v1alpha1"
@@ -407,6 +412,7 @@ type taskHandler struct {
 
 // createTask handles POST /api/v1/tasks.
 func (h *taskHandler) createTask(w http.ResponseWriter, r *http.Request) {
+    r.Body = http.MaxBytesReader(w, r.Body, 10<<20) // 10 MiB
     var req CreateTaskRequest
     if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
         writeError(w, http.StatusBadRequest, "invalid request body", err.Error())
@@ -422,6 +428,10 @@ func (h *taskHandler) createTask(w http.ResponseWriter, r *http.Request) {
         writeError(w, http.StatusBadRequest, "task.description is required", "")
         return
     }
+    if req.Task.Context == "" {
+        writeError(w, http.StatusBadRequest, "task.context is required", "")
+        return
+    }
     if req.Callback == "" {
         writeError(w, http.StatusBadRequest, "callbackUrl is required", "")
         return
@@ -432,14 +442,6 @@ func (h *taskHandler) createTask(w http.ResponseWriter, r *http.Request) {
     if err != nil {
         writeError(w, http.StatusInternalServerError, "failed to compress context", err.Error())
         return
-    }
-
-    // Build the context field — if no context was provided, use an empty
-    // placeholder so the CRD validation (MinLength=1) still passes.
-    // The init container will see the empty file and handle it.
-    contextValue := compressedCtx
-    if contextValue == "" {
-        contextValue = "-" // minimal placeholder for required field
     }
 
     // Generate task name
@@ -478,7 +480,7 @@ func (h *taskHandler) createTask(w http.ResponseWriter, r *http.Request) {
             },
             Task: toolkitv1alpha1.TaskSpec{
                 Description:     req.Task.Description,
-                Context:         contextValue,
+                Context:         compressedCtx,
                 ContextEncoding: encoding,
                 ContextURL:      req.Task.ContextURL,
             },
@@ -618,14 +620,15 @@ Use `httptest` and a fake K8s client:
 // Test: Valid request creates AgentTask CRD and returns 201
 // Test: Missing repo.url returns 400
 // Test: Missing task.description returns 400
+// Test: Missing task.context returns 400
 // Test: Missing callbackUrl returns 400
 // Test: Context is gzip-compressed in CRD
-// Test: Empty context uses placeholder
 // Test: Runner timeout parsed correctly
 // Test: Invalid runner timeout returns 400
 // Test: Task name is generated with random suffix
 // Test: Response includes correct task ID and status
 // Test: K8s client error returns 500
+// Test: Request body over 10 MiB returns 400
 ```
 
 ### Success Criteria
@@ -896,8 +899,10 @@ type StatusUpdateRequest struct {
 
 // updateTaskStatus handles POST /api/v1/tasks/{taskID}/status.
 func (h *taskHandler) updateTaskStatus(w http.ResponseWriter, r *http.Request) {
+    log := ctrl.Log.WithName("api")
     taskID := chi.URLParam(r, "taskID")
 
+    r.Body = http.MaxBytesReader(w, r.Body, 10<<20) // 10 MiB
     var req StatusUpdateRequest
     if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
         writeError(w, http.StatusBadRequest, "invalid request body", err.Error())
@@ -1033,6 +1038,7 @@ r.Post("/tasks/{taskID}/status", handler.updateTaskStatus)
 // Test: Already-notified terminal event skips duplicate callback
 // Test: Adapter callback failure doesn't fail the runner's request
 // Test: "progress" event forwards without updating CRD status
+// Test: Request body over 10 MiB returns 400
 ```
 
 ### Success Criteria
@@ -1229,9 +1235,9 @@ func Run(opts Options) error {
 
     // Create standalone cache for CRD status watching.
     // This gives us typed informers without the full manager overhead.
-    taskCache, err := cache.New(cfg, cache.Options{
+    taskCache, err := ctrlcache.New(cfg, ctrlcache.Options{
         Scheme: scheme,
-        DefaultNamespaces: map[string]cache.Config{
+        DefaultNamespaces: map[string]ctrlcache.Config{
             opts.Namespace: {},
         },
     })
@@ -1314,7 +1320,7 @@ Uses a fake `client.Client` and `httptest.NewServer` (mock adapter). Tests call 
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `make test` passes all tests
+- [ ] `make test` passes all tests (including integration tests from Testing Strategy)
 - [ ] `go vet ./...` clean
 - [ ] `make lint-fix` passes (golangci-lint)
 - [ ] Watcher correctly detects terminal state transitions
