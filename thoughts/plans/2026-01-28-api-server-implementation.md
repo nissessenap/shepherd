@@ -51,6 +51,7 @@ A working API server that:
 - Per-task callback secrets (using shared API-level secret for MVP)
 - Rate limiting or authentication on the API endpoints (future — cluster-internal for MVP)
 - Pagination on list endpoint (future — MVP returns all matching tasks)
+- Server-side filtering for active tasks (MVP uses in-memory filtering after List; for production, use label-based state tracking or field selectors to avoid fetching all tasks)
 - OpenAPI/Swagger documentation generation
 
 ## Implementation Approach
@@ -378,6 +379,8 @@ func compressContext(context string) (compressed string, encoding string, err er
 
 **File**: `pkg/api/handler_tasks.go` (new file)
 
+Note: Import lists in handler files are illustrative — add `"time"`, `apimeta "k8s.io/apimachinery/pkg/api/meta"`, and other standard library imports as needed during implementation.
+
 ```go
 package api
 
@@ -385,11 +388,12 @@ import (
     "encoding/json"
     "fmt"
     "net/http"
+    "time"
 
     "github.com/go-chi/chi/v5"
+    apimeta "k8s.io/apimachinery/pkg/api/meta"
     "k8s.io/apimachinery/pkg/api/errors"
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-    "k8s.io/apimachinery/pkg/util/rand"
     "sigs.k8s.io/controller-runtime/pkg/client"
 
     toolkitv1alpha1 "github.com/NissesSenap/shepherd/api/v1alpha1"
@@ -500,10 +504,15 @@ func (h *taskHandler) createTask(w http.ResponseWriter, r *http.Request) {
 
 // Helper functions
 
-func writeJSON(w http.ResponseWriter, status int, v interface{}) {
+func writeJSON(w http.ResponseWriter, status int, v any) {
+    data, err := json.Marshal(v)
+    if err != nil {
+        http.Error(w, `{"error":"internal encoding error"}`, http.StatusInternalServerError)
+        return
+    }
     w.Header().Set("Content-Type", "application/json")
     w.WriteHeader(status)
-    json.NewEncoder(w).Encode(v)
+    w.Write(data)
 }
 
 func writeError(w http.ResponseWriter, status int, msg, details string) {
@@ -534,7 +543,7 @@ func taskToResponse(task *toolkitv1alpha1.AgentTask) TaskResponse {
 }
 
 func extractStatus(task *toolkitv1alpha1.AgentTask) TaskStatusSummary {
-    cond := meta.FindStatusCondition(task.Status.Conditions, toolkitv1alpha1.ConditionSucceeded)
+    cond := apimeta.FindStatusCondition(task.Status.Conditions, toolkitv1alpha1.ConditionSucceeded)
     phase := "Pending"
     message := ""
     if cond != nil {
@@ -700,7 +709,7 @@ func (h *taskHandler) listTasks(w http.ResponseWriter, r *http.Request) {
 
 // isTerminalFromStatus checks if a task has reached a terminal condition.
 func isTerminalFromStatus(task *toolkitv1alpha1.AgentTask) bool {
-    cond := meta.FindStatusCondition(task.Status.Conditions, toolkitv1alpha1.ConditionSucceeded)
+    cond := apimeta.FindStatusCondition(task.Status.Conditions, toolkitv1alpha1.ConditionSucceeded)
     if cond == nil {
         return false
     }
@@ -912,29 +921,48 @@ func (h *taskHandler) updateTaskStatus(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    // Update CRD status based on event
-    updated := false
-    switch req.Event {
-    case "completed":
-        if prURL, ok := req.Details["pr_url"].(string); ok {
-            task.Status.Result.PRUrl = prURL
-            updated = true
-        }
-    case "failed":
-        if errMsg, ok := req.Details["error"].(string); ok {
-            task.Status.Result.Error = errMsg
-            updated = true
-        }
-    }
-
-    if updated {
-        if err := h.client.Status().Update(r.Context(), &task); err != nil {
-            writeError(w, http.StatusInternalServerError, "failed to update task status", err.Error())
+    // For terminal events, check dedup before doing any work
+    isTerminal := req.Event == "completed" || req.Event == "failed"
+    if isTerminal {
+        notifiedCond := apimeta.FindStatusCondition(task.Status.Conditions, toolkitv1alpha1.ConditionNotified)
+        if notifiedCond != nil && notifiedCond.Status == metav1.ConditionTrue {
+            // Already notified — skip callback, return success
+            writeJSON(w, http.StatusOK, map[string]string{"status": "accepted", "note": "already notified"})
             return
         }
     }
 
-    // Forward callback to adapter
+    // Update CRD status fields based on event
+    switch req.Event {
+    case "completed":
+        if prURL, ok := req.Details["pr_url"].(string); ok {
+            task.Status.Result.PRUrl = prURL
+        }
+    case "failed":
+        if errMsg, ok := req.Details["error"].(string); ok {
+            task.Status.Result.Error = errMsg
+        }
+    }
+
+    // For terminal events, set Notified condition in the SAME update to avoid
+    // a double-write race (resource version changes after first update).
+    if isTerminal {
+        apimeta.SetStatusCondition(&task.Status.Conditions, metav1.Condition{
+            Type:               toolkitv1alpha1.ConditionNotified,
+            Status:             metav1.ConditionTrue,
+            Reason:             toolkitv1alpha1.ReasonCallbackSent,
+            Message:            fmt.Sprintf("Adapter notified: %s", req.Event),
+            ObservedGeneration: task.Generation,
+        })
+    }
+
+    // Single status update with all changes (result + Notified condition)
+    if err := h.client.Status().Update(r.Context(), &task); err != nil {
+        writeError(w, http.StatusInternalServerError, "failed to update task status", err.Error())
+        return
+    }
+
+    // Forward callback to adapter (after successful status update)
     callbackURL := task.Spec.Callback.URL
     payload := CallbackPayload{
         TaskID:  taskID,
@@ -943,35 +971,9 @@ func (h *taskHandler) updateTaskStatus(w http.ResponseWriter, r *http.Request) {
         Details: req.Details,
     }
 
-    // For terminal events, check dedup and set Notified condition
-    isTerminal := req.Event == "completed" || req.Event == "failed"
-    if isTerminal {
-        notifiedCond := meta.FindStatusCondition(task.Status.Conditions, toolkitv1alpha1.ConditionNotified)
-        if notifiedCond != nil && notifiedCond.Status == metav1.ConditionTrue {
-            // Already notified — skip callback, return success
-            w.WriteHeader(http.StatusOK)
-            writeJSON(w, http.StatusOK, map[string]string{"status": "accepted", "note": "already notified"})
-            return
-        }
-    }
-
     if err := h.callback.send(r.Context(), callbackURL, payload); err != nil {
         log.Error(err, "failed to send adapter callback", "taskID", taskID, "callbackURL", callbackURL)
-        // Don't fail the request — the runner callback was accepted
-    }
-
-    // Set Notified condition for terminal events
-    if isTerminal {
-        meta.SetStatusCondition(&task.Status.Conditions, metav1.Condition{
-            Type:               toolkitv1alpha1.ConditionNotified,
-            Status:             metav1.ConditionTrue,
-            Reason:             toolkitv1alpha1.ReasonCallbackSent,
-            Message:            fmt.Sprintf("Adapter notified: %s", req.Event),
-            ObservedGeneration: task.Generation,
-        })
-        if err := h.client.Status().Update(r.Context(), &task); err != nil {
-            log.Error(err, "failed to set Notified condition", "taskID", taskID)
-        }
+        // Don't fail the request — the runner callback was accepted and status is updated
     }
 
     writeJSON(w, http.StatusOK, map[string]string{"status": "accepted"})
