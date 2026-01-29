@@ -59,7 +59,6 @@ Single binary with Kong subcommands (`shepherd api`, `shepherd operator`, `sheph
 | `api` | REST API, CRD creation, runner callbacks, watches CRD status, notifies adapters | Multiple replicas behind LB |
 | `operator` | Watches CRDs, manages Jobs, updates CRD status. K8s-only, no external calls. | 1 active (leader election) |
 | `github` | GitHub App webhooks, posts comments | Multiple replicas |
-| `all` | All in one process | Dev/testing only |
 
 ### CLI Structure
 
