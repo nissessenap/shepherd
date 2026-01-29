@@ -27,6 +27,9 @@ import (
 	"path/filepath"
 )
 
+// logger is the package-level logger, can be overridden in tests
+var logger = slog.Default()
+
 const (
 	taskDir             = "/task"
 	descriptionFilename = "description.txt"
@@ -48,7 +51,7 @@ func writeTaskFilesToDir(dir string) error {
 	if err := writeFile(descPath, descData, 0644); err != nil {
 		return fmt.Errorf("writing description: %w", err)
 	}
-	slog.Info("wrote task file", "path", descPath, "bytes", len(descData))
+	logger.Info("wrote task file", "path", descPath, "bytes", len(descData))
 
 	context := os.Getenv("TASK_CONTEXT")
 	if context == "" {
@@ -57,7 +60,7 @@ func writeTaskFilesToDir(dir string) error {
 		if err := writeFile(contextPath, nil, 0644); err != nil {
 			return fmt.Errorf("writing empty context: %w", err)
 		}
-		slog.Info("wrote task file", "path", contextPath, "bytes", 0)
+		logger.Info("wrote task file", "path", contextPath, "bytes", 0)
 		return nil
 	}
 
@@ -71,35 +74,38 @@ func writeTaskFilesToDir(dir string) error {
 	if err := writeFile(contextPath, data, 0644); err != nil {
 		return fmt.Errorf("writing context: %w", err)
 	}
-	slog.Info("wrote task file", "path", contextPath, "bytes", len(data))
+	logger.Info("wrote task file", "path", contextPath, "bytes", len(data))
 
 	return nil
 }
 
 func decodeContext(raw, encoding string) ([]byte, error) {
-	if encoding != "gzip" {
+	switch encoding {
+	case "", "plain":
 		// Plaintext — return as-is
 		return []byte(raw), nil
-	}
+	case "gzip":
+		// base64-decode, then gzip-decompress
+		compressed, err := base64.StdEncoding.DecodeString(raw)
+		if err != nil {
+			return nil, fmt.Errorf("base64 decode: %w", err)
+		}
 
-	// base64-decode, then gzip-decompress
-	compressed, err := base64.StdEncoding.DecodeString(raw)
-	if err != nil {
-		return nil, fmt.Errorf("base64 decode: %w", err)
-	}
+		gr, err := gzip.NewReader(bytes.NewReader(compressed))
+		if err != nil {
+			return nil, fmt.Errorf("gzip reader: %w", err)
+		}
+		defer gr.Close()
 
-	gr, err := gzip.NewReader(bytes.NewReader(compressed))
-	if err != nil {
-		return nil, fmt.Errorf("gzip reader: %w", err)
-	}
-	defer gr.Close()
+		decompressed, err := io.ReadAll(gr)
+		if err != nil {
+			return nil, fmt.Errorf("gzip decompress: %w", err)
+		}
 
-	decompressed, err := io.ReadAll(gr)
-	if err != nil {
-		return nil, fmt.Errorf("gzip decompress: %w", err)
+		return decompressed, nil
+	default:
+		return nil, fmt.Errorf("unsupported encoding: %q", encoding)
 	}
-
-	return decompressed, nil
 }
 
 func writeFile(path string, data []byte, perm os.FileMode) error {

@@ -20,6 +20,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/base64"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -27,6 +29,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestMain(m *testing.M) {
+	// Suppress log output during tests
+	logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	os.Exit(m.Run())
+}
 
 // gzipBase64 compresses plaintext with gzip and base64-encodes the result.
 func gzipBase64(t *testing.T, plaintext string) string {
@@ -139,11 +147,19 @@ func TestDecodeContext_EmptyEncoding_ReturnsRawBytes(t *testing.T) {
 	assert.Equal(t, []byte(raw), data)
 }
 
-func TestDecodeContext_UnknownEncoding_ReturnsRawBytes(t *testing.T) {
+func TestDecodeContext_PlainEncoding_ReturnsRawBytes(t *testing.T) {
 	raw := "hello world"
-	data, err := decodeContext(raw, "unknown")
+	data, err := decodeContext(raw, "plain")
 	require.NoError(t, err)
 	assert.Equal(t, []byte(raw), data)
+}
+
+func TestDecodeContext_UnknownEncoding_ReturnsError(t *testing.T) {
+	raw := "hello world"
+	_, err := decodeContext(raw, "unknown")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported encoding")
+	assert.Contains(t, err.Error(), "unknown")
 }
 
 func TestDecodeContext_Gzip_DecompressesCorrectly(t *testing.T) {
