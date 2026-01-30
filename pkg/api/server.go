@@ -15,6 +15,7 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	toolkitv1alpha1 "github.com/NissesSenap/shepherd/api/v1alpha1"
 )
@@ -40,6 +41,18 @@ func Run(opts Options) error {
 
 	log := ctrl.Log.WithName("api")
 
+	// Build K8s client
+	cfg := ctrl.GetConfigOrDie()
+	k8sClient, err := client.New(cfg, client.Options{Scheme: scheme})
+	if err != nil {
+		return fmt.Errorf("creating k8s client: %w", err)
+	}
+
+	handler := &taskHandler{
+		client:    k8sClient,
+		namespace: opts.Namespace,
+	}
+
 	// Build router
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -56,9 +69,9 @@ func Run(opts Options) error {
 		_, _ = w.Write([]byte("ok"))
 	})
 
-	// API routes (wired in later phases)
+	// API routes
 	r.Route("/api/v1", func(r chi.Router) {
-		// Phase 2: POST /api/v1/tasks
+		r.Post("/tasks", handler.createTask)
 		// Phase 3: GET /api/v1/tasks, GET /api/v1/tasks/{taskID}
 		// Phase 4: POST /api/v1/tasks/{taskID}/status
 	})

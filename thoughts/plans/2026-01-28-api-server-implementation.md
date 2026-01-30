@@ -636,10 +636,10 @@ Use `httptest` and a fake K8s client:
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `make test` passes all tests (existing + new)
-- [ ] `go vet ./...` clean
-- [ ] `make lint-fix` passes (golangci-lint)
-- [ ] Unit tests cover validation, compression, CRD creation, error cases
+- [x] `make test` passes all tests (existing + new)
+- [x] `go vet ./...` clean
+- [x] `make lint-fix` passes (golangci-lint)
+- [x] Unit tests cover validation, compression, CRD creation, error cases
 - [ ] `curl -X POST localhost:8080/api/v1/tasks -d '{"repo":{"url":"https://github.com/test/repo"},"task":{"description":"test"},"callbackUrl":"http://localhost/cb"}' -H 'Content-Type: application/json'` returns 201 (requires running API with kubeconfig)
 
 #### Manual Verification:
