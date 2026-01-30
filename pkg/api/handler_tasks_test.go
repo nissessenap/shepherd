@@ -42,6 +42,7 @@ func testScheme() *runtime.Scheme {
 	return s
 }
 
+// TODO(Phase 3): Add variadic ...client.Object param to pre-seed fake client with tasks for list/get tests.
 func newTestHandler() *taskHandler {
 	s := testScheme()
 	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&toolkitv1alpha1.AgentTask{}).Build()
@@ -70,6 +71,7 @@ func validCreateRequest() CreateTaskRequest {
 	}
 }
 
+// TODO(Phase 3/4): Generalize to postJSON(t, router, path, body) when multiple endpoints need testing.
 func postCreateTask(t *testing.T, router http.Handler, body any) *httptest.ResponseRecorder {
 	t.Helper()
 	data, err := json.Marshal(body)
