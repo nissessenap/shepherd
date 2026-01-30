@@ -136,7 +136,7 @@ func readPrivateKey(path string) (*rsa.PrivateKey, error) {
 		// Try PKCS8 format as fallback
 		parsed, err2 := x509.ParsePKCS8PrivateKey(block.Bytes)
 		if err2 != nil {
-			return nil, fmt.Errorf("parsing private key (tried PKCS1 and PKCS8): %w", err)
+			return nil, fmt.Errorf("parsing private key (PKCS1: %v; PKCS8: %w)", err, err2)
 		}
 		rsaKey, ok := parsed.(*rsa.PrivateKey)
 		if !ok {
@@ -160,10 +160,10 @@ func createJWT(appID int64, key *rsa.PrivateKey) (string, error) {
 }
 
 // parseRepoName extracts "repo" from "https://github.com/org/repo.git" or "https://github.com/org/repo".
-// Returns error if repoURL is non-empty but malformed.
+// Returns error if repoURL is empty or malformed.
 func parseRepoName(repoURL string) (string, error) {
 	if repoURL == "" {
-		return "", nil
+		return "", fmt.Errorf("REPO_URL is required")
 	}
 	u, err := url.Parse(repoURL)
 	if err != nil {

@@ -19,12 +19,12 @@ The init container reads the following environment variables:
 - `REPO_URL`: The GitHub repository URL for token generation (must be `https://host/owner/repo` or `https://host/owner/repo.git`)
 - `GITHUB_APP_ID`: GitHub App ID for authentication
 - `GITHUB_INSTALLATION_ID`: GitHub App installation ID for the target organization/user
-- `GITHUB_API_URL`: GitHub API base URL (e.g., `https://api.github.com`)
 
 ### Optional
 
 - `TASK_CONTEXT`: Additional task context (written to `/task/context.txt` if present, otherwise writes empty file)
 - `CONTEXT_ENCODING`: Encoding format for `TASK_CONTEXT` (supported values: `""` for no encoding, `"gzip"` for gzip-compressed+base64-encoded)
+- `GITHUB_API_URL`: GitHub API base URL (defaults to `https://api.github.com`)
 
 ## Output Files
 

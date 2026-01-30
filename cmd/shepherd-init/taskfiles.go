@@ -34,6 +34,7 @@ const (
 	taskDir             = "/task"
 	descriptionFilename = "description.txt"
 	contextFilename     = "context.txt"
+	maxDecompressedSize = 10 << 20 // 10MiB, matching emptyDir sizeLimit
 )
 
 func writeTaskFiles() error {
@@ -97,9 +98,13 @@ func decodeContext(raw, encoding string) ([]byte, error) {
 		}
 		defer gr.Close() //nolint:errcheck // Best-effort close on read-only gzip reader
 
-		decompressed, err := io.ReadAll(gr)
+		// Protect against decompression bombs by limiting decompressed size
+		decompressed, err := io.ReadAll(io.LimitReader(gr, maxDecompressedSize+1))
 		if err != nil {
 			return nil, fmt.Errorf("gzip decompress: %w", err)
+		}
+		if len(decompressed) > maxDecompressedSize {
+			return nil, fmt.Errorf("decompressed context exceeds %d byte limit", maxDecompressedSize)
 		}
 
 		return decompressed, nil

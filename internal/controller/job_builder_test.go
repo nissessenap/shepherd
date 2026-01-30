@@ -136,13 +136,13 @@ func TestBuildJob_InitContainerEnv(t *testing.T) {
 	require.NoError(t, err)
 
 	initContainer := job.Spec.Template.Spec.InitContainers[0]
-	assert.Equal(t, "github-auth", initContainer.Name)
+	assert.Equal(t, "shepherd-init", initContainer.Name)
 	assert.Equal(t, "shepherd-init:latest", initContainer.Image)
 
 	envMap := envToMap(initContainer.Env)
 	assert.Equal(t, "https://github.com/test-org/test-repo.git", envMap["REPO_URL"])
-	assert.Equal(t, "feature-branch", envMap["REPO_REF"])
 	assert.Equal(t, "Fix the login bug", envMap["TASK_DESCRIPTION"])
+	assert.NotContains(t, envMap, "REPO_REF", "REPO_REF should not be in init container env")
 }
 
 func TestBuildJob_InitContainerEnv_NoRef(t *testing.T) {
@@ -267,6 +267,42 @@ func TestBuildJob_EmptyInitImage_ReturnsError(t *testing.T) {
 	_, err := buildJob(baseTask(), cfg)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no init image configured")
+}
+
+func TestBuildJob_InvalidGithubAppID_ReturnsError(t *testing.T) {
+	cfg := baseCfg()
+	cfg.GithubAppID = 0
+
+	_, err := buildJob(baseTask(), cfg)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid GitHub App ID")
+}
+
+func TestBuildJob_NegativeGithubAppID_ReturnsError(t *testing.T) {
+	cfg := baseCfg()
+	cfg.GithubAppID = -1
+
+	_, err := buildJob(baseTask(), cfg)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid GitHub App ID")
+}
+
+func TestBuildJob_InvalidGithubInstallationID_ReturnsError(t *testing.T) {
+	cfg := baseCfg()
+	cfg.GithubInstallationID = 0
+
+	_, err := buildJob(baseTask(), cfg)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid GitHub Installation ID")
+}
+
+func TestBuildJob_NegativeGithubInstallationID_ReturnsError(t *testing.T) {
+	cfg := baseCfg()
+	cfg.GithubInstallationID = -1
+
+	_, err := buildJob(baseTask(), cfg)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid GitHub Installation ID")
 }
 
 func TestBuildJob_JobNameTooLong_ReturnsError(t *testing.T) {
@@ -433,6 +469,21 @@ func TestBuildJob_PodSecurityContext(t *testing.T) {
 	require.NotNil(t, secCtx.SeccompProfile, "SeccompProfile should be set")
 	assert.Equal(t, corev1.SeccompProfileTypeRuntimeDefault, secCtx.SeccompProfile.Type,
 		"SeccompProfile type should be RuntimeDefault")
+}
+
+func TestBuildJob_InitContainerResources(t *testing.T) {
+	job, err := buildJob(baseTask(), baseCfg())
+	require.NoError(t, err)
+
+	initContainer := job.Spec.Template.Spec.InitContainers[0]
+
+	// Verify requests
+	assert.Equal(t, resource.MustParse("10m"), initContainer.Resources.Requests[corev1.ResourceCPU])
+	assert.Equal(t, resource.MustParse("64Mi"), initContainer.Resources.Requests[corev1.ResourceMemory])
+
+	// Verify limits
+	assert.Equal(t, resource.MustParse("100m"), initContainer.Resources.Limits[corev1.ResourceCPU])
+	assert.Equal(t, resource.MustParse("128Mi"), initContainer.Resources.Limits[corev1.ResourceMemory])
 }
 
 // envToMap converts a slice of EnvVar to a map for easy lookup.

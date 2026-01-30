@@ -187,6 +187,18 @@ func TestDecodeContext_Gzip_InvalidGzipData_ReturnsError(t *testing.T) {
 	assert.Contains(t, err.Error(), "gzip")
 }
 
+func TestDecodeContext_Gzip_DecompressionBomb_ReturnsError(t *testing.T) {
+	// Create data larger than maxDecompressedSize (10MiB)
+	// Use repeated data to get high compression ratio
+	largeData := bytes.Repeat([]byte("A"), maxDecompressedSize+1)
+	encoded := gzipBase64(t, string(largeData))
+
+	_, err := decodeContext(encoded, "gzip")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exceeds")
+	assert.Contains(t, err.Error(), "byte limit")
+}
+
 func TestWriteFile_RespectsPermissions(t *testing.T) {
 	dir := t.TempDir()
 

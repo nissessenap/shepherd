@@ -87,9 +87,9 @@ func TestParseRepoName_WithoutGitSuffix(t *testing.T) {
 }
 
 func TestParseRepoName_EmptyURL(t *testing.T) {
-	name, err := parseRepoName("")
-	require.NoError(t, err)
-	assert.Equal(t, "", name)
+	_, err := parseRepoName("")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "REPO_URL is required")
 }
 
 func TestParseRepoName_MalformedURL_OnlyOrg(t *testing.T) {

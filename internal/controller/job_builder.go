@@ -56,6 +56,12 @@ func buildJob(task *toolkitv1alpha1.AgentTask, cfg jobConfig) (*batchv1.Job, err
 	if cfg.InitImage == "" {
 		return nil, fmt.Errorf("no init image configured (set SHEPHERD_INIT_IMAGE)")
 	}
+	if cfg.GithubAppID <= 0 {
+		return nil, fmt.Errorf("invalid GitHub App ID (must be > 0)")
+	}
+	if cfg.GithubInstallationID <= 0 {
+		return nil, fmt.Errorf("invalid GitHub Installation ID (must be > 0)")
+	}
 
 	// Job name includes generation to avoid collision on delete/recreate
 	jobName := fmt.Sprintf("%s-%d-job", task.Name, task.Generation)
@@ -73,14 +79,11 @@ func buildJob(task *toolkitv1alpha1.AgentTask, cfg jobConfig) (*batchv1.Job, err
 	}
 	activeDeadlineSecs := int64(timeout.Seconds())
 
-	// Build init container env — include ref if specified
+	// Build init container env
 	// Init container writes task description and context files for the runner.
 	initEnv := []corev1.EnvVar{
 		{Name: "REPO_URL", Value: task.Spec.Repo.URL},
 		{Name: "TASK_DESCRIPTION", Value: task.Spec.Task.Description},
-	}
-	if task.Spec.Repo.Ref != "" {
-		initEnv = append(initEnv, corev1.EnvVar{Name: "REPO_REF", Value: task.Spec.Repo.Ref})
 	}
 	if task.Spec.Task.Context != "" {
 		initEnv = append(initEnv, corev1.EnvVar{
@@ -163,9 +166,19 @@ func buildJob(task *toolkitv1alpha1.AgentTask, cfg jobConfig) (*batchv1.Job, err
 					RestartPolicy: corev1.RestartPolicyNever,
 					InitContainers: []corev1.Container{
 						{
-							Name:  "github-auth",
+							Name:  "shepherd-init",
 							Image: cfg.InitImage,
 							Env:   initEnv,
+							Resources: corev1.ResourceRequirements{
+								Requests: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("10m"),
+									corev1.ResourceMemory: resource.MustParse("64Mi"),
+								},
+								Limits: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("100m"),
+									corev1.ResourceMemory: resource.MustParse("128Mi"),
+								},
+							},
 							VolumeMounts: []corev1.VolumeMount{
 								{Name: "github-creds", MountPath: "/creds"},
 								{Name: "runner-app-key", MountPath: "/secrets/runner-app-key", ReadOnly: true},
