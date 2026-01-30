@@ -40,12 +40,15 @@ var _ = Describe("AgentTask Controller", func() {
 
 	BeforeEach(func() {
 		reconciler = &AgentTaskReconciler{
-			Client:             k8sClient,
-			Scheme:             k8sClient.Scheme(),
-			Recorder:           events.NewFakeRecorder(10),
-			AllowedRunnerImage: "shepherd-runner:latest",
-			RunnerSecretName:   "shepherd-runner-app-key",
-			InitImage:          "shepherd-init:latest",
+			Client:               k8sClient,
+			Scheme:               k8sClient.Scheme(),
+			Recorder:             events.NewFakeRecorder(10),
+			AllowedRunnerImage:   "shepherd-runner:latest",
+			RunnerSecretName:     "shepherd-runner-app-key",
+			InitImage:            "shepherd-init:latest",
+			GithubAppID:          12345,
+			GithubInstallationID: 67890,
+			GithubAPIURL:         "https://api.github.com",
 		}
 	})
 
@@ -502,7 +505,8 @@ var _ = Describe("AgentTask Controller", func() {
 			initEnv := job.Spec.Template.Spec.InitContainers[0].Env
 			runnerEnv := job.Spec.Template.Spec.Containers[0].Env
 
-			Expect(envVarValue(initEnv, "REPO_REF")).To(Equal("feature-branch"))
+			// REPO_REF should NOT be in init container env (init only needs REPO_URL for token scoping)
+			Expect(envVarValue(initEnv, "REPO_REF")).To(Equal(""))
 			Expect(envVarValue(runnerEnv, "SHEPHERD_REPO_REF")).To(Equal("feature-branch"))
 		})
 

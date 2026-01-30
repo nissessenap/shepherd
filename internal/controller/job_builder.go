@@ -18,6 +18,7 @@ package controller
 
 import (
 	"fmt"
+	"strconv"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -25,6 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	toolkitv1alpha1 "github.com/NissesSenap/shepherd/api/v1alpha1"
@@ -32,10 +34,13 @@ import (
 
 // jobConfig holds operator-level configuration needed to build Jobs.
 type jobConfig struct {
-	AllowedRunnerImage string
-	RunnerSecretName   string
-	InitImage          string
-	Scheme             *runtime.Scheme
+	AllowedRunnerImage   string
+	RunnerSecretName     string
+	InitImage            string
+	Scheme               *runtime.Scheme
+	GithubAppID          int64
+	GithubInstallationID int64
+	GithubAPIURL         string
 }
 
 const defaultTimeout = 30 * time.Minute
@@ -50,6 +55,12 @@ func buildJob(task *toolkitv1alpha1.AgentTask, cfg jobConfig) (*batchv1.Job, err
 	}
 	if cfg.InitImage == "" {
 		return nil, fmt.Errorf("no init image configured (set SHEPHERD_INIT_IMAGE)")
+	}
+	if cfg.GithubAppID <= 0 {
+		return nil, fmt.Errorf("invalid GitHub App ID (must be > 0)")
+	}
+	if cfg.GithubInstallationID <= 0 {
+		return nil, fmt.Errorf("invalid GitHub Installation ID (must be > 0)")
 	}
 
 	// Job name includes generation to avoid collision on delete/recreate
@@ -68,14 +79,11 @@ func buildJob(task *toolkitv1alpha1.AgentTask, cfg jobConfig) (*batchv1.Job, err
 	}
 	activeDeadlineSecs := int64(timeout.Seconds())
 
-	// Build init container env — include ref if specified
+	// Build init container env
 	// Init container writes task description and context files for the runner.
 	initEnv := []corev1.EnvVar{
 		{Name: "REPO_URL", Value: task.Spec.Repo.URL},
 		{Name: "TASK_DESCRIPTION", Value: task.Spec.Task.Description},
-	}
-	if task.Spec.Repo.Ref != "" {
-		initEnv = append(initEnv, corev1.EnvVar{Name: "REPO_REF", Value: task.Spec.Repo.Ref})
 	}
 	if task.Spec.Task.Context != "" {
 		initEnv = append(initEnv, corev1.EnvVar{
@@ -87,6 +95,13 @@ func buildJob(task *toolkitv1alpha1.AgentTask, cfg jobConfig) (*batchv1.Job, err
 			Name: "CONTEXT_ENCODING", Value: task.Spec.Task.ContextEncoding,
 		})
 	}
+
+	// GitHub App configuration for token generation
+	initEnv = append(initEnv,
+		corev1.EnvVar{Name: "GITHUB_APP_ID", Value: strconv.FormatInt(cfg.GithubAppID, 10)},
+		corev1.EnvVar{Name: "GITHUB_INSTALLATION_ID", Value: strconv.FormatInt(cfg.GithubInstallationID, 10)},
+		corev1.EnvVar{Name: "GITHUB_API_URL", Value: cfg.GithubAPIURL},
+	)
 
 	// Build main container env — runner reads task input from files written by init container
 	runnerEnv := []corev1.EnvVar{
@@ -139,12 +154,31 @@ func buildJob(task *toolkitv1alpha1.AgentTask, cfg jobConfig) (*batchv1.Job, err
 				},
 				Spec: corev1.PodSpec{
 					ServiceAccountName: task.Spec.Runner.ServiceAccountName,
-					RestartPolicy:      corev1.RestartPolicyNever,
+					SecurityContext: &corev1.PodSecurityContext{
+						RunAsNonRoot: ptr.To(true),
+						RunAsUser:    ptr.To(int64(65532)),
+						RunAsGroup:   ptr.To(int64(65532)),
+						FSGroup:      ptr.To(int64(65532)),
+						SeccompProfile: &corev1.SeccompProfile{
+							Type: corev1.SeccompProfileTypeRuntimeDefault,
+						},
+					},
+					RestartPolicy: corev1.RestartPolicyNever,
 					InitContainers: []corev1.Container{
 						{
-							Name:  "github-auth",
+							Name:  "shepherd-init",
 							Image: cfg.InitImage,
 							Env:   initEnv,
+							Resources: corev1.ResourceRequirements{
+								Requests: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("10m"),
+									corev1.ResourceMemory: resource.MustParse("64Mi"),
+								},
+								Limits: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("100m"),
+									corev1.ResourceMemory: resource.MustParse("128Mi"),
+								},
+							},
 							VolumeMounts: []corev1.VolumeMount{
 								{Name: "github-creds", MountPath: "/creds"},
 								{Name: "runner-app-key", MountPath: "/secrets/runner-app-key", ReadOnly: true},

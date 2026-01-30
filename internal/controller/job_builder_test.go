@@ -62,10 +62,13 @@ func baseTask() *toolkitv1alpha1.AgentTask {
 
 func baseCfg() jobConfig {
 	return jobConfig{
-		AllowedRunnerImage: "registry.example.com/shepherd-runner:v1",
-		RunnerSecretName:   "shepherd-runner-app-key",
-		InitImage:          "shepherd-init:latest",
-		Scheme:             testScheme(),
+		AllowedRunnerImage:   "registry.example.com/shepherd-runner:v1",
+		RunnerSecretName:     "shepherd-runner-app-key",
+		InitImage:            "shepherd-init:latest",
+		Scheme:               testScheme(),
+		GithubAppID:          12345,
+		GithubInstallationID: 67890,
+		GithubAPIURL:         "https://api.github.com",
 	}
 }
 
@@ -133,13 +136,13 @@ func TestBuildJob_InitContainerEnv(t *testing.T) {
 	require.NoError(t, err)
 
 	initContainer := job.Spec.Template.Spec.InitContainers[0]
-	assert.Equal(t, "github-auth", initContainer.Name)
+	assert.Equal(t, "shepherd-init", initContainer.Name)
 	assert.Equal(t, "shepherd-init:latest", initContainer.Image)
 
 	envMap := envToMap(initContainer.Env)
 	assert.Equal(t, "https://github.com/test-org/test-repo.git", envMap["REPO_URL"])
-	assert.Equal(t, "feature-branch", envMap["REPO_REF"])
 	assert.Equal(t, "Fix the login bug", envMap["TASK_DESCRIPTION"])
+	assert.NotContains(t, envMap, "REPO_REF", "REPO_REF should not be in init container env")
 }
 
 func TestBuildJob_InitContainerEnv_NoRef(t *testing.T) {
@@ -180,6 +183,33 @@ func TestBuildJob_InitContainerEnv_ContextWithoutEncoding(t *testing.T) {
 	envMap := envToMap(initContainer.Env)
 	assert.Equal(t, "plain-context-data", envMap["TASK_CONTEXT"])
 	assert.NotContains(t, envMap, "CONTEXT_ENCODING", "CONTEXT_ENCODING should be omitted when contextEncoding is empty")
+}
+
+func TestBuildJob_InitContainerEnv_GithubAppConfig(t *testing.T) {
+	job, err := buildJob(baseTask(), baseCfg())
+	require.NoError(t, err)
+
+	initContainer := job.Spec.Template.Spec.InitContainers[0]
+	envMap := envToMap(initContainer.Env)
+	assert.Equal(t, "12345", envMap["GITHUB_APP_ID"])
+	assert.Equal(t, "67890", envMap["GITHUB_INSTALLATION_ID"])
+	assert.Equal(t, "https://api.github.com", envMap["GITHUB_API_URL"])
+}
+
+func TestBuildJob_InitContainerEnv_GithubAppConfig_CustomValues(t *testing.T) {
+	cfg := baseCfg()
+	cfg.GithubAppID = 99999
+	cfg.GithubInstallationID = 11111
+	cfg.GithubAPIURL = "https://github.example.com/api/v3"
+
+	job, err := buildJob(baseTask(), cfg)
+	require.NoError(t, err)
+
+	initContainer := job.Spec.Template.Spec.InitContainers[0]
+	envMap := envToMap(initContainer.Env)
+	assert.Equal(t, "99999", envMap["GITHUB_APP_ID"])
+	assert.Equal(t, "11111", envMap["GITHUB_INSTALLATION_ID"])
+	assert.Equal(t, "https://github.example.com/api/v3", envMap["GITHUB_API_URL"])
 }
 
 func TestBuildJob_RunnerContainerEnv(t *testing.T) {
@@ -237,6 +267,42 @@ func TestBuildJob_EmptyInitImage_ReturnsError(t *testing.T) {
 	_, err := buildJob(baseTask(), cfg)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no init image configured")
+}
+
+func TestBuildJob_InvalidGithubAppID_ReturnsError(t *testing.T) {
+	cfg := baseCfg()
+	cfg.GithubAppID = 0
+
+	_, err := buildJob(baseTask(), cfg)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid GitHub App ID")
+}
+
+func TestBuildJob_NegativeGithubAppID_ReturnsError(t *testing.T) {
+	cfg := baseCfg()
+	cfg.GithubAppID = -1
+
+	_, err := buildJob(baseTask(), cfg)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid GitHub App ID")
+}
+
+func TestBuildJob_InvalidGithubInstallationID_ReturnsError(t *testing.T) {
+	cfg := baseCfg()
+	cfg.GithubInstallationID = 0
+
+	_, err := buildJob(baseTask(), cfg)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid GitHub Installation ID")
+}
+
+func TestBuildJob_NegativeGithubInstallationID_ReturnsError(t *testing.T) {
+	cfg := baseCfg()
+	cfg.GithubInstallationID = -1
+
+	_, err := buildJob(baseTask(), cfg)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid GitHub Installation ID")
 }
 
 func TestBuildJob_JobNameTooLong_ReturnsError(t *testing.T) {
@@ -379,6 +445,45 @@ func TestBuildJob_PodFailurePolicy(t *testing.T) {
 	require.Len(t, rules[1].OnPodConditions, 1)
 	assert.Equal(t, corev1.DisruptionTarget, rules[1].OnPodConditions[0].Type)
 	assert.Equal(t, corev1.ConditionTrue, rules[1].OnPodConditions[0].Status)
+}
+
+func TestBuildJob_PodSecurityContext(t *testing.T) {
+	job, err := buildJob(baseTask(), baseCfg())
+	require.NoError(t, err)
+
+	secCtx := job.Spec.Template.Spec.SecurityContext
+	require.NotNil(t, secCtx, "SecurityContext should be set")
+
+	require.NotNil(t, secCtx.RunAsNonRoot)
+	assert.True(t, *secCtx.RunAsNonRoot, "RunAsNonRoot should be true")
+
+	require.NotNil(t, secCtx.RunAsUser)
+	assert.Equal(t, int64(65532), *secCtx.RunAsUser, "RunAsUser should be 65532")
+
+	require.NotNil(t, secCtx.RunAsGroup)
+	assert.Equal(t, int64(65532), *secCtx.RunAsGroup, "RunAsGroup should be 65532")
+
+	require.NotNil(t, secCtx.FSGroup)
+	assert.Equal(t, int64(65532), *secCtx.FSGroup, "FSGroup should be 65532")
+
+	require.NotNil(t, secCtx.SeccompProfile, "SeccompProfile should be set")
+	assert.Equal(t, corev1.SeccompProfileTypeRuntimeDefault, secCtx.SeccompProfile.Type,
+		"SeccompProfile type should be RuntimeDefault")
+}
+
+func TestBuildJob_InitContainerResources(t *testing.T) {
+	job, err := buildJob(baseTask(), baseCfg())
+	require.NoError(t, err)
+
+	initContainer := job.Spec.Template.Spec.InitContainers[0]
+
+	// Verify requests
+	assert.Equal(t, resource.MustParse("10m"), initContainer.Resources.Requests[corev1.ResourceCPU])
+	assert.Equal(t, resource.MustParse("64Mi"), initContainer.Resources.Requests[corev1.ResourceMemory])
+
+	// Verify limits
+	assert.Equal(t, resource.MustParse("100m"), initContainer.Resources.Limits[corev1.ResourceCPU])
+	assert.Equal(t, resource.MustParse("128Mi"), initContainer.Resources.Limits[corev1.ResourceMemory])
 }
 
 // envToMap converts a slice of EnvVar to a map for easy lookup.

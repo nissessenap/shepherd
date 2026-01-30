@@ -43,12 +43,15 @@ func init() {
 
 // Options configures the operator.
 type Options struct {
-	MetricsAddr        string
-	HealthAddr         string
-	LeaderElection     bool
-	AllowedRunnerImage string
-	RunnerSecretName   string
-	InitImage          string
+	MetricsAddr          string
+	HealthAddr           string
+	LeaderElection       bool
+	AllowedRunnerImage   string
+	RunnerSecretName     string
+	InitImage            string
+	GithubAppID          int64
+	GithubInstallationID int64
+	GithubAPIURL         string
 }
 
 // Run starts the operator with the given options.
@@ -72,12 +75,15 @@ func Run(opts Options) error {
 	}
 
 	if err := (&controller.AgentTaskReconciler{
-		Client:             mgr.GetClient(),
-		Scheme:             mgr.GetScheme(),
-		Recorder:           mgr.GetEventRecorder("shepherd-operator"),
-		AllowedRunnerImage: opts.AllowedRunnerImage,
-		RunnerSecretName:   opts.RunnerSecretName,
-		InitImage:          opts.InitImage,
+		Client:               mgr.GetClient(),
+		Scheme:               mgr.GetScheme(),
+		Recorder:             mgr.GetEventRecorder("shepherd-operator"),
+		AllowedRunnerImage:   opts.AllowedRunnerImage,
+		RunnerSecretName:     opts.RunnerSecretName,
+		InitImage:            opts.InitImage,
+		GithubAppID:          opts.GithubAppID,
+		GithubInstallationID: opts.GithubInstallationID,
+		GithubAPIURL:         opts.GithubAPIURL,
 	}).SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("setting up controller: %w", err)
 	}

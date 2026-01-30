@@ -237,9 +237,9 @@ Use `t.TempDir()` to avoid needing real `/task` mount — make `taskDir` configu
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `cd cmd/shepherd-init && go build .` compiles
-- [ ] `cd cmd/shepherd-init && go test ./...` passes all tests
-- [ ] `cd cmd/shepherd-init && go vet ./...` clean
+- [x] `cd cmd/shepherd-init && go build .` compiles
+- [x] `cd cmd/shepherd-init && go test ./...` passes all tests
+- [x] `cd cmd/shepherd-init && go vet ./...` clean
 
 #### Manual Verification:
 - [ ] Review that gzip decompression matches what the API will produce (base64(gzip(plaintext)))
@@ -539,11 +539,11 @@ Use `httptest.NewServer` for exchange token tests — mock the GitHub API endpoi
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `cd cmd/shepherd-init && go build .` compiles
-- [ ] `cd cmd/shepherd-init && go test ./...` passes all tests
-- [ ] `cd cmd/shepherd-init && go vet ./...` clean
-- [ ] JWT claims verified in tests (iss, iat, exp)
-- [ ] Token scoping (repositories field) verified in tests
+- [x] `cd cmd/shepherd-init && go build .` compiles
+- [x] `cd cmd/shepherd-init && go test ./...` passes all tests
+- [x] `cd cmd/shepherd-init && go vet ./...` clean
+- [x] JWT claims verified in tests (iss, iat, exp)
+- [x] Token scoping (repositories field) verified in tests
 
 #### Manual Verification:
 - [ ] Review JWT creation matches GitHub's requirements (RS256, correct claims)
@@ -671,11 +671,11 @@ initEnv := []corev1.EnvVar{
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `make test` passes all tests
-- [ ] `make build` compiles
-- [ ] `go vet ./...` clean
-- [ ] Job builder tests verify GITHUB_APP_ID, GITHUB_INSTALLATION_ID, and GITHUB_API_URL env vars
-- [ ] Existing envtest integration tests still pass
+- [x] `make test` passes all tests
+- [x] `make build` compiles
+- [x] `go vet ./...` clean
+- [x] Job builder tests verify GITHUB_APP_ID, GITHUB_INSTALLATION_ID, and GITHUB_API_URL env vars
+- [x] Existing envtest integration tests still pass
 
 #### Manual Verification:
 - [ ] `./bin/shepherd operator --help` shows new flags
@@ -752,11 +752,11 @@ run: manifests generate fmt vet ## Run the operator from your host.
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `make test-init` passes
-- [ ] `make ko-build-init` builds successfully
-- [ ] `make build-smoke` includes init container build
-- [ ] `make lint-init` passes
-- [ ] `make vet-init` passes
+- [x] `make test-init` passes
+- [x] `make ko-build-init` builds successfully
+- [x] `make build-smoke` includes init container build
+- [x] `make lint-init` passes
+- [x] `make vet-init` passes
 
 #### Manual Verification:
 - [ ] `make build-smoke` exits 0
