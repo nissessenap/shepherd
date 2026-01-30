@@ -70,6 +70,7 @@ func Run(opts Options) error {
 	})
 
 	// API routes
+	// TODO: Add middleware to validate Content-Type is application/json on mutating requests.
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Post("/tasks", handler.createTask)
 		// Phase 3: GET /api/v1/tasks, GET /api/v1/tasks/{taskID}
@@ -77,8 +78,11 @@ func Run(opts Options) error {
 	})
 
 	srv := &http.Server{
-		Addr:    opts.ListenAddr,
-		Handler: r,
+		Addr:         opts.ListenAddr,
+		Handler:      r,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 60 * time.Second,
+		IdleTimeout:  120 * time.Second,
 	}
 
 	// Start server in goroutine

@@ -25,6 +25,8 @@ import (
 	"strings"
 	"testing"
 
+	"fmt"
+
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -32,6 +34,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	toolkitv1alpha1 "github.com/NissesSenap/shepherd/api/v1alpha1"
 )
@@ -304,6 +307,33 @@ func TestCreateTask_BodyTooLarge(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestCreateTask_K8sClientError(t *testing.T) {
+	s := testScheme()
+	c := fake.NewClientBuilder().
+		WithScheme(s).
+		WithStatusSubresource(&toolkitv1alpha1.AgentTask{}).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Create: func(_ context.Context, _ client.WithWatch, _ client.Object, _ ...client.CreateOption) error {
+				return fmt.Errorf("API server connection refused")
+			},
+		}).
+		Build()
+
+	h := &taskHandler{
+		client:    c,
+		namespace: "default",
+	}
+	router := testRouter(h)
+
+	w := postCreateTask(t, router, validCreateRequest())
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	var errResp ErrorResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &errResp))
+	assert.Equal(t, "failed to create task", errResp.Error)
+	assert.Contains(t, errResp.Details, "API server connection refused")
 }
 
 func TestExtractStatus_NoConditions(t *testing.T) {
