@@ -15,6 +15,7 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	ctrlcache "sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	toolkitv1alpha1 "github.com/NissesSenap/shepherd/api/v1alpha1"
@@ -55,6 +56,43 @@ func Run(opts Options) error {
 		namespace: opts.Namespace,
 		callback:  cb,
 	}
+
+	// Create standalone cache for CRD status watching.
+	// This gives us typed informers without the full manager overhead.
+	taskCache, err := ctrlcache.New(cfg, ctrlcache.Options{
+		Scheme: scheme,
+		DefaultNamespaces: map[string]ctrlcache.Config{
+			opts.Namespace: {},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("creating cache: %w", err)
+	}
+
+	// Start cache in background — stops when ctx is cancelled
+	go func() {
+		if err := taskCache.Start(ctx); err != nil {
+			log.Error(err, "cache failed")
+		}
+	}()
+
+	// Wait for cache to sync before starting HTTP server
+	if !taskCache.WaitForCacheSync(ctx) {
+		return fmt.Errorf("cache sync failed")
+	}
+
+	// Start CRD status watcher
+	watcher := &statusWatcher{
+		client:   k8sClient,
+		callback: cb,
+		cache:    taskCache,
+	}
+
+	go func() {
+		if err := watcher.run(ctx); err != nil {
+			log.Error(err, "status watcher failed")
+		}
+	}()
 
 	// Build router
 	r := chi.NewRouter()

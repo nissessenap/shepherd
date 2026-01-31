@@ -1330,13 +1330,13 @@ Uses a fake `client.Client` and `httptest.NewServer` (mock adapter). Tests call 
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `make test` passes all tests (including integration tests from Testing Strategy)
-- [ ] `go vet ./...` clean
-- [ ] `make lint-fix` passes (golangci-lint)
-- [ ] Watcher correctly detects terminal state transitions
-- [ ] Notified condition prevents duplicate callbacks
-- [ ] Callback failure is logged but doesn't crash the watcher
-- [ ] RBAC YAML is generated/created for API server
+- [x] `make test` passes all tests (including integration tests from Testing Strategy)
+- [x] `go vet ./...` clean
+- [ ] `make lint-fix` passes (golangci-lint) — pre-existing `dupl` warnings in handler_status_test.go from Phase 4; no new lint issues introduced
+- [x] Watcher correctly detects terminal state transitions
+- [x] Notified condition prevents duplicate callbacks
+- [x] Callback failure is logged but doesn't crash the watcher
+- [x] RBAC YAML is generated/created for API server
 
 #### Manual Verification:
 - [ ] Create an AgentTask CRD manually, simulate Job completion → API sends callback to adapter

@@ -61,7 +61,7 @@ func (h *taskHandler) updateTaskStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// For terminal events, check dedup before doing any work
-	isTerminal := req.Event == "completed" || req.Event == "failed"
+	isTerminal := req.Event == EventCompleted || req.Event == EventFailed
 	if isTerminal {
 		notifiedCond := apimeta.FindStatusCondition(task.Status.Conditions, toolkitv1alpha1.ConditionNotified)
 		// Skip if Notified condition exists (any status) — someone already handling it
@@ -75,11 +75,11 @@ func (h *taskHandler) updateTaskStatus(w http.ResponseWriter, r *http.Request) {
 	// Only terminal events modify status fields
 	if isTerminal {
 		switch req.Event {
-		case "completed":
+		case EventCompleted:
 			if prURL, ok := req.Details["pr_url"].(string); ok {
 				task.Status.Result.PRUrl = prURL
 			}
-		case "failed":
+		case EventFailed:
 			if errMsg, ok := req.Details["error"].(string); ok {
 				task.Status.Result.Error = errMsg
 			}

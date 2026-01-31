@@ -16,6 +16,14 @@ limitations under the License.
 
 package api
 
+// Callback event types used by runners and adapters.
+const (
+	EventStarted   = "started"
+	EventProgress  = "progress"
+	EventCompleted = "completed"
+	EventFailed    = "failed"
+)
+
 // CreateTaskRequest is the JSON body for POST /api/v1/tasks.
 type CreateTaskRequest struct {
 	Repo     RepoRequest       `json:"repo"`
