@@ -47,5 +47,9 @@ logs: ## Show sandbox pod logs.
 test: ## Run Go tests.
 	go test ./...
 
+.PHONY: orchestrate
+orchestrate: build-orchestrator ## Run orchestrator with default settings.
+	./bin/orchestrator --template=poc-runner --namespace=default --task-id=test-$(shell date +%s) --message="Automated PoC test" --local
+
 .PHONY: clean
 clean: undeploy ## Clean up all resources.

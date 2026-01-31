@@ -702,9 +702,9 @@ orchestrate: build-orchestrator ## Run orchestrator with default settings.
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `cd poc/sandbox && go build ./cmd/orchestrator/` compiles successfully
-- [ ] `cd poc/sandbox && go vet ./...` is clean
-- [ ] `cd poc/sandbox && go test ./...` passes
+- [x] `cd poc/sandbox && go build ./cmd/orchestrator/` compiles successfully
+- [x] `cd poc/sandbox && go vet ./...` is clean
+- [x] `cd poc/sandbox && go test ./...` passes
 
 #### Manual Verification:
 - [ ] Orchestrator creates SandboxClaim programmatically

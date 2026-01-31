@@ -59,21 +59,37 @@ Validates the agent-sandbox integration for shepherd.
 
 ### Phase 2: Orchestrator
 
-1. Build:
+1. Ensure the SandboxTemplate is deployed (from Phase 1):
+
+   ```bash
+   kubectl apply -f manifests/sandbox-template.yaml
+   ```
+
+2. Build and run with default settings (uses `--local` for Kind port-forwarding):
+
+   ```bash
+   make orchestrate
+   ```
+
+3. Or build and run manually with custom options:
 
    ```bash
    make build-orchestrator
-   ```
-
-2. Run (requires kubeconfig):
-
-   ```bash
    ./bin/orchestrator \
      --template=poc-runner \
      --namespace=default \
      --task-id=orchestrated-001 \
-     --message="Hello from orchestrator"
+     --message="Hello from orchestrator" \
+     --local
    ```
+
+   Flags:
+   - `--template`: SandboxTemplate name (default: `poc-runner`)
+   - `--namespace`: Namespace (default: `default`)
+   - `--task-id`: Task ID to send (default: `poc-task-001`)
+   - `--message`: Task message (default: `Hello from orchestrator`)
+   - `--timeout`: Overall timeout (default: `5m`)
+   - `--local`: Use kubectl port-forward instead of cluster DNS (required for Kind)
 
 ## Cleanup
 
