@@ -417,9 +417,9 @@ make clean
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `cd poc/sandbox && go build ./cmd/entrypoint/` compiles successfully
-- [ ] `cd poc/sandbox && go vet ./cmd/entrypoint/` is clean
-- [ ] Entrypoint image builds with ko: `make build-entrypoint`
+- [x] `cd poc/sandbox && go build ./cmd/entrypoint/` compiles successfully
+- [x] `cd poc/sandbox && go vet ./cmd/entrypoint/` is clean
+- [x] Entrypoint image builds with ko: `make build-entrypoint`
 - [ ] Image loads into Kind cluster: `make kind-load`
 
 #### Manual Verification:

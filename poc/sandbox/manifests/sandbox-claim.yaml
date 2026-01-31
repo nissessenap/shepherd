@@ -1,0 +1,11 @@
+apiVersion: extensions.agents.x-k8s.io/v1alpha1
+kind: SandboxClaim
+metadata:
+  name: poc-test-task
+  namespace: default
+spec:
+  sandboxTemplateRef:
+    name: poc-runner
+  lifecycle:
+    shutdownTime: "2026-02-01T00:00:00Z"  # adjust to current time + 1 hour
+    shutdownPolicy: Retain
