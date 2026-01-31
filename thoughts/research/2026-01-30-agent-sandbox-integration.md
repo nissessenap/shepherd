@@ -9,7 +9,7 @@ tags: [research, security, sandbox, agent-sandbox, kubernetes, isolation, gvisor
 status: complete
 last_updated: 2026-01-30
 last_updated_by: claude
-last_updated_note: "Revised analysis — deeper look at Option A (full integration) and how SandboxClaim/SandboxTemplate/WarmPool map to Shepherd's execution model"
+last_updated_note: "Follow-up: init container rethinking, learnings from agent-sandbox codebase, 2026 roadmap, abstraction layer decision"
 ---
 
 # Research: How could kubernetes-sigs/agent-sandbox be used inside Shepherd?
@@ -551,11 +551,277 @@ Implement `JobBackend` first (current behavior), then `SandboxBackend`.
 - [Go SDK request (Issue #227)](https://github.com/kubernetes-sigs/agent-sandbox/issues/227)
 - [Kubernetes forensic container checkpointing](https://kubernetes.io/blog/2022/12/05/forensic-container-checkpointing-alpha/)
 
-## Open Questions
+## Open Questions (Resolved)
 
-1. **Sandbox completion semantics**: What exactly happens to Sandbox status when the main container exits with code 0? The documentation says "automatically deleted after the program runs" — need to verify whether Shepherd can observe the terminal state before deletion.
-2. **SandboxClaim owner references**: Can Shepherd's operator set itself as owner of a SandboxClaim for garbage collection? Need to test.
-3. **Go SDK**: Issue #227 requests a Go client. Currently only Python SDK exists. Shepherd would need to use the K8s client-go directly to create Sandbox resources (standard for operators anyway).
-4. **Warm pool + init containers**: Does agent-sandbox run init containers during pool warming, or only when a sandbox is claimed? This affects whether the runner-pull model is strictly required.
-5. **Snapshot timeline**: When will upstream agent-sandbox (not GKE-specific) support checkpoint/restore? Worth tracking the project roadmap.
-6. **Performance benchmarking**: gVisor overhead for AI agent workloads (git, API calls, file I/O) — needs measurement but likely negligible.
+Most open questions from the initial research have been answered by reading the agent-sandbox source code:
+
+1. **Sandbox completion semantics**: **RESOLVED**. The Sandbox controller does NOT auto-delete when the container exits. The pod remains and the Sandbox transitions to `Ready=False` with reason `DependenciesNotReady`. Deletion only happens via `shutdownTime` + `ShutdownPolicy=Delete`, or explicit deletion of the SandboxClaim. Shepherd can observe the terminal state.
+
+2. **SandboxClaim owner references**: **RESOLVED**. SandboxClaim sets itself as controller owner of the Sandbox via `controllerutil.SetControllerReference()`. Shepherd would own the SandboxClaim (via OwnerReference from AgentTask), giving a clean chain: AgentTask → SandboxClaim → Sandbox → Pod/Service.
+
+3. **Go SDK**: **RESOLVED**. On the 2026 roadmap. For Shepherd's operator, client-go is the natural fit anyway (standard K8s operator pattern). No SDK dependency needed.
+
+4. **Warm pool + init containers**: **RESOLVED**. Init containers ARE run during pool warming. The warm pool controller copies the entire PodSpec from the template verbatim, including initContainers. They complete before the pod is marked ready. When claimed by a SandboxClaim, init containers are already done. This means per-task init containers won't work with warm pools — confirming the runner-pull model is needed.
+
+5. **Snapshot timeline**: **PARTIALLY RESOLVED**. The 2026 roadmap includes "Scale-down / Resume PVC based" — pause/resume preserving PVC only, which is a step toward full snapshots. Full memory snapshots remain GKE-specific for now.
+
+6. **gVisor overhead**: Considered non-issue. Google runs gVisor in production at scale.
+
+## Remaining Open Questions
+
+1. **Sandbox status when container exits with code 0**: The Sandbox becomes `Ready=False` but is NOT deleted. Does the controller distinguish between "container exited cleanly" and "container crashed"? Shepherd would need to inspect pod container status directly (same approach as discussed in failure detection section).
+
+2. **Warm pool pod readiness**: If the runner container in a warm pool pod is an HTTP server waiting for tasks, is the pod marked ready before it has a task? This would require a readiness probe on the runner (which agent-sandbox templates support).
+
+---
+
+## Follow-up Research 2026-01-30T09:30+01:00
+
+### Init Container Pattern: What Needs to Move and Where
+
+The current shepherd-init container has three responsibilities:
+
+| Responsibility | Input | Output | Where it moves |
+|---------------|-------|--------|---------------|
+| Write task description | `TASK_DESCRIPTION` env var | `/task/description.txt` | API server → runner HTTP endpoint |
+| Write task context | `TASK_CONTEXT` + `CONTEXT_ENCODING` env vars | `/task/context.txt` (gzip-decoded) | API server → runner HTTP endpoint |
+| Generate GitHub token | Private key file + App ID + Installation ID + Repo URL | `/creds/token` | API server generates token on-demand |
+
+#### Why the Init Container Doesn't Work With Warm Pools
+
+Agent-sandbox warm pools create pods from the SandboxTemplate's PodSpec **verbatim**, including init containers. Init containers run during pool warming (before any task exists). This means:
+
+- Init containers that write per-task data (description, context) have nothing to write yet
+- Init containers that generate per-repo GitHub tokens don't know which repo yet
+- The warm pod sits ready with completed init containers but no task-specific data
+
+#### The Runner-Pull Model
+
+Instead of pushing data into the pod via init containers, the runner **pulls** data from the API:
+
+```text
+                    Shepherd API
+                    /           \
+      POST /tasks              GET /tasks/{id}
+      (adapter creates)        (runner fetches)
+           |                        |
+           v                        v
+      AgentTask CRD            Runner container
+           |                   (warm pool pod)
+           v                        |
+      Operator creates         1. Poll/wait for task assignment
+      SandboxClaim             2. GET /tasks/{id} → description, context
+           |                   3. GET /tasks/{id}/token → GitHub token
+           v                   4. Clone repo, execute task
+      Agent-sandbox            5. POST /tasks/{id}/status → progress
+      claims warm pod          6. POST /tasks/{id}/status → completion
+```
+
+##### Step by step:
+
+1. **Runner starts** (from warm pool or cold start). It exposes an HTTP API (like agent-sandbox's python-runtime-sandbox pattern: `/execute`, `/upload`, `/download`). The runner is idle, waiting.
+
+2. **Task arrives** → Adapter calls API → API creates AgentTask → Operator creates SandboxClaim.
+
+3. **Agent-sandbox claims a warm pod**. Shepherd operator detects the Sandbox is ready (watches SandboxClaim status for `Ready=True`).
+
+4. **Operator notifies the runner** via HTTP through the Sandbox Router:
+   - `POST http://{sandbox-name}.{namespace}.svc.cluster.local:8888/task` with task ID and API endpoint
+   - Or: operator sets an annotation/label on the Sandbox that the runner watches
+
+5. **Runner pulls task data from API**:
+   - `GET /api/v1/tasks/{id}` → returns description, context (API decompresses gzip)
+   - `GET /api/v1/tasks/{id}/token` → API generates GitHub installation token on-the-fly using the Runner App private key (the key stays in the API server, never in pods)
+
+6. **Runner executes**: clones repo with token, runs Claude Code, POSTs status updates to API.
+
+7. **Runner finishes**: container exits (or stays alive for the next task in a future multi-task model). Shepherd operator detects via Sandbox/pod status change.
+
+##### Why This Is Better Than Init Containers (Even Without Warm Pools)
+
+- **Private key never leaves the API server**. Today, the init container mounts the Runner App private key as a volume. In the pull model, the API server holds the key and generates tokens. The runner only ever sees short-lived installation tokens, never the private key.
+
+- **Context decompression happens in the API**, not in the pod. The API already handles gzip compression when creating the CRD. It can decompress when serving to the runner.
+
+- **Single source of truth**. The runner gets data from one place (the API) instead of from environment variables, mounted files, and volumes.
+
+- **No emptyDir volume coordination**. The current pattern requires careful UID/fsGroup matching between init and runner containers. The pull model eliminates this.
+
+- **Testability**. The API endpoint can be tested with standard HTTP tests. The init container requires integration testing with shared volumes.
+
+### Learnings From agent-sandbox Implementation
+
+#### 1. NetworkPolicy Per Sandbox (Default Deny)
+
+Agent-sandbox creates a `NetworkPolicy` per SandboxClaim **before** the pod starts (`sandboxclaim_controller.go:192-197`). The policy uses the claim UID as pod selector, ensuring each sandbox has its own firewall:
+
+```yaml
+spec:
+  podSelector:
+    matchLabels:
+      agents.x-k8s.io/claim-uid: {claim-uid}
+  policyTypes: [Ingress, Egress]
+  # Template defines allowed rules
+```
+
+**For Shepherd**: Each runner pod should have a NetworkPolicy that:
+- Allows egress to the Shepherd API (for callbacks and task data)
+- Allows egress to GitHub API (for cloning and PR creation)
+- Allows egress to the AI provider API (Anthropic for Claude Code)
+- Denies all other egress (prevents data exfiltration)
+- Denies all ingress (runner doesn't need to receive connections)
+
+This is defined in the SandboxTemplate's `networkPolicy` field. Shepherd-specific templates would include the right rules.
+
+#### 2. AutomountServiceAccountToken Defaults to False
+
+Agent-sandbox explicitly sets `AutomountServiceAccountToken: false` if not specified (`sandboxclaim_controller.go:446-452`). This prevents the runner from accessing the K8s API.
+
+**For Shepherd**: Already good practice, and agent-sandbox enforces it by default.
+
+#### 3. HTTP-Based Communication (Not Exec)
+
+Agent-sandbox's runtime pattern uses HTTP APIs (`/execute`, `/upload`, `/download`) rather than `kubectl exec`. Each sandbox gets a headless service (`ClusterIP: None`) for DNS-based routing, and the Sandbox Router uses `X-Sandbox-ID` headers to proxy requests.
+
+**For Shepherd**: The runner image should expose an HTTP API. Shepherd communicates via the Sandbox Router or directly via the headless service FQDN (`{sandbox-name}.{namespace}.svc.cluster.local`).
+
+#### 4. ShutdownPolicy: Delete vs Retain
+
+SandboxClaim supports `ShutdownPolicy`:
+- `Delete`: claim + sandbox + pod all deleted when shutdownTime expires
+- `Retain`: pod and sandbox deleted (save resources), but SandboxClaim kept (audit trail)
+
+**For Shepherd**: Use `ShutdownPolicy: Retain` with `shutdownTime = now + timeout`. When the timeout fires, the pod is killed but the SandboxClaim stays. Shepherd can inspect it to determine timeout vs completion. For successful tasks, explicitly delete the SandboxClaim.
+
+#### 5. Warm Pool Pod Adoption Pattern
+
+When a SandboxClaim is created, it calls `tryAdoptPodFromPool()` which:
+1. Lists pods matching the template hash label
+2. Removes warm pool owner references
+3. Adds sandbox labels and claim UID label
+4. The Sandbox controller then adopts the pod
+
+**For Shepherd**: This is transparent. Shepherd creates SandboxClaim → agent-sandbox handles adoption.
+
+#### 6. Owner Reference Chain
+
+```
+SandboxClaim → owns → Sandbox → owns → Pod, Service, PVC
+                                  ↕
+                         SandboxClaim → owns → NetworkPolicy
+```
+
+**For Shepherd**: Add AgentTask to the chain:
+```
+AgentTask → owns → SandboxClaim → owns → Sandbox → owns → Pod, Service
+```
+
+Deleting an AgentTask cascades all the way down.
+
+### 2026 Roadmap Highlights (from PR #259)
+
+Key items relevant to Shepherd:
+
+| Roadmap Item | Relevance to Shepherd |
+|-------------|----------------------|
+| **Implement Go Client (#227)** | Shepherd is Go — direct SDK usage |
+| **Scale-down / Resume PVC based** | Pause/resume runners, preserve workspace. Step toward snapshots |
+| **Auto-deletion of bursty sandboxes** | Directly useful for Shepherd's run-to-completion tasks |
+| **Status Updates (#119)** | Better status reporting reduces need for Shepherd to inspect pods |
+| **Startup Actions (#58)** | Could allow "start paused, resume when task assigned" pattern |
+| **Creation Latency Metrics (#123)** | Observability for task startup time |
+| **Decouple API from Runtime** | Full customization of runner environment |
+| **API Support for Multi-Sandbox per Pod** | Not immediately relevant but interesting for sidecar patterns |
+| **Falco configuration extension** | Security auditing for sandboxed runners |
+| **Beta/GA versions** | API stability for production use |
+
+The "Auto-deletion of bursty sandboxes" item is particularly interesting — it suggests the project is actively thinking about ephemeral/short-lived sandbox patterns, which is exactly Shepherd's use case.
+
+"Startup Actions" (#58) could enable a pattern where warm pool sandboxes start paused and are resumed when a task is assigned, avoiding the idle HTTP server model.
+
+### Should We Introduce an ExecutionBackend Interface?
+
+**No. Build directly for agent-sandbox.**
+
+The abstraction is overhead that doesn't serve Shepherd's goals:
+
+1. **Both projects are greenfield alpha**. Designing an abstraction to support a backend you're about to remove (Jobs) adds code and complexity for no gain.
+
+2. **The interface would be wrong anyway**. A good abstraction emerges from having two concrete implementations. Designing it upfront from one implementation (Jobs) will produce an interface shaped like Jobs, which won't fit Sandbox well.
+
+3. **Reversibility is cheap**. If you later need to support Jobs (e.g., for clusters without agent-sandbox), adding a second backend to a Sandbox-native design is straightforward. The reconciler logic is ~200 lines.
+
+4. **Agent-sandbox IS the abstraction**. SandboxTemplate already abstracts over runtime classes, resource profiles, and security configs. SandboxClaim abstracts over warm pool vs cold start. Adding another layer on top is premature.
+
+**Recommendation**: Build the operator directly against agent-sandbox CRDs. If you ever need a Job fallback, extract the interface then. You'll have two concrete implementations to inform the design.
+
+### Revised Data Flow With Agent-Sandbox
+
+```text
+1. Developer comments "@shepherd fix the null pointer"
+         |
+         v
+2. GitHub webhook → github-adapter (Trigger App)
+         |
+         v
+3. Adapter checks API for active tasks on this repo+issue
+         |
+         v
+4. Adapter extracts context, POST /api/v1/tasks to API
+         |
+         v
+5. API validates, gzip-compresses context, creates AgentTask CRD
+         |
+         v
+6. Operator sees new AgentTask, creates SandboxClaim
+   referencing SandboxTemplate (e.g. "shepherd-go-runner")
+         |
+         v
+7. Agent-sandbox controller:
+   - Claims warm pod from SandboxWarmPool (or creates new)
+   - Creates headless Service
+   - Creates NetworkPolicy (from template)
+   - SandboxClaim status → Ready=True
+         |
+         v
+8. Operator detects SandboxClaim ready, notifies runner:
+   POST http://{sandbox}.{ns}.svc.cluster.local:8888/task
+   with: { taskID, apiEndpoint }
+         |
+         v
+9. Runner pulls task from API:
+   GET /api/v1/tasks/{id} → description, context
+   GET /api/v1/tasks/{id}/token → GitHub installation token
+         |
+         v
+10. Runner clones repo, Claude Code works on task
+    POST /api/v1/tasks/{id}/status → progress updates
+    API watches CRD status, notifies adapter via callback
+         |
+         v
+11. Claude Code creates PR, runner reports completion
+    POST /api/v1/tasks/{id}/status → { event: completed, pr_url: ... }
+         |
+         v
+12. Operator detects runner completion (pod status or API callback)
+    Updates AgentTask to Succeeded=True
+    Deletes SandboxClaim → cascades to Sandbox → Pod → Service
+         |
+         v
+13. API's CRD status watcher detects terminal state
+    POSTs to adapter callback → adapter posts final GitHub comment
+```
+
+### What Happens to shepherd-init?
+
+The `cmd/shepherd-init/` module and its code would be retired. Its responsibilities redistribute:
+
+| Current (init container) | New (API server) |
+|-------------------------|------------------|
+| Read TASK_DESCRIPTION env → write /task/description.txt | API serves `GET /tasks/{id}` returning description |
+| Read TASK_CONTEXT env → gzip-decode → write /task/context.txt | API serves `GET /tasks/{id}` returning decoded context |
+| Read private key → create JWT → exchange for GitHub token → write /creds/token | API serves `GET /tasks/{id}/token`, generates token using its own copy of the private key |
+
+The `taskfiles.go` decompression logic moves to the API's task-serving endpoint. The `github.go` token generation logic moves to an API endpoint. The private key is mounted into the API server pod (not individual runner pods), which is a security improvement — one key location vs. N runner pods.
+
+The runner image becomes simpler: it's just an HTTP server that receives task assignments and has Claude Code + git + language tools pre-installed.
