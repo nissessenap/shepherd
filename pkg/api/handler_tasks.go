@@ -80,13 +80,22 @@ func (h *taskHandler) createTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid callbackUrl scheme", "must be http or https")
 		return
 	}
+	// Validate hostname is non-empty
+	hostname := parsedURL.Hostname()
+	if hostname == "" {
+		writeError(w, http.StatusBadRequest, "invalid callbackUrl host", "hostname is empty")
+		return
+	}
 	// Block well-known metadata IPs and localhost
 	blockedHosts := map[string]bool{
 		"169.254.169.254": true,
 		"localhost":       true,
 		"127.0.0.1":       true,
+		"::1":             true,
+		"[::1]":           true,
+		"0.0.0.0":         true,
 	}
-	if blockedHosts[parsedURL.Hostname()] {
+	if blockedHosts[hostname] {
 		writeError(w, http.StatusBadRequest, "invalid callbackUrl host", "blocked host")
 		return
 	}

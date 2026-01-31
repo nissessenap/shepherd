@@ -42,7 +42,7 @@ type RepoRequest struct {
 // TaskRequest specifies the task details.
 type TaskRequest struct {
 	Description string `json:"description"`
-	Context     string `json:"context"`
+	Context     string `json:"context,omitempty"`
 	ContextURL  string `json:"contextUrl,omitempty"`
 }
 

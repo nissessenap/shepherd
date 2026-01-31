@@ -228,9 +228,10 @@ func TestWatcher_CallbackPendingSkipsCallback(t *testing.T) {
 			Reason: toolkitv1alpha1.ReasonSucceeded,
 		},
 		{
-			Type:   toolkitv1alpha1.ConditionNotified,
-			Status: metav1.ConditionUnknown,
-			Reason: toolkitv1alpha1.ReasonCallbackPending,
+			Type:               toolkitv1alpha1.ConditionNotified,
+			Status:             metav1.ConditionUnknown,
+			Reason:             toolkitv1alpha1.ReasonCallbackPending,
+			LastTransitionTime: metav1.Now(), // Fresh timestamp, within TTL
 		},
 	}, toolkitv1alpha1.TaskResult{})
 
@@ -333,7 +334,7 @@ func TestWatcher_SetNotifiedConditionRefetchFailure(t *testing.T) {
 		WithObjects(task).
 		WithInterceptorFuncs(interceptor.Funcs{
 			Get: func(ctx context.Context, cl client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
-				if getCount.Add(1) > 0 {
+				if getCount.Add(1) > 1 {
 					// setNotifiedCondition re-fetches — simulate failure
 					return fmt.Errorf("network error during re-fetch")
 				}

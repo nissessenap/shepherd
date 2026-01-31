@@ -234,9 +234,10 @@ func TestUpdateTaskStatus_DuplicateTerminalSkipsCallback(t *testing.T) {
 		{
 			name: "already notified with CallbackPending",
 			condition: metav1.Condition{
-				Type:   toolkitv1alpha1.ConditionNotified,
-				Status: metav1.ConditionUnknown,
-				Reason: toolkitv1alpha1.ReasonCallbackPending,
+				Type:               toolkitv1alpha1.ConditionNotified,
+				Status:             metav1.ConditionUnknown,
+				Reason:             toolkitv1alpha1.ReasonCallbackPending,
+				LastTransitionTime: metav1.Now(), // Fresh timestamp, within TTL
 			},
 		},
 		{
@@ -270,7 +271,12 @@ func TestUpdateTaskStatus_DuplicateTerminalSkipsCallback(t *testing.T) {
 			assert.Equal(t, http.StatusOK, w.Code)
 			var resp map[string]string
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-			assert.Equal(t, "already notified", resp["note"])
+			// For CallbackPending with fresh timestamp, expect "callback pending"
+			expectedNote := "already notified"
+			if tt.condition.Reason == toolkitv1alpha1.ReasonCallbackPending {
+				expectedNote = "callback pending"
+			}
+			assert.Equal(t, expectedNote, resp["note"])
 			assert.Equal(t, int32(0), callbackCount.Load(), "no callback should be sent for duplicate")
 		})
 	}

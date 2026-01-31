@@ -19,6 +19,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/go-logr/logr"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -29,6 +30,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	toolkitv1alpha1 "github.com/NissesSenap/shepherd/api/v1alpha1"
+)
+
+const (
+	// callbackPendingTTL is the maximum time a CallbackPending condition can remain
+	// before being considered stale and eligible for retry.
+	callbackPendingTTL = 5 * time.Minute
 )
 
 // statusWatcher watches AgentTask resources for terminal states
@@ -50,6 +57,15 @@ func (w *statusWatcher) run(ctx context.Context) error {
 	}
 
 	_, err = informer.AddEventHandler(toolscache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj any) {
+			task, ok := obj.(*toolkitv1alpha1.AgentTask)
+			if !ok {
+				w.log.Error(nil, "unexpected object type in add", "type", fmt.Sprintf("%T", obj))
+				return
+			}
+			// Handle cold-start: process terminal tasks that already exist
+			w.handleTerminalTransition(ctx, task)
+		},
 		UpdateFunc: func(_, newObj any) {
 			newTask, ok := newObj.(*toolkitv1alpha1.AgentTask)
 			if !ok {
@@ -80,7 +96,18 @@ func (w *statusWatcher) handleTerminalTransition(ctx context.Context, task *tool
 
 	notifiedCond := apimeta.FindStatusCondition(task.Status.Conditions, toolkitv1alpha1.ConditionNotified)
 	if notifiedCond != nil {
-		return
+		// Only skip if callback is definitively complete (CallbackSent or CallbackFailed)
+		if notifiedCond.Reason == toolkitv1alpha1.ReasonCallbackSent ||
+			notifiedCond.Reason == toolkitv1alpha1.ReasonCallbackFailed {
+			return
+		}
+		// If CallbackPending, check if it's stale (older than TTL)
+		if notifiedCond.Reason == toolkitv1alpha1.ReasonCallbackPending {
+			if time.Since(notifiedCond.LastTransitionTime.Time) < callbackPendingTTL {
+				return // Still fresh, don't retry yet
+			}
+			// Stale CallbackPending — fall through to retry
+		}
 	}
 
 	// Phase 1: Re-fetch and atomically claim with CallbackPending
@@ -93,7 +120,18 @@ func (w *statusWatcher) handleTerminalTransition(ctx context.Context, task *tool
 	// Re-check on fresh copy
 	notifiedCond = apimeta.FindStatusCondition(fresh.Status.Conditions, toolkitv1alpha1.ConditionNotified)
 	if notifiedCond != nil {
-		return
+		// Only skip if callback is definitively complete (CallbackSent or CallbackFailed)
+		if notifiedCond.Reason == toolkitv1alpha1.ReasonCallbackSent ||
+			notifiedCond.Reason == toolkitv1alpha1.ReasonCallbackFailed {
+			return
+		}
+		// If CallbackPending, check if it's stale (older than TTL)
+		if notifiedCond.Reason == toolkitv1alpha1.ReasonCallbackPending {
+			if time.Since(notifiedCond.LastTransitionTime.Time) < callbackPendingTTL {
+				return // Still fresh, don't retry yet
+			}
+			// Stale CallbackPending — fall through to retry
+		}
 	}
 
 	// Determine event type from Succeeded condition

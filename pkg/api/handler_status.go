@@ -20,9 +20,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
-	"k8s.io/apimachinery/pkg/api/errors"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -64,7 +65,7 @@ func (h *taskHandler) updateTaskStatus(w http.ResponseWriter, r *http.Request) {
 	var task toolkitv1alpha1.AgentTask
 	key := client.ObjectKey{Namespace: h.namespace, Name: taskID}
 	if err := h.client.Get(r.Context(), key, &task); err != nil {
-		if errors.IsNotFound(err) {
+		if apierrors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, "task not found", "")
 			return
 		}
@@ -77,10 +78,21 @@ func (h *taskHandler) updateTaskStatus(w http.ResponseWriter, r *http.Request) {
 	isTerminal := req.Event == EventCompleted || req.Event == EventFailed
 	if isTerminal {
 		notifiedCond := apimeta.FindStatusCondition(task.Status.Conditions, toolkitv1alpha1.ConditionNotified)
-		// Skip if Notified condition exists (any status) — someone already handling it
 		if notifiedCond != nil {
-			writeJSON(w, http.StatusOK, map[string]string{"status": "accepted", "note": "already notified"})
-			return
+			// Only dedup on definitively complete callbacks (CallbackSent or CallbackFailed)
+			if notifiedCond.Reason == toolkitv1alpha1.ReasonCallbackSent ||
+				notifiedCond.Reason == toolkitv1alpha1.ReasonCallbackFailed {
+				writeJSON(w, http.StatusOK, map[string]string{"status": "accepted", "note": "already notified"})
+				return
+			}
+			// If CallbackPending and stale (>5 min), allow re-claim
+			if notifiedCond.Reason == toolkitv1alpha1.ReasonCallbackPending {
+				if time.Since(notifiedCond.LastTransitionTime.Time) < callbackPendingTTL {
+					writeJSON(w, http.StatusOK, map[string]string{"status": "accepted", "note": "callback pending"})
+					return
+				}
+				// Stale CallbackPending — fall through to re-claim
+			}
 		}
 	}
 
@@ -110,6 +122,11 @@ func (h *taskHandler) updateTaskStatus(w http.ResponseWriter, r *http.Request) {
 
 		// Single status update with all changes (result + Notified condition)
 		if err := h.client.Status().Update(r.Context(), &task); err != nil {
+			if apierrors.IsConflict(err) {
+				// Someone else claimed the task first — treat as accepted
+				writeJSON(w, http.StatusOK, map[string]string{"status": "accepted", "note": "task already claimed"})
+				return
+			}
 			log.Error(err, "failed to update task status", "taskID", taskID)
 			writeError(w, http.StatusInternalServerError, "failed to update task status", "")
 			return
@@ -134,7 +151,7 @@ func (h *taskHandler) updateTaskStatus(w http.ResponseWriter, r *http.Request) {
 		key := client.ObjectKey{Namespace: h.namespace, Name: taskID}
 		if err := h.client.Get(r.Context(), key, &freshTask); err != nil {
 			log.Error(err, "failed to re-fetch task for callback status update", "taskID", taskID)
-			// Continue without updating callback status — watcher can retry
+			// Continue without updating callback status — watcher can retry if CallbackPending TTL expires
 		} else {
 			// Update Notified condition based on callback result
 			if callbackErr != nil {
@@ -157,7 +174,7 @@ func (h *taskHandler) updateTaskStatus(w http.ResponseWriter, r *http.Request) {
 
 			if err := h.client.Status().Update(r.Context(), &freshTask); err != nil {
 				log.Error(err, "failed to update callback status", "taskID", taskID)
-				// Don't fail the request — the condition is CallbackPending which watcher can retry
+				// Don't fail the request — the condition remains CallbackPending which watcher can retry if TTL expires
 			}
 		}
 
