@@ -159,6 +159,21 @@ func TestCreateTask_MissingRepoURL(t *testing.T) {
 	assert.Equal(t, "repo.url is required", errResp.Error)
 }
 
+func TestCreateTask_HTTPRepoURL(t *testing.T) {
+	h := newTestHandler()
+	router := testRouter(h)
+
+	req := validCreateRequest()
+	req.Repo.URL = "http://github.com/test-org/test-repo"
+	w := postCreateTask(t, router, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	var errResp ErrorResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &errResp))
+	assert.Equal(t, "repo.url must start with https://", errResp.Error)
+	assert.Equal(t, "CRD schema requires HTTPS URLs", errResp.Details)
+}
+
 func TestCreateTask_MissingDescription(t *testing.T) {
 	h := newTestHandler()
 	router := testRouter(h)

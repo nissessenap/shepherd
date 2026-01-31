@@ -334,8 +334,8 @@ func TestWatcher_SetNotifiedConditionRefetchFailure(t *testing.T) {
 		WithObjects(task).
 		WithInterceptorFuncs(interceptor.Funcs{
 			Get: func(ctx context.Context, cl client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
-				if getCount.Add(1) > 1 {
-					// setNotifiedCondition re-fetches — simulate failure
+				if getCount.Add(1) >= 2 {
+					// setNotifiedCondition re-fetches — simulate failure on second Get
 					return fmt.Errorf("network error during re-fetch")
 				}
 				return cl.Get(ctx, key, obj, opts...)

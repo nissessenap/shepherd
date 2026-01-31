@@ -57,6 +57,10 @@ func (h *taskHandler) createTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "repo.url is required", "")
 		return
 	}
+	if len(req.Repo.URL) < 8 || req.Repo.URL[:8] != "https://" {
+		writeError(w, http.StatusBadRequest, "repo.url must start with https://", "CRD schema requires HTTPS URLs")
+		return
+	}
 	if req.Task.Description == "" {
 		writeError(w, http.StatusBadRequest, "task.description is required", "")
 		return
