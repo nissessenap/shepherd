@@ -93,9 +93,11 @@ func main() {
 
 	if *localMode {
 		log.Info("local mode: starting kubectl port-forward")
-		svcName := claimName // SandboxClaim name matches the service name
+		// Port-forward to the pod directly — the headless service created by
+		// agent-sandbox has no ports defined, so svc port-forward won't work.
+		podName := claimName // Sandbox pod name matches the claim name
 		portForwardCmd = exec.CommandContext(ctx, "kubectl", "port-forward",
-			fmt.Sprintf("svc/%s", svcName), "8888:8888",
+			fmt.Sprintf("pod/%s", podName), "8888:8888",
 			"-n", *namespace)
 		portForwardCmd.Stdout = os.Stdout
 		portForwardCmd.Stderr = os.Stderr
