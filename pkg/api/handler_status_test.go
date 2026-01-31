@@ -392,3 +392,193 @@ func TestUpdateTaskStatus_K8sStatusUpdateError(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &errResp))
 	assert.Equal(t, "failed to update task status", errResp.Error)
 }
+
+func TestUpdateTaskStatus_StartedEventDoesNotUpdateStatus(t *testing.T) {
+	adapter := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer adapter.Close()
+
+	task := statusTask("task-abc", adapter.URL, nil)
+	h := newTestHandlerWithCallback("test-secret", task)
+
+	// Get initial resourceVersion
+	var initialTask toolkitv1alpha1.AgentTask
+	err := h.client.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "task-abc"}, &initialTask)
+	require.NoError(t, err)
+	initialResourceVersion := initialTask.ResourceVersion
+
+	router := testRouter(h)
+
+	w := postJSON(t, router, "/api/v1/tasks/task-abc/status", StatusUpdateRequest{
+		Event:   "started",
+		Message: "cloning repository",
+	})
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	// Verify resourceVersion is unchanged (no status update occurred)
+	var updated toolkitv1alpha1.AgentTask
+	err = h.client.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "task-abc"}, &updated)
+	require.NoError(t, err)
+	assert.Equal(t, initialResourceVersion, updated.ResourceVersion, "resourceVersion should be unchanged for non-terminal events")
+}
+
+func TestUpdateTaskStatus_ProgressEventDoesNotUpdateStatus(t *testing.T) {
+	adapter := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer adapter.Close()
+
+	task := statusTask("task-abc", adapter.URL, nil)
+	h := newTestHandlerWithCallback("test-secret", task)
+
+	// Get initial resourceVersion
+	var initialTask toolkitv1alpha1.AgentTask
+	err := h.client.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "task-abc"}, &initialTask)
+	require.NoError(t, err)
+	initialResourceVersion := initialTask.ResourceVersion
+
+	router := testRouter(h)
+
+	w := postJSON(t, router, "/api/v1/tasks/task-abc/status", StatusUpdateRequest{
+		Event:   "progress",
+		Message: "50% complete",
+	})
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	// Verify resourceVersion is unchanged (no status update occurred)
+	var updated toolkitv1alpha1.AgentTask
+	err = h.client.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "task-abc"}, &updated)
+	require.NoError(t, err)
+	assert.Equal(t, initialResourceVersion, updated.ResourceVersion, "resourceVersion should be unchanged for non-terminal events")
+}
+
+func TestUpdateTaskStatus_TwoPhaseCondition_CallbackSuccess(t *testing.T) {
+	var callbackCount atomic.Int32
+	adapter := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		callbackCount.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer adapter.Close()
+
+	task := statusTask("task-abc", adapter.URL, nil)
+	h := newTestHandlerWithCallback("test-secret", task)
+	router := testRouter(h)
+
+	w := postJSON(t, router, "/api/v1/tasks/task-abc/status", StatusUpdateRequest{
+		Event:   "completed",
+		Message: "done",
+	})
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, int32(1), callbackCount.Load(), "callback should be sent once")
+
+	// Verify final condition is CallbackSent (Status=True)
+	var updated toolkitv1alpha1.AgentTask
+	err := h.client.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "task-abc"}, &updated)
+	require.NoError(t, err)
+
+	notified := apimeta.FindStatusCondition(updated.Status.Conditions, toolkitv1alpha1.ConditionNotified)
+	require.NotNil(t, notified)
+	assert.Equal(t, metav1.ConditionTrue, notified.Status, "final status should be True after successful callback")
+	assert.Equal(t, toolkitv1alpha1.ReasonCallbackSent, notified.Reason)
+	assert.Contains(t, notified.Message, "completed")
+}
+
+func TestUpdateTaskStatus_TwoPhaseCondition_CallbackFailure(t *testing.T) {
+	var callbackCount atomic.Int32
+	adapter := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		callbackCount.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer adapter.Close()
+
+	task := statusTask("task-abc", adapter.URL, nil)
+	h := newTestHandlerWithCallback("test-secret", task)
+	router := testRouter(h)
+
+	w := postJSON(t, router, "/api/v1/tasks/task-abc/status", StatusUpdateRequest{
+		Event:   "failed",
+		Message: "task failed",
+	})
+
+	assert.Equal(t, http.StatusOK, w.Code, "request should succeed even if callback fails")
+	assert.Equal(t, int32(1), callbackCount.Load(), "callback should be attempted once")
+
+	// Verify final condition is CallbackFailed (Status=True)
+	var updated toolkitv1alpha1.AgentTask
+	err := h.client.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "task-abc"}, &updated)
+	require.NoError(t, err)
+
+	notified := apimeta.FindStatusCondition(updated.Status.Conditions, toolkitv1alpha1.ConditionNotified)
+	require.NotNil(t, notified)
+	assert.Equal(t, metav1.ConditionTrue, notified.Status, "final status should be True even for failed callback")
+	assert.Equal(t, toolkitv1alpha1.ReasonCallbackFailed, notified.Reason)
+	assert.Contains(t, notified.Message, "failed")
+}
+
+func TestUpdateTaskStatus_CallbackPendingTriggersDedup(t *testing.T) {
+	var callbackCount atomic.Int32
+	adapter := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		callbackCount.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer adapter.Close()
+
+	// Task with CallbackPending condition (Status=Unknown)
+	task := statusTask("task-abc", adapter.URL, []metav1.Condition{
+		{
+			Type:   toolkitv1alpha1.ConditionNotified,
+			Status: metav1.ConditionUnknown,
+			Reason: toolkitv1alpha1.ReasonCallbackPending,
+		},
+	})
+
+	h := newTestHandlerWithCallback("test-secret", task)
+	router := testRouter(h)
+
+	w := postJSON(t, router, "/api/v1/tasks/task-abc/status", StatusUpdateRequest{
+		Event:   "completed",
+		Message: "done again",
+	})
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]string
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "already notified", resp["note"])
+	assert.Equal(t, int32(0), callbackCount.Load(), "no callback should be sent for duplicate with CallbackPending")
+}
+
+func TestUpdateTaskStatus_CallbackFailedTriggersDedup(t *testing.T) {
+	var callbackCount atomic.Int32
+	adapter := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		callbackCount.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer adapter.Close()
+
+	// Task with CallbackFailed condition (Status=True)
+	task := statusTask("task-abc", adapter.URL, []metav1.Condition{
+		{
+			Type:   toolkitv1alpha1.ConditionNotified,
+			Status: metav1.ConditionTrue,
+			Reason: toolkitv1alpha1.ReasonCallbackFailed,
+		},
+	})
+
+	h := newTestHandlerWithCallback("test-secret", task)
+	router := testRouter(h)
+
+	w := postJSON(t, router, "/api/v1/tasks/task-abc/status", StatusUpdateRequest{
+		Event:   "completed",
+		Message: "done again",
+	})
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]string
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "already notified", resp["note"])
+	assert.Equal(t, int32(0), callbackCount.Load(), "no callback should be sent for duplicate with CallbackFailed")
+}

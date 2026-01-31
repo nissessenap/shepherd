@@ -64,40 +64,42 @@ func (h *taskHandler) updateTaskStatus(w http.ResponseWriter, r *http.Request) {
 	isTerminal := req.Event == "completed" || req.Event == "failed"
 	if isTerminal {
 		notifiedCond := apimeta.FindStatusCondition(task.Status.Conditions, toolkitv1alpha1.ConditionNotified)
-		if notifiedCond != nil && notifiedCond.Status == metav1.ConditionTrue {
+		// Skip if Notified condition exists (any status) — someone already handling it
+		if notifiedCond != nil {
 			writeJSON(w, http.StatusOK, map[string]string{"status": "accepted", "note": "already notified"})
 			return
 		}
 	}
 
 	// Update CRD status fields based on event
-	switch req.Event {
-	case "completed":
-		if prURL, ok := req.Details["pr_url"].(string); ok {
-			task.Status.Result.PRUrl = prURL
-		}
-	case "failed":
-		if errMsg, ok := req.Details["error"].(string); ok {
-			task.Status.Result.Error = errMsg
-		}
-	}
-
-	// For terminal events, set Notified condition in the SAME update to avoid
-	// a double-write race (resource version changes after first update).
+	// Only terminal events modify status fields
 	if isTerminal {
+		switch req.Event {
+		case "completed":
+			if prURL, ok := req.Details["pr_url"].(string); ok {
+				task.Status.Result.PRUrl = prURL
+			}
+		case "failed":
+			if errMsg, ok := req.Details["error"].(string); ok {
+				task.Status.Result.Error = errMsg
+			}
+		}
+
+		// Phase 1: Set Notified condition to CallbackPending (Unknown status) in the SAME update
+		// as result fields to avoid a double-write race (resource version changes after first update).
 		apimeta.SetStatusCondition(&task.Status.Conditions, metav1.Condition{
 			Type:               toolkitv1alpha1.ConditionNotified,
-			Status:             metav1.ConditionTrue,
-			Reason:             toolkitv1alpha1.ReasonCallbackSent,
-			Message:            fmt.Sprintf("Adapter notified: %s", req.Event),
+			Status:             metav1.ConditionUnknown,
+			Reason:             toolkitv1alpha1.ReasonCallbackPending,
+			Message:            fmt.Sprintf("Sending callback to adapter: %s", req.Event),
 			ObservedGeneration: task.Generation,
 		})
-	}
 
-	// Single status update with all changes (result + Notified condition)
-	if err := h.client.Status().Update(r.Context(), &task); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to update task status", err.Error())
-		return
+		// Single status update with all changes (result + Notified condition)
+		if err := h.client.Status().Update(r.Context(), &task); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to update task status", err.Error())
+			return
+		}
 	}
 
 	// Forward callback to adapter (after successful status update)
@@ -109,9 +111,50 @@ func (h *taskHandler) updateTaskStatus(w http.ResponseWriter, r *http.Request) {
 		Details: req.Details,
 	}
 
-	if err := h.callback.send(r.Context(), callbackURL, payload); err != nil {
-		log.Error(err, "failed to send adapter callback", "taskID", taskID, "callbackURL", callbackURL)
-		// Don't fail the request — the runner callback was accepted and status is updated
+	callbackErr := h.callback.send(r.Context(), callbackURL, payload)
+
+	// Phase 2: Update Notified condition based on callback result (terminal events only)
+	if isTerminal {
+		// Re-fetch the task to get fresh resourceVersion
+		var freshTask toolkitv1alpha1.AgentTask
+		key := client.ObjectKey{Namespace: h.namespace, Name: taskID}
+		if err := h.client.Get(r.Context(), key, &freshTask); err != nil {
+			log.Error(err, "failed to re-fetch task for callback status update", "taskID", taskID)
+			// Continue without updating callback status — watcher can retry
+		} else {
+			// Update Notified condition based on callback result
+			if callbackErr != nil {
+				apimeta.SetStatusCondition(&freshTask.Status.Conditions, metav1.Condition{
+					Type:               toolkitv1alpha1.ConditionNotified,
+					Status:             metav1.ConditionTrue,
+					Reason:             toolkitv1alpha1.ReasonCallbackFailed,
+					Message:            fmt.Sprintf("Adapter callback failed: %v", callbackErr),
+					ObservedGeneration: freshTask.Generation,
+				})
+			} else {
+				apimeta.SetStatusCondition(&freshTask.Status.Conditions, metav1.Condition{
+					Type:               toolkitv1alpha1.ConditionNotified,
+					Status:             metav1.ConditionTrue,
+					Reason:             toolkitv1alpha1.ReasonCallbackSent,
+					Message:            fmt.Sprintf("Adapter notified: %s", req.Event),
+					ObservedGeneration: freshTask.Generation,
+				})
+			}
+
+			if err := h.client.Status().Update(r.Context(), &freshTask); err != nil {
+				log.Error(err, "failed to update callback status", "taskID", taskID)
+				// Don't fail the request — the condition is CallbackPending which watcher can retry
+			}
+		}
+
+		if callbackErr != nil {
+			log.Error(callbackErr, "failed to send adapter callback", "taskID", taskID, "callbackURL", callbackURL)
+		}
+	} else {
+		// Non-terminal events: just log callback errors, don't update condition
+		if callbackErr != nil {
+			log.Error(callbackErr, "failed to send adapter callback", "taskID", taskID, "callbackURL", callbackURL)
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "accepted"})

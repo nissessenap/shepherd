@@ -66,7 +66,7 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	// Skip if already in terminal state
-	if isTerminal(&task) {
+	if task.IsTerminal() {
 		log.V(1).Info("skipping reconcile for terminal task", "task", req.NamespacedName)
 		return ctrl.Result{}, nil
 	}
@@ -244,15 +244,6 @@ func (r *AgentTaskReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&toolkitv1alpha1.AgentTask{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Owns(&batchv1.Job{}).
 		Complete(r)
-}
-
-// isTerminal returns true if the task has reached a terminal condition.
-func isTerminal(task *toolkitv1alpha1.AgentTask) bool {
-	cond := meta.FindStatusCondition(task.Status.Conditions, toolkitv1alpha1.ConditionSucceeded)
-	if cond == nil {
-		return false
-	}
-	return cond.Status != metav1.ConditionUnknown
 }
 
 // hasCondition returns true if the named condition exists.

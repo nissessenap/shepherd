@@ -168,7 +168,7 @@ func (h *taskHandler) listTasks(w http.ResponseWriter, r *http.Request) {
 	tasks := make([]TaskResponse, 0, len(taskList.Items))
 	for i := range taskList.Items {
 		task := &taskList.Items[i]
-		if active && isTerminalFromStatus(task) {
+		if active && task.IsTerminal() {
 			continue
 		}
 		tasks = append(tasks, taskToResponse(task))
@@ -193,15 +193,6 @@ func (h *taskHandler) getTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, taskToResponse(&task))
-}
-
-// isTerminalFromStatus checks if a task has reached a terminal condition.
-func isTerminalFromStatus(task *toolkitv1alpha1.AgentTask) bool {
-	cond := apimeta.FindStatusCondition(task.Status.Conditions, toolkitv1alpha1.ConditionSucceeded)
-	if cond == nil {
-		return false
-	}
-	return cond.Status != metav1.ConditionUnknown
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

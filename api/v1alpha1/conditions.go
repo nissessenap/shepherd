@@ -34,6 +34,7 @@ const (
 	ConditionNotified = "Notified"
 
 	// Reasons for ConditionNotified
-	ReasonCallbackSent   = "CallbackSent"
-	ReasonCallbackFailed = "CallbackFailed"
+	ReasonCallbackPending = "CallbackPending" // Status=Unknown: callback is being sent
+	ReasonCallbackSent    = "CallbackSent"    // Status=True: callback sent successfully
+	ReasonCallbackFailed  = "CallbackFailed"  // Status=True: callback failed but won't retry
 )

@@ -696,7 +696,7 @@ func TestListTasks_K8sClientError(t *testing.T) {
 	assert.Equal(t, "failed to list tasks", errResp.Error)
 }
 
-func TestIsTerminalFromStatus(t *testing.T) {
+func TestIsTerminal(t *testing.T) {
 	tests := []struct {
 		name       string
 		conditions []metav1.Condition
@@ -734,7 +734,7 @@ func TestIsTerminalFromStatus(t *testing.T) {
 			task := &toolkitv1alpha1.AgentTask{
 				Status: toolkitv1alpha1.AgentTaskStatus{Conditions: tt.conditions},
 			}
-			assert.Equal(t, tt.want, isTerminalFromStatus(task))
+			assert.Equal(t, tt.want, task.IsTerminal())
 		})
 	}
 }
