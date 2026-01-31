@@ -6,6 +6,3 @@ metadata:
 spec:
   sandboxTemplateRef:
     name: poc-runner
-  lifecycle:
-    shutdownTime: "2026-02-01T00:00:00Z"  # adjust to current time + 1 hour
-    shutdownPolicy: Retain

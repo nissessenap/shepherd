@@ -1,6 +1,6 @@
 KO ?= ko
 KO_DOCKER_REPO ?= ko.local/nissessenap/shepherd/poc/sandbox
-KIND_CLUSTER ?= agent-sandbox
+KIND_CLUSTER ?= cve-visualizer-dev
 
 .PHONY: build-entrypoint
 build-entrypoint: ## Build entrypoint image with ko.
@@ -12,8 +12,8 @@ build-orchestrator: ## Build orchestrator binary (runs locally, not in container
 
 .PHONY: kind-load
 kind-load: build-entrypoint ## Load entrypoint image into Kind cluster.
-	KO_DOCKER_REPO=kind.local/poc-sandbox $(KO) build --sbom=none --bare ./cmd/entrypoint/
-	@echo "Image loaded into Kind cluster"
+	kind load docker-image $(KO_DOCKER_REPO) --name $(KIND_CLUSTER)
+	@echo "Image loaded into Kind cluster $(KIND_CLUSTER)"
 
 .PHONY: deploy
 deploy: ## Apply SandboxTemplate and SandboxClaim.

@@ -14,6 +14,7 @@ spec:
       containers:
       - name: runner
         image: ko.local/nissessenap/shepherd/poc/sandbox/cmd/entrypoint:latest
+        imagePullPolicy: Never
         ports:
         - containerPort: 8888
           protocol: TCP
