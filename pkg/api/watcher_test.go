@@ -27,8 +27,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -47,6 +49,7 @@ func newTestWatcher(objs ...client.Object) (*statusWatcher, client.Client) {
 	w := &statusWatcher{
 		client:   c,
 		callback: newCallbackSender("test-secret"),
+		log:      ctrl.Log.WithName("status-watcher-test"),
 		// cache not needed for direct handleTerminalTransition tests
 	}
 	return w, c
@@ -351,6 +354,7 @@ func TestWatcher_SetNotifiedConditionRefetchFailure(t *testing.T) {
 	w := &statusWatcher{
 		client:   c,
 		callback: newCallbackSender("test-secret"),
+		log:      ctrl.Log.WithName("status-watcher-test"),
 	}
 
 	// This should not panic — re-fetch failure is logged and handled gracefully
@@ -369,4 +373,67 @@ func TestWatcher_SetNotifiedConditionRefetchFailure(t *testing.T) {
 	require.NoError(t, err)
 	notified := apimeta.FindStatusCondition(updated.Status.Conditions, toolkitv1alpha1.ConditionNotified)
 	assert.Nil(t, notified, "Notified condition should not be set when re-fetch fails")
+}
+
+func TestWatcher_ConflictDuringClaimSkipsCallback(t *testing.T) {
+	var callbackCount atomic.Int32
+	adapter := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		callbackCount.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer adapter.Close()
+
+	s := testScheme()
+	task := watcherTask("task-conflict", adapter.URL, []metav1.Condition{
+		{
+			Type:   toolkitv1alpha1.ConditionSucceeded,
+			Status: metav1.ConditionTrue,
+			Reason: toolkitv1alpha1.ReasonSucceeded,
+		},
+	}, toolkitv1alpha1.TaskResult{})
+
+	// Client that simulates conflict on the CallbackPending claim
+	var updateCount atomic.Int32
+	c := fake.NewClientBuilder().
+		WithScheme(s).
+		WithStatusSubresource(&toolkitv1alpha1.AgentTask{}).
+		WithObjects(task).
+		WithInterceptorFuncs(interceptor.Funcs{
+			SubResourceUpdate: func(ctx context.Context, cl client.Client, subResourceName string, obj client.Object, opts ...client.SubResourceUpdateOption) error {
+				if updateCount.Add(1) == 1 {
+					// First update (CallbackPending claim) fails with conflict
+					return apierrors.NewConflict(
+						toolkitv1alpha1.GroupVersion.WithResource("agenttasks").GroupResource(),
+						obj.GetName(),
+						fmt.Errorf("handler already claimed this task"),
+					)
+				}
+				// Subsequent updates succeed (shouldn't happen in this test)
+				return cl.SubResource(subResourceName).Update(ctx, obj, opts...)
+			},
+		}).
+		Build()
+
+	w := &statusWatcher{
+		client:   c,
+		callback: newCallbackSender("test-secret"),
+		log:      ctrl.Log.WithName("status-watcher-test"),
+	}
+
+	w.handleTerminalTransition(context.Background(), task)
+
+	// Verify callback was NOT sent (conflict means someone else owns it)
+	assert.Equal(t, int32(0), callbackCount.Load(), "callback should not be sent on conflict")
+
+	// Verify task still has no Notified condition (conflict prevents claim)
+	var updated toolkitv1alpha1.AgentTask
+	freshC := fake.NewClientBuilder().
+		WithScheme(s).
+		WithStatusSubresource(&toolkitv1alpha1.AgentTask{}).
+		WithObjects(task).
+		Build()
+	err := freshC.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "task-conflict"}, &updated)
+	require.NoError(t, err)
+	notified := apimeta.FindStatusCondition(updated.Status.Conditions, toolkitv1alpha1.ConditionNotified)
+	assert.Nil(t, notified, "Notified condition should not be set when claim conflicts")
 }

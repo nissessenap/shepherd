@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -57,6 +58,11 @@ func Run(opts Options) error {
 		callback:  cb,
 	}
 
+	// Health tracking for watcher and cache goroutines
+	var watcherHealthy, cacheHealthy atomic.Bool
+	watcherHealthy.Store(true)
+	cacheHealthy.Store(true)
+
 	// Create standalone cache for CRD status watching.
 	// This gives us typed informers without the full manager overhead.
 	taskCache, err := ctrlcache.New(cfg, ctrlcache.Options{
@@ -73,6 +79,7 @@ func Run(opts Options) error {
 	go func() {
 		if err := taskCache.Start(ctx); err != nil {
 			log.Error(err, "cache failed")
+			cacheHealthy.Store(false)
 		}
 	}()
 
@@ -86,11 +93,13 @@ func Run(opts Options) error {
 		client:   k8sClient,
 		callback: cb,
 		cache:    taskCache,
+		log:      ctrl.Log.WithName("status-watcher"),
 	}
 
 	go func() {
 		if err := watcher.run(ctx); err != nil {
 			log.Error(err, "status watcher failed")
+			watcherHealthy.Store(false)
 		}
 	}()
 
@@ -106,6 +115,11 @@ func Run(opts Options) error {
 		_, _ = w.Write([]byte("ok"))
 	})
 	r.Get("/readyz", func(w http.ResponseWriter, _ *http.Request) {
+		if !watcherHealthy.Load() || !cacheHealthy.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte("watcher or cache unhealthy"))
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})

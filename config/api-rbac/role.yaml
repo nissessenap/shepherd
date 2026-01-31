@@ -1,7 +1,8 @@
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
+kind: Role
 metadata:
   name: shepherd-api
+  namespace: shepherd
 rules:
   - apiGroups: ["toolkit.shepherd.io"]
     resources: ["agenttasks"]
@@ -11,12 +12,13 @@ rules:
     verbs: ["get", "update", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
+kind: RoleBinding
 metadata:
   name: shepherd-api
+  namespace: shepherd
 roleRef:
   apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
+  kind: Role
   name: shepherd-api
 subjects:
   - kind: ServiceAccount
