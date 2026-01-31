@@ -2,7 +2,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: shepherd-api
-  namespace: shepherd
+  # namespace should be set by kustomize or the deployer
 rules:
   - apiGroups: ["toolkit.shepherd.io"]
     resources: ["agenttasks"]
@@ -15,7 +15,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: shepherd-api
-  namespace: shepherd
+  # namespace should be set by kustomize or the deployer
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
@@ -23,4 +23,4 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: shepherd-api
-    namespace: shepherd
+    # namespace should be set by kustomize or the deployer

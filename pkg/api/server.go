@@ -1,3 +1,19 @@
+/*
+Copyright 2026.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package api
 
 import (
@@ -6,6 +22,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -36,6 +53,23 @@ type Options struct {
 	Namespace      string
 }
 
+// contentTypeMiddleware validates Content-Type header on mutating requests.
+func contentTypeMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Only validate Content-Type on POST, PUT, PATCH
+		if r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodPatch {
+			ct := r.Header.Get("Content-Type")
+			if ct == "" || !strings.HasPrefix(ct, "application/json") {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnsupportedMediaType)
+				_, _ = w.Write([]byte(`{"error":"Content-Type must be application/json"}`))
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // Run starts the API server.
 func Run(opts Options) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -44,7 +78,10 @@ func Run(opts Options) error {
 	log := ctrl.Log.WithName("api")
 
 	// Build K8s client
-	cfg := ctrl.GetConfigOrDie()
+	cfg, err := ctrl.GetConfig()
+	if err != nil {
+		return fmt.Errorf("getting k8s config: %w", err)
+	}
 	k8sClient, err := client.New(cfg, client.Options{Scheme: scheme})
 	if err != nil {
 		return fmt.Errorf("creating k8s client: %w", err)
@@ -125,8 +162,8 @@ func Run(opts Options) error {
 	})
 
 	// API routes
-	// TODO: Add middleware to validate Content-Type is application/json on mutating requests.
 	r.Route("/api/v1", func(r chi.Router) {
+		r.Use(contentTypeMiddleware)
 		r.Post("/tasks", handler.createTask)
 		r.Get("/tasks", handler.listTasks)
 		r.Get("/tasks/{taskID}", handler.getTask)

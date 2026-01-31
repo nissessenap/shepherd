@@ -24,6 +24,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 )
@@ -68,7 +69,11 @@ func (s *callbackSender) send(ctx context.Context, url string, payload CallbackP
 	if err != nil {
 		return fmt.Errorf("sending callback to %s: %w", url, err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() {
+		// Drain response body to enable HTTP keep-alive connection reuse
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode >= 300 {
 		return fmt.Errorf("callback to %s returned status %d", url, resp.StatusCode)

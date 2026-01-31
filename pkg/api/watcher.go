@@ -98,6 +98,10 @@ func (w *statusWatcher) handleTerminalTransition(ctx context.Context, task *tool
 
 	// Determine event type from Succeeded condition
 	succeededCond := apimeta.FindStatusCondition(fresh.Status.Conditions, toolkitv1alpha1.ConditionSucceeded)
+	if succeededCond == nil {
+		w.log.Error(nil, "Succeeded condition not found on terminal task", "task", fresh.Name)
+		return
+	}
 	event := EventFailed
 	if succeededCond.Status == metav1.ConditionTrue {
 		event = EventCompleted

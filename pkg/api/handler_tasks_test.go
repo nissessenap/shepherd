@@ -353,7 +353,8 @@ func TestCreateTask_K8sClientError(t *testing.T) {
 	var errResp ErrorResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &errResp))
 	assert.Equal(t, "failed to create task", errResp.Error)
-	assert.Contains(t, errResp.Details, "API server connection refused")
+	// Internal K8s error details should not be leaked in 5xx responses
+	assert.Empty(t, errResp.Details)
 }
 
 func TestExtractStatus_NoConditions(t *testing.T) {

@@ -48,6 +48,18 @@ func (h *taskHandler) updateTaskStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate event type
+	validEvents := map[string]bool{
+		EventStarted:   true,
+		EventProgress:  true,
+		EventCompleted: true,
+		EventFailed:    true,
+	}
+	if !validEvents[req.Event] {
+		writeError(w, http.StatusBadRequest, "invalid event type", fmt.Sprintf("must be one of: %s, %s, %s, %s", EventStarted, EventProgress, EventCompleted, EventFailed))
+		return
+	}
+
 	// Fetch the task
 	var task toolkitv1alpha1.AgentTask
 	key := client.ObjectKey{Namespace: h.namespace, Name: taskID}
@@ -56,7 +68,8 @@ func (h *taskHandler) updateTaskStatus(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "task not found", "")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "failed to get task", err.Error())
+		log.Error(err, "failed to get task", "taskID", taskID)
+		writeError(w, http.StatusInternalServerError, "failed to get task", "")
 		return
 	}
 
@@ -97,7 +110,8 @@ func (h *taskHandler) updateTaskStatus(w http.ResponseWriter, r *http.Request) {
 
 		// Single status update with all changes (result + Notified condition)
 		if err := h.client.Status().Update(r.Context(), &task); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to update task status", err.Error())
+			log.Error(err, "failed to update task status", "taskID", taskID)
+			writeError(w, http.StatusInternalServerError, "failed to update task status", "")
 			return
 		}
 	}

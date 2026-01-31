@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -28,6 +29,7 @@ import (
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/rand"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	toolkitv1alpha1 "github.com/NissesSenap/shepherd/api/v1alpha1"
@@ -42,6 +44,7 @@ type taskHandler struct {
 
 // createTask handles POST /api/v1/tasks.
 func (h *taskHandler) createTask(w http.ResponseWriter, r *http.Request) {
+	log := ctrl.Log.WithName("api")
 	r.Body = http.MaxBytesReader(w, r.Body, 10<<20) // 10 MiB
 	var req CreateTaskRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -67,10 +70,32 @@ func (h *taskHandler) createTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate callback URL
+	parsedURL, err := url.Parse(req.Callback)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid callbackUrl", err.Error())
+		return
+	}
+	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+		writeError(w, http.StatusBadRequest, "invalid callbackUrl scheme", "must be http or https")
+		return
+	}
+	// Block well-known metadata IPs and localhost
+	blockedHosts := map[string]bool{
+		"169.254.169.254": true,
+		"localhost":       true,
+		"127.0.0.1":       true,
+	}
+	if blockedHosts[parsedURL.Hostname()] {
+		writeError(w, http.StatusBadRequest, "invalid callbackUrl host", "blocked host")
+		return
+	}
+
 	// Compress context
 	compressedCtx, encoding, err := compressContext(req.Task.Context)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to compress context", err.Error())
+		log.Error(err, "failed to compress context")
+		writeError(w, http.StatusInternalServerError, "failed to compress context", "")
 		return
 	}
 
@@ -125,7 +150,8 @@ func (h *taskHandler) createTask(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "task already exists", err.Error())
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "failed to create task", err.Error())
+		log.Error(err, "failed to create task")
+		writeError(w, http.StatusInternalServerError, "failed to create task", "")
 		return
 	}
 
@@ -139,6 +165,7 @@ func (h *taskHandler) createTask(w http.ResponseWriter, r *http.Request) {
 //   - issue: filter by shepherd.io/issue label
 //   - active: if "true", only return tasks with Succeeded=Unknown (non-terminal)
 func (h *taskHandler) listTasks(w http.ResponseWriter, r *http.Request) {
+	log := ctrl.Log.WithName("api")
 	var taskList toolkitv1alpha1.AgentTaskList
 
 	listOpts := []client.ListOption{
@@ -158,7 +185,8 @@ func (h *taskHandler) listTasks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.client.List(r.Context(), &taskList, listOpts...); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list tasks", err.Error())
+		log.Error(err, "failed to list tasks")
+		writeError(w, http.StatusInternalServerError, "failed to list tasks", "")
 		return
 	}
 
@@ -179,6 +207,7 @@ func (h *taskHandler) listTasks(w http.ResponseWriter, r *http.Request) {
 
 // getTask handles GET /api/v1/tasks/{taskID}.
 func (h *taskHandler) getTask(w http.ResponseWriter, r *http.Request) {
+	log := ctrl.Log.WithName("api")
 	taskID := chi.URLParam(r, "taskID")
 
 	var task toolkitv1alpha1.AgentTask
@@ -188,7 +217,8 @@ func (h *taskHandler) getTask(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "task not found", "")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "failed to get task", err.Error())
+		log.Error(err, "failed to get task", "taskID", taskID)
+		writeError(w, http.StatusInternalServerError, "failed to get task", "")
 		return
 	}
 
