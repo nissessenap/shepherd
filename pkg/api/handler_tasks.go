@@ -37,6 +37,7 @@ import (
 type taskHandler struct {
 	client    client.Client
 	namespace string
+	callback  *callbackSender
 }
 
 // createTask handles POST /api/v1/tasks.

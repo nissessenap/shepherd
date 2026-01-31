@@ -1054,13 +1054,13 @@ r.Post("/tasks/{taskID}/status", handler.updateTaskStatus)
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `make test` passes all tests
-- [ ] `go vet ./...` clean
-- [ ] `make lint-fix` passes (golangci-lint)
-- [ ] HMAC signature matches expected output for known input
-- [ ] Runner callback accepted even if adapter callback fails
-- [ ] Notified condition set after terminal callback
-- [ ] Duplicate terminal callback is deduplicated
+- [x] `make test` passes all tests
+- [x] `go vet ./...` clean
+- [x] `make lint-fix` passes (golangci-lint)
+- [x] HMAC signature matches expected output for known input
+- [x] Runner callback accepted even if adapter callback fails
+- [x] Notified condition set after terminal callback
+- [x] Duplicate terminal callback is deduplicated
 
 #### Manual Verification:
 - [ ] `POST /api/v1/tasks/{id}/status` with `{"event":"started","message":"cloning"}` returns 200

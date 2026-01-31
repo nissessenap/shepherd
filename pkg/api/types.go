@@ -65,6 +65,21 @@ type TaskStatusSummary struct {
 	Error   string `json:"error,omitempty"`
 }
 
+// StatusUpdateRequest is the JSON body from the runner for POST /api/v1/tasks/{taskID}/status.
+type StatusUpdateRequest struct {
+	Event   string         `json:"event"` // started, progress, completed, failed
+	Message string         `json:"message"`
+	Details map[string]any `json:"details,omitempty"`
+}
+
+// CallbackPayload is the JSON body sent to adapters.
+type CallbackPayload struct {
+	TaskID  string         `json:"taskId"`
+	Event   string         `json:"event"` // started, progress, completed, failed
+	Message string         `json:"message"`
+	Details map[string]any `json:"details,omitempty"`
+}
+
 // ErrorResponse is the standard error response.
 type ErrorResponse struct {
 	Error   string `json:"error"`

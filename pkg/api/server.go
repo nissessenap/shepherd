@@ -48,9 +48,12 @@ func Run(opts Options) error {
 		return fmt.Errorf("creating k8s client: %w", err)
 	}
 
+	cb := newCallbackSender(opts.CallbackSecret)
+
 	handler := &taskHandler{
 		client:    k8sClient,
 		namespace: opts.Namespace,
+		callback:  cb,
 	}
 
 	// Build router
@@ -75,7 +78,7 @@ func Run(opts Options) error {
 		r.Post("/tasks", handler.createTask)
 		r.Get("/tasks", handler.listTasks)
 		r.Get("/tasks/{taskID}", handler.getTask)
-		// Phase 4: POST /api/v1/tasks/{taskID}/status
+		r.Post("/tasks/{taskID}/status", handler.updateTaskStatus)
 	})
 
 	srv := &http.Server{

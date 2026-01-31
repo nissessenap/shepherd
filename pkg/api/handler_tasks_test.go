@@ -55,6 +55,7 @@ func newTestHandler(objs ...client.Object) *taskHandler {
 	return &taskHandler{
 		client:    c,
 		namespace: "default",
+		callback:  newCallbackSender(""),
 	}
 }
 
@@ -64,6 +65,7 @@ func testRouter(h *taskHandler) *chi.Mux {
 		r.Post("/tasks", h.createTask)
 		r.Get("/tasks", h.listTasks)
 		r.Get("/tasks/{taskID}", h.getTask)
+		r.Post("/tasks/{taskID}/status", h.updateTaskStatus)
 	})
 	return r
 }
@@ -341,6 +343,7 @@ func TestCreateTask_K8sClientError(t *testing.T) {
 	h := &taskHandler{
 		client:    c,
 		namespace: "default",
+		callback:  newCallbackSender(""),
 	}
 	router := testRouter(h)
 
@@ -660,7 +663,7 @@ func TestGetTask_K8sClientError(t *testing.T) {
 		}).
 		Build()
 
-	h := &taskHandler{client: c, namespace: "default"}
+	h := &taskHandler{client: c, namespace: "default", callback: newCallbackSender("")}
 	router := testRouter(h)
 
 	w := doGet(t, router, "/api/v1/tasks/task-abc")
@@ -682,7 +685,7 @@ func TestListTasks_K8sClientError(t *testing.T) {
 		}).
 		Build()
 
-	h := &taskHandler{client: c, namespace: "default"}
+	h := &taskHandler{client: c, namespace: "default", callback: newCallbackSender("")}
 	router := testRouter(h)
 
 	w := doGet(t, router, "/api/v1/tasks")
