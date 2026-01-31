@@ -14,7 +14,7 @@ Validate the agent-sandbox integration by building a minimal entrypoint binary, 
   - Extension types: `sigs.k8s.io/agent-sandbox/extensions/api/v1alpha1` (SandboxTemplate, SandboxClaim)
 
 ### Key Discoveries:
-- agent-sandbox uses controller-runtime v0.22.2, shepherd uses v0.23.0 — may cause dependency friction
+- Importing agent-sandbox types is lightweight — the `api/v1alpha1` and `extensions/api/v1alpha1` packages are just structs + scheme registration, no controller-runtime dependency at the import level
 - SandboxClaim creates a Sandbox which creates a Pod + headless Service automatically
 - `Sandbox.Status.ServiceFQDN` provides the FQDN to reach the pod (e.g., `my-sandbox.default.svc.cluster.local`)
 - `AutomountServiceAccountToken` defaults to `false` in agent-sandbox
@@ -730,7 +730,7 @@ After completing both phases, document answers to these questions in `thoughts/r
 7. **Headless service DNS**: How does DNS resolution work for the headless service? Is there a delay between service creation and DNS availability?
 8. **Port conflicts**: Any issues with multiple sandboxes using the same containerPort (8888)?
 9. **Log access**: Can we easily access pod logs after the container exits? How long are they retained?
-10. **Dependency friction**: Any issues with importing agent-sandbox types? Version conflicts?
+10. **Module integration**: Any surprises when importing agent-sandbox types into the main shepherd module (for the real operator migration)?
 
 ## Testing Strategy
 
