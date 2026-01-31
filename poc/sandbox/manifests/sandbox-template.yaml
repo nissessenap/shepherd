@@ -12,23 +12,23 @@ spec:
         fsGroup: 1000
         runAsNonRoot: true
       containers:
-      - name: runner
-        image: ko.local/nissessenap/shepherd/poc/sandbox/cmd/entrypoint:latest
-        imagePullPolicy: Never
-        ports:
-        - containerPort: 8888
-          protocol: TCP
-        readinessProbe:
-          httpGet:
-            path: /healthz
-            port: 8888
-          initialDelaySeconds: 2
-          periodSeconds: 5
-        resources:
-          requests:
-            memory: "64Mi"
-            cpu: "50m"
-          limits:
-            memory: "128Mi"
-            cpu: "200m"
+        - name: runner
+          image: ko.local/nissessenap/shepherd/poc/sandbox:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8888
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8888
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "128Mi"
+              cpu: "200m"
       restartPolicy: Never
