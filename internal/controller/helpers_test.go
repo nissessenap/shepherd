@@ -65,7 +65,7 @@ func TestIsTerminal(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.expected, isTerminal(tt.task))
+			assert.Equal(t, tt.expected, tt.task.IsTerminal())
 		})
 	}
 }

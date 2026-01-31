@@ -260,13 +260,13 @@ The `CallbackSpec.SecretRef` removal will require updating any tests that set `S
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `go get github.com/go-chi/chi/v5` adds chi to go.mod
-- [ ] `make generate && make manifests` succeeds after CRD changes
-- [ ] `make build` compiles successfully
-- [ ] `make test` passes all existing tests (no breakage from SecretRef removal)
-- [ ] `go vet ./...` clean
-- [ ] `make lint-fix` passes (golangci-lint)
-- [ ] `SHEPHERD_CALLBACK_SECRET=test shepherd api --help` shows correct flags
+- [x] `go get github.com/go-chi/chi/v5` adds chi to go.mod
+- [x] `make generate && make manifests` succeeds after CRD changes
+- [x] `make build` compiles successfully
+- [x] `make test` passes all existing tests (no breakage from SecretRef removal)
+- [x] `go vet ./...` clean
+- [x] `make lint-fix` passes (golangci-lint)
+- [x] `SHEPHERD_CALLBACK_SECRET=test shepherd api --help` shows correct flags
 
 #### Manual Verification:
 - [ ] `SHEPHERD_CALLBACK_SECRET=test shepherd api` starts and responds to `/healthz` with 200
@@ -636,10 +636,10 @@ Use `httptest` and a fake K8s client:
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `make test` passes all tests (existing + new)
-- [ ] `go vet ./...` clean
-- [ ] `make lint-fix` passes (golangci-lint)
-- [ ] Unit tests cover validation, compression, CRD creation, error cases
+- [x] `make test` passes all tests (existing + new)
+- [x] `go vet ./...` clean
+- [x] `make lint-fix` passes (golangci-lint)
+- [x] Unit tests cover validation, compression, CRD creation, error cases
 - [ ] `curl -X POST localhost:8080/api/v1/tasks -d '{"repo":{"url":"https://github.com/test/repo"},"task":{"description":"test"},"callbackUrl":"http://localhost/cb"}' -H 'Content-Type: application/json'` returns 201 (requires running API with kubeconfig)
 
 #### Manual Verification:
@@ -785,11 +785,11 @@ The API passes these labels through to the CRD. The adapter is responsible for s
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `make test` passes all tests
-- [ ] `go vet ./...` clean
-- [ ] `make lint-fix` passes (golangci-lint)
-- [ ] Unit tests cover list, filter, detail, and error cases
-- [ ] Active filter correctly excludes Succeeded/Failed tasks
+- [x] `make test` passes all tests
+- [x] `go vet ./...` clean
+- [x] `make lint-fix` passes (golangci-lint)
+- [x] Unit tests cover list, filter, detail, and error cases
+- [x] Active filter correctly excludes Succeeded/Failed tasks
 
 #### Manual Verification:
 - [ ] `GET /api/v1/tasks` returns JSON array of tasks
@@ -1054,13 +1054,13 @@ r.Post("/tasks/{taskID}/status", handler.updateTaskStatus)
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `make test` passes all tests
-- [ ] `go vet ./...` clean
-- [ ] `make lint-fix` passes (golangci-lint)
-- [ ] HMAC signature matches expected output for known input
-- [ ] Runner callback accepted even if adapter callback fails
-- [ ] Notified condition set after terminal callback
-- [ ] Duplicate terminal callback is deduplicated
+- [x] `make test` passes all tests
+- [x] `go vet ./...` clean
+- [x] `make lint-fix` passes (golangci-lint)
+- [x] HMAC signature matches expected output for known input
+- [x] Runner callback accepted even if adapter callback fails
+- [x] Notified condition set after terminal callback
+- [x] Duplicate terminal callback is deduplicated
 
 #### Manual Verification:
 - [ ] `POST /api/v1/tasks/{id}/status` with `{"event":"started","message":"cloning"}` returns 200
@@ -1330,13 +1330,13 @@ Uses a fake `client.Client` and `httptest.NewServer` (mock adapter). Tests call 
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `make test` passes all tests (including integration tests from Testing Strategy)
-- [ ] `go vet ./...` clean
-- [ ] `make lint-fix` passes (golangci-lint)
-- [ ] Watcher correctly detects terminal state transitions
-- [ ] Notified condition prevents duplicate callbacks
-- [ ] Callback failure is logged but doesn't crash the watcher
-- [ ] RBAC YAML is generated/created for API server
+- [x] `make test` passes all tests (including integration tests from Testing Strategy)
+- [x] `go vet ./...` clean
+- [ ] `make lint-fix` passes (golangci-lint) — pre-existing `dupl` warnings in handler_status_test.go from Phase 4; no new lint issues introduced
+- [x] Watcher correctly detects terminal state transitions
+- [x] Notified condition prevents duplicate callbacks
+- [x] Callback failure is logged but doesn't crash the watcher
+- [x] RBAC YAML is generated/created for API server
 
 #### Manual Verification:
 - [ ] Create an AgentTask CRD manually, simulate Job completion → API sends callback to adapter

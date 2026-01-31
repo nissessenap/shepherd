@@ -18,6 +18,7 @@ package v1alpha1
 
 import (
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -70,8 +71,7 @@ type TaskSpec struct {
 type CallbackSpec struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Pattern=`^https?://`
-	URL       string                    `json:"url"`
-	SecretRef *corev1.SecretKeySelector `json:"secretRef,omitempty"`
+	URL string `json:"url"`
 }
 
 type RunnerSpec struct {
@@ -100,6 +100,16 @@ type AgentTaskStatus struct {
 type TaskResult struct {
 	PRUrl string `json:"prUrl,omitempty"`
 	Error string `json:"error,omitempty"`
+}
+
+// IsTerminal returns true if the task has reached a terminal condition.
+// A task is terminal when the Succeeded condition exists and its status is not Unknown.
+func (t *AgentTask) IsTerminal() bool {
+	cond := meta.FindStatusCondition(t.Status.Conditions, ConditionSucceeded)
+	if cond == nil {
+		return false
+	}
+	return cond.Status != metav1.ConditionUnknown
 }
 
 // +kubebuilder:object:root=true
