@@ -785,11 +785,11 @@ The API passes these labels through to the CRD. The adapter is responsible for s
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `make test` passes all tests
-- [ ] `go vet ./...` clean
-- [ ] `make lint-fix` passes (golangci-lint)
-- [ ] Unit tests cover list, filter, detail, and error cases
-- [ ] Active filter correctly excludes Succeeded/Failed tasks
+- [x] `make test` passes all tests
+- [x] `go vet ./...` clean
+- [x] `make lint-fix` passes (golangci-lint)
+- [x] Unit tests cover list, filter, detail, and error cases
+- [x] Active filter correctly excludes Succeeded/Failed tasks
 
 #### Manual Verification:
 - [ ] `GET /api/v1/tasks` returns JSON array of tasks

@@ -73,7 +73,8 @@ func Run(opts Options) error {
 	// TODO: Add middleware to validate Content-Type is application/json on mutating requests.
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Post("/tasks", handler.createTask)
-		// Phase 3: GET /api/v1/tasks, GET /api/v1/tasks/{taskID}
+		r.Get("/tasks", handler.listTasks)
+		r.Get("/tasks/{taskID}", handler.getTask)
 		// Phase 4: POST /api/v1/tasks/{taskID}/status
 	})
 

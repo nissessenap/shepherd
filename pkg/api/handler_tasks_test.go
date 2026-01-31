@@ -45,10 +45,13 @@ func testScheme() *runtime.Scheme {
 	return s
 }
 
-// TODO(Phase 3): Add variadic ...client.Object param to pre-seed fake client with tasks for list/get tests.
-func newTestHandler() *taskHandler {
+func newTestHandler(objs ...client.Object) *taskHandler {
 	s := testScheme()
-	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&toolkitv1alpha1.AgentTask{}).Build()
+	builder := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&toolkitv1alpha1.AgentTask{})
+	if len(objs) > 0 {
+		builder = builder.WithObjects(objs...)
+	}
+	c := builder.Build()
 	return &taskHandler{
 		client:    c,
 		namespace: "default",
@@ -59,6 +62,8 @@ func testRouter(h *taskHandler) *chi.Mux {
 	r := chi.NewRouter()
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Post("/tasks", h.createTask)
+		r.Get("/tasks", h.listTasks)
+		r.Get("/tasks/{taskID}", h.getTask)
 	})
 	return r
 }
@@ -74,16 +79,28 @@ func validCreateRequest() CreateTaskRequest {
 	}
 }
 
-// TODO(Phase 3/4): Generalize to postJSON(t, router, path, body) when multiple endpoints need testing.
-func postCreateTask(t *testing.T, router http.Handler, body any) *httptest.ResponseRecorder {
+func postJSON(t *testing.T, router http.Handler, path string, body any) *httptest.ResponseRecorder {
 	t.Helper()
 	data, err := json.Marshal(body)
 	require.NoError(t, err)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks", bytes.NewReader(data))
+	req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(data))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 	return w
+}
+
+func doGet(t *testing.T, router http.Handler, path string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	return w
+}
+
+func postCreateTask(t *testing.T, router http.Handler, body any) *httptest.ResponseRecorder {
+	t.Helper()
+	return postJSON(t, router, "/api/v1/tasks", body)
 }
 
 func TestCreateTask_Valid(t *testing.T) {
@@ -421,4 +438,300 @@ func TestTaskToResponse_NoCompletionTime(t *testing.T) {
 
 	resp := taskToResponse(task)
 	assert.Nil(t, resp.CompletionTime)
+}
+
+// --- Phase 3: List and Get tests ---
+
+func newTask(name string, labels map[string]string, conditions []metav1.Condition) *toolkitv1alpha1.AgentTask {
+	return &toolkitv1alpha1.AgentTask{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: "default",
+			Labels:    labels,
+		},
+		Spec: toolkitv1alpha1.AgentTaskSpec{
+			Repo:     toolkitv1alpha1.RepoSpec{URL: "https://github.com/test/repo"},
+			Task:     toolkitv1alpha1.TaskSpec{Description: "test", Context: "ctx"},
+			Callback: toolkitv1alpha1.CallbackSpec{URL: "https://example.com/cb"},
+		},
+		Status: toolkitv1alpha1.AgentTaskStatus{
+			Conditions: conditions,
+		},
+	}
+}
+
+func TestListTasks_EmptyReturnsEmptyArray(t *testing.T) {
+	h := newTestHandler()
+	router := testRouter(h)
+
+	w := doGet(t, router, "/api/v1/tasks")
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
+
+	var tasks []TaskResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &tasks))
+	assert.Empty(t, tasks)
+	// Verify it's [] not null
+	assert.Equal(t, "[]", strings.TrimSpace(w.Body.String()))
+}
+
+func TestListTasks_ReturnsAllTasks(t *testing.T) {
+	task1 := newTask("task-aaa", nil, nil)
+	task2 := newTask("task-bbb", nil, nil)
+
+	h := newTestHandler(task1, task2)
+	router := testRouter(h)
+
+	w := doGet(t, router, "/api/v1/tasks")
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var tasks []TaskResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &tasks))
+	assert.Len(t, tasks, 2)
+
+	ids := []string{tasks[0].ID, tasks[1].ID}
+	assert.Contains(t, ids, "task-aaa")
+	assert.Contains(t, ids, "task-bbb")
+}
+
+func TestListTasks_FilterByRepoLabel(t *testing.T) {
+	task1 := newTask("task-aaa", map[string]string{"shepherd.io/repo": "org-repo1"}, nil)
+	task2 := newTask("task-bbb", map[string]string{"shepherd.io/repo": "org-repo2"}, nil)
+
+	h := newTestHandler(task1, task2)
+	router := testRouter(h)
+
+	w := doGet(t, router, "/api/v1/tasks?repo=org-repo1")
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var tasks []TaskResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &tasks))
+	assert.Len(t, tasks, 1)
+	assert.Equal(t, "task-aaa", tasks[0].ID)
+}
+
+func TestListTasks_FilterByIssueLabel(t *testing.T) {
+	task1 := newTask("task-aaa", map[string]string{"shepherd.io/issue": "42"}, nil)
+	task2 := newTask("task-bbb", map[string]string{"shepherd.io/issue": "99"}, nil)
+
+	h := newTestHandler(task1, task2)
+	router := testRouter(h)
+
+	w := doGet(t, router, "/api/v1/tasks?issue=42")
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var tasks []TaskResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &tasks))
+	assert.Len(t, tasks, 1)
+	assert.Equal(t, "task-aaa", tasks[0].ID)
+}
+
+func TestListTasks_ActiveFilterExcludesTerminal(t *testing.T) {
+	activeTask := newTask("task-active", nil, []metav1.Condition{
+		{
+			Type:   toolkitv1alpha1.ConditionSucceeded,
+			Status: metav1.ConditionUnknown,
+			Reason: toolkitv1alpha1.ReasonRunning,
+		},
+	})
+	succeededTask := newTask("task-done", nil, []metav1.Condition{
+		{
+			Type:   toolkitv1alpha1.ConditionSucceeded,
+			Status: metav1.ConditionTrue,
+			Reason: toolkitv1alpha1.ReasonSucceeded,
+		},
+	})
+	failedTask := newTask("task-fail", nil, []metav1.Condition{
+		{
+			Type:   toolkitv1alpha1.ConditionSucceeded,
+			Status: metav1.ConditionFalse,
+			Reason: toolkitv1alpha1.ReasonFailed,
+		},
+	})
+	pendingTask := newTask("task-pending", nil, nil) // no conditions = pending
+
+	h := newTestHandler(activeTask, succeededTask, failedTask, pendingTask)
+	router := testRouter(h)
+
+	w := doGet(t, router, "/api/v1/tasks?active=true")
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var tasks []TaskResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &tasks))
+	assert.Len(t, tasks, 2, "should include active (Running) and pending tasks")
+
+	ids := []string{tasks[0].ID, tasks[1].ID}
+	assert.Contains(t, ids, "task-active")
+	assert.Contains(t, ids, "task-pending")
+}
+
+func TestListTasks_CombinedFilters(t *testing.T) {
+	// active + repo + issue
+	matchActive := newTask("task-match", map[string]string{
+		"shepherd.io/repo":  "org-repo",
+		"shepherd.io/issue": "42",
+	}, []metav1.Condition{
+		{
+			Type:   toolkitv1alpha1.ConditionSucceeded,
+			Status: metav1.ConditionUnknown,
+			Reason: toolkitv1alpha1.ReasonRunning,
+		},
+	})
+	matchTerminal := newTask("task-terminal", map[string]string{
+		"shepherd.io/repo":  "org-repo",
+		"shepherd.io/issue": "42",
+	}, []metav1.Condition{
+		{
+			Type:   toolkitv1alpha1.ConditionSucceeded,
+			Status: metav1.ConditionTrue,
+			Reason: toolkitv1alpha1.ReasonSucceeded,
+		},
+	})
+	differentRepo := newTask("task-other", map[string]string{
+		"shepherd.io/repo":  "other-repo",
+		"shepherd.io/issue": "42",
+	}, nil)
+
+	h := newTestHandler(matchActive, matchTerminal, differentRepo)
+	router := testRouter(h)
+
+	w := doGet(t, router, "/api/v1/tasks?repo=org-repo&issue=42&active=true")
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var tasks []TaskResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &tasks))
+	assert.Len(t, tasks, 1)
+	assert.Equal(t, "task-match", tasks[0].ID)
+}
+
+func TestGetTask_ReturnsTaskDetails(t *testing.T) {
+	task := newTask("task-detail", nil, []metav1.Condition{
+		{
+			Type:    toolkitv1alpha1.ConditionSucceeded,
+			Status:  metav1.ConditionUnknown,
+			Reason:  toolkitv1alpha1.ReasonRunning,
+			Message: "Job is running",
+		},
+	})
+
+	h := newTestHandler(task)
+	router := testRouter(h)
+
+	w := doGet(t, router, "/api/v1/tasks/task-detail")
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp TaskResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "task-detail", resp.ID)
+	assert.Equal(t, "default", resp.Namespace)
+	assert.Equal(t, "https://github.com/test/repo", resp.Repo.URL)
+	assert.Equal(t, "Running", resp.Status.Phase)
+	assert.Equal(t, "Job is running", resp.Status.Message)
+}
+
+func TestGetTask_NotFound(t *testing.T) {
+	h := newTestHandler()
+	router := testRouter(h)
+
+	w := doGet(t, router, "/api/v1/tasks/nonexistent")
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+
+	var errResp ErrorResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &errResp))
+	assert.Equal(t, "task not found", errResp.Error)
+}
+
+func TestGetTask_K8sClientError(t *testing.T) {
+	s := testScheme()
+	c := fake.NewClientBuilder().
+		WithScheme(s).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Get: func(_ context.Context, _ client.WithWatch, _ client.ObjectKey, _ client.Object, _ ...client.GetOption) error {
+				return fmt.Errorf("API server unavailable")
+			},
+		}).
+		Build()
+
+	h := &taskHandler{client: c, namespace: "default"}
+	router := testRouter(h)
+
+	w := doGet(t, router, "/api/v1/tasks/task-abc")
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	var errResp ErrorResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &errResp))
+	assert.Equal(t, "failed to get task", errResp.Error)
+}
+
+func TestListTasks_K8sClientError(t *testing.T) {
+	s := testScheme()
+	c := fake.NewClientBuilder().
+		WithScheme(s).
+		WithInterceptorFuncs(interceptor.Funcs{
+			List: func(_ context.Context, _ client.WithWatch, _ client.ObjectList, _ ...client.ListOption) error {
+				return fmt.Errorf("API server unavailable")
+			},
+		}).
+		Build()
+
+	h := &taskHandler{client: c, namespace: "default"}
+	router := testRouter(h)
+
+	w := doGet(t, router, "/api/v1/tasks")
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	var errResp ErrorResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &errResp))
+	assert.Equal(t, "failed to list tasks", errResp.Error)
+}
+
+func TestIsTerminalFromStatus(t *testing.T) {
+	tests := []struct {
+		name       string
+		conditions []metav1.Condition
+		want       bool
+	}{
+		{
+			name:       "no conditions (pending)",
+			conditions: nil,
+			want:       false,
+		},
+		{
+			name: "Succeeded=Unknown (running)",
+			conditions: []metav1.Condition{
+				{Type: toolkitv1alpha1.ConditionSucceeded, Status: metav1.ConditionUnknown},
+			},
+			want: false,
+		},
+		{
+			name: "Succeeded=True (terminal)",
+			conditions: []metav1.Condition{
+				{Type: toolkitv1alpha1.ConditionSucceeded, Status: metav1.ConditionTrue},
+			},
+			want: true,
+		},
+		{
+			name: "Succeeded=False (terminal)",
+			conditions: []metav1.Condition{
+				{Type: toolkitv1alpha1.ConditionSucceeded, Status: metav1.ConditionFalse},
+			},
+			want: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			task := &toolkitv1alpha1.AgentTask{
+				Status: toolkitv1alpha1.AgentTaskStatus{Conditions: tt.conditions},
+			}
+			assert.Equal(t, tt.want, isTerminalFromStatus(task))
+		})
+	}
 }

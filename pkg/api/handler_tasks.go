@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -129,6 +130,77 @@ func (h *taskHandler) createTask(w http.ResponseWriter, r *http.Request) {
 
 	resp := taskToResponse(task)
 	writeJSON(w, http.StatusCreated, resp)
+}
+
+// listTasks handles GET /api/v1/tasks.
+// Query parameters:
+//   - repo: filter by shepherd.io/repo label
+//   - issue: filter by shepherd.io/issue label
+//   - active: if "true", only return tasks with Succeeded=Unknown (non-terminal)
+func (h *taskHandler) listTasks(w http.ResponseWriter, r *http.Request) {
+	var taskList toolkitv1alpha1.AgentTaskList
+
+	listOpts := []client.ListOption{
+		client.InNamespace(h.namespace),
+	}
+
+	// Build label selector from query params
+	labelSelector := map[string]string{}
+	if repo := r.URL.Query().Get("repo"); repo != "" {
+		labelSelector["shepherd.io/repo"] = repo
+	}
+	if issue := r.URL.Query().Get("issue"); issue != "" {
+		labelSelector["shepherd.io/issue"] = issue
+	}
+	if len(labelSelector) > 0 {
+		listOpts = append(listOpts, client.MatchingLabels(labelSelector))
+	}
+
+	if err := h.client.List(r.Context(), &taskList, listOpts...); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list tasks", err.Error())
+		return
+	}
+
+	// Filter active tasks in-memory if requested
+	active := r.URL.Query().Get("active") == "true"
+
+	tasks := make([]TaskResponse, 0, len(taskList.Items))
+	for i := range taskList.Items {
+		task := &taskList.Items[i]
+		if active && isTerminalFromStatus(task) {
+			continue
+		}
+		tasks = append(tasks, taskToResponse(task))
+	}
+
+	writeJSON(w, http.StatusOK, tasks)
+}
+
+// getTask handles GET /api/v1/tasks/{taskID}.
+func (h *taskHandler) getTask(w http.ResponseWriter, r *http.Request) {
+	taskID := chi.URLParam(r, "taskID")
+
+	var task toolkitv1alpha1.AgentTask
+	key := client.ObjectKey{Namespace: h.namespace, Name: taskID}
+	if err := h.client.Get(r.Context(), key, &task); err != nil {
+		if errors.IsNotFound(err) {
+			writeError(w, http.StatusNotFound, "task not found", "")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to get task", err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, taskToResponse(&task))
+}
+
+// isTerminalFromStatus checks if a task has reached a terminal condition.
+func isTerminalFromStatus(task *toolkitv1alpha1.AgentTask) bool {
+	cond := apimeta.FindStatusCondition(task.Status.Conditions, toolkitv1alpha1.ConditionSucceeded)
+	if cond == nil {
+		return false
+	}
+	return cond.Status != metav1.ConditionUnknown
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
