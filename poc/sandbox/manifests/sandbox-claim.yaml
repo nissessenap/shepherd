@@ -1,0 +1,8 @@
+apiVersion: extensions.agents.x-k8s.io/v1alpha1
+kind: SandboxClaim
+metadata:
+  name: poc-test-task
+  namespace: default
+spec:
+  sandboxTemplateRef:
+    name: poc-runner
