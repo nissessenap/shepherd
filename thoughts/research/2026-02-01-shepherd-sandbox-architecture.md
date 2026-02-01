@@ -9,7 +9,7 @@ tags: [research, architecture, agent-sandbox, operator, api, runner, migration, 
 status: complete
 last_updated: 2026-02-01
 last_updated_by: claude
-last_updated_note: "Added runner auth model, moved fleet to roadmap, renamed contextUrl to sourceUrl"
+last_updated_note: "Review round: token→Secret, simplified failure model (no Pod reads), rate limiting, context size limits, branch naming, RBAC section"
 ---
 
 # Shepherd Architecture v2: Agent-Sandbox
@@ -46,7 +46,7 @@ Based on `thoughts/research/2026-01-31-poc-sandbox-learnings.md`:
 - Headless services work for in-cluster connectivity (use `Sandbox.Status.ServiceFQDN` + port)
 - `restartPolicy: Never` honored — no restart loops
 - Resources persist after pod exits — operator must explicitly delete SandboxClaim
-- agent-sandbox v0.1.0 has no `Lifecycle` field — operator manages timeout and cleanup
+- agent-sandbox v0.1.0 has no `Lifecycle` field — operator manages timeout and cleanup. Note: `Lifecycle` with `ShutdownTime` support exists on unreleased main (v0.1.0+46 commits). When a release including Lifecycle ships, timeout management can be delegated to agent-sandbox.
 - Multiple concurrent sandboxes work without port conflicts
 
 ## Goals
@@ -120,7 +120,7 @@ Two separate GitHub Apps with distinct responsibilities:
 
 | Component | Does | Does NOT |
 | --------- | ---- | -------- |
-| **Operator** | Watch AgentTask CRDs, create SandboxClaims, watch Sandbox status, POST task assignment to runner, update AgentTask conditions, delete SandboxClaim on completion, manage timeout | Generate GitHub tokens, decompress context, talk to GitHub, make external HTTP calls (except runner task assignment within cluster) |
+| **Operator** | Watch AgentTask CRDs, create SandboxClaims, watch Sandbox status, POST task assignment to runner, update AgentTask conditions, delete SandboxClaim on completion, manage timeout, create runner token Secrets | Generate GitHub tokens, decompress context, talk to GitHub, read Pod resources, make external HTTP calls (except runner task assignment within cluster) |
 | **API** | Serve REST endpoints, create AgentTask CRDs, serve task data to runners (`GET /tasks/{id}`), generate GitHub tokens on-demand (`GET /tasks/{id}/token`), receive runner status callbacks, watch CRD status, notify adapters | Manage sandboxes, talk to K8s batch API |
 | **Runner entrypoint** | Listen on :8888 for task assignment, pull task data + token from API, clone repo, write TASK.md, invoke `claude -p`, report status/completion to API | Know about agent-sandbox, manage its own lifecycle |
 | **Adapter** | Handle GitHub webhooks, post GitHub comments, query API for deduplication | Read CRDs, talk to K8s |
@@ -147,7 +147,11 @@ Two separate GitHub Apps with distinct responsibilities:
    - labels for deduplication (shepherd.io/repo, shepherd.io/issue)
          |
          v
-5. API validates request, gzip-compresses context, creates AgentTask CRD
+5. API validates request:
+   - Accepts plaintext context in POST body
+   - Compresses via gzip, then base64-encodes for CRD storage
+   - Rejects with HTTP 413 if compressed size exceeds ~1.4MB
+   - Creates AgentTask CRD with encoded context in spec.task.context
          |
          v
 6. Operator sees new AgentTask, creates SandboxClaim
@@ -161,7 +165,7 @@ Two separate GitHub Apps with distinct responsibilities:
          |
          v
 8. Operator detects SandboxClaim ready via Sandbox status watch
-   Generates per-task bearer token, stores hash in CRD annotation
+   Generates per-task bearer token, stores hash in K8s Secret (owned by AgentTask)
    POSTs to http://{sandbox-fqdn}:8888/task
    Body: { "taskID": "task-abc123", "apiURL": "http://shepherd-api:8080", "token": "..." }
          |
@@ -180,8 +184,9 @@ Two separate GitHub Apps with distinct responsibilities:
     Container exits
          |
          v
-11. Operator detects completion:
-    Sandbox Ready=False + pod exit code 0 --> AgentTask Succeeded=True
+11. Operator detects completion via two signals:
+    a. Runner reported success via API --> API updated CRD --> AgentTask Succeeded=True
+    b. Sandbox Ready=False without prior success callback --> AgentTask Failed
     Deletes SandboxClaim (cascades cleanup)
          |
          v
@@ -228,12 +233,14 @@ Cancellation: `kubectl delete agenttask -l shepherd.io/fleet={fleet-name}` or a 
 
 ```text
 AgentTask --> owns --> SandboxClaim
-                          |
-                    agent-sandbox creates:
-                          +--> Sandbox --> Pod, Service
+         |                |
+         |          agent-sandbox creates:
+         |                +--> Sandbox --> Pod, Service
+         |
+         +--> owns --> Secret ({task-name}-token)
 ```
 
-Deleting an AgentTask cascades: SandboxClaim deletion triggers agent-sandbox cleanup of Sandbox, Pod, and Service.
+Deleting an AgentTask cascades: SandboxClaim deletion triggers agent-sandbox cleanup of Sandbox, Pod, and Service. The token Secret is also deleted via owner reference.
 
 ## CRD Specification
 
@@ -254,9 +261,11 @@ spec:
     ref: "main"
   task:
     description: "Fix the null pointer exception in login.go"
-    context: "<gzip+base64 encoded>"
+    context: "<gzip+base64 encoded, max ~1.4MB compressed — see Context Size Limits>"
     contextEncoding: "gzip"
     sourceUrl: "https://github.com/org/repo/issues/123"
+    sourceType: "issue"
+    sourceID: "123"
   callback:
     url: "https://github-adapter.example.com/callback"
   runner:
@@ -299,6 +308,33 @@ type AgentTaskSpec struct {
     Runner   RunnerSpec   `json:"runner,omitempty"`
 }
 
+type TaskSpec struct {
+    // Description is the task description sent to the agent.
+    // +kubebuilder:validation:Required
+    Description string `json:"description"`
+
+    // Context is additional context for the task, gzip-compressed then base64-encoded.
+    // The API accepts raw text, compresses via gzip, then base64-encodes for CRD storage.
+    // Maximum compressed size is ~1.4MB (etcd 1.5MB object limit minus CRD overhead).
+    // The API returns HTTP 413 if the compressed context exceeds this limit.
+    Context string `json:"context,omitempty"`
+
+    // ContextEncoding indicates the encoding of the context field.
+    // Currently only "gzip" is supported (gzip + base64).
+    ContextEncoding string `json:"contextEncoding,omitempty"`
+
+    // SourceURL is the origin of the task (e.g., GitHub issue URL). Informational only.
+    SourceURL string `json:"sourceUrl,omitempty"`
+
+    // SourceType identifies the trigger type: "issue", "pr", or "fleet".
+    // Used for deduplication and branch naming.
+    SourceType string `json:"sourceType,omitempty"`
+
+    // SourceID identifies the specific trigger instance (e.g., issue number, fleet name).
+    // Used for deduplication and branch naming.
+    SourceID string `json:"sourceID,omitempty"`
+}
+
 type RunnerSpec struct {
     // SandboxTemplateName references a SandboxTemplate for the runner environment.
     // +kubebuilder:validation:Required
@@ -306,7 +342,9 @@ type RunnerSpec struct {
 
     // Timeout is the maximum duration for task execution.
     // The operator enforces this via its own timer since agent-sandbox v0.1.0
-    // does not support Lifecycle/ShutdownTime.
+    // does not support Lifecycle/ShutdownTime. When a future agent-sandbox release
+    // includes Lifecycle support, this can be delegated to the SandboxClaim's
+    // ShutdownTime field instead.
     // +kubebuilder:default="30m"
     Timeout metav1.Duration `json:"timeout,omitempty"`
 
@@ -333,6 +371,8 @@ type AgentTaskStatus struct {
 - `RunnerSpec.SandboxTemplateName` added — references the SandboxTemplate to use
 - `AgentTaskStatus.JobName` replaced by `AgentTaskStatus.SandboxClaimName`
 - `TaskSpec.ContextURL` renamed to `TaskSpec.SourceURL` — clarifies this is the origin of the task (e.g., GitHub issue URL), not a URL to download context from
+- `TaskSpec.SourceType` added — identifies trigger type ("issue", "pr", "fleet") for deduplication and branch naming
+- `TaskSpec.SourceID` added — identifies specific trigger instance (issue number, fleet name)
 
 ### Condition State Machine
 
@@ -343,10 +383,11 @@ Primary condition is `Succeeded` (run-to-completion pattern):
 | Unknown | Pending | Waiting for sandbox to start |
 | Unknown | Running | Sandbox running, task assigned |
 | True | Succeeded | Task completed, PR created |
-| False | Failed | Task failed |
+| False | Failed | Task failed (runner crashed or reported failure) |
 | False | TimedOut | Timeout exceeded (operator-enforced) |
-| False | OOM | Container killed: OOMKilled or exit 137 |
 | False | Cancelled | User cancelled |
+
+Note: The operator does not distinguish between OOM kills, crashes, and other failures. The runner is the authoritative source for success — it reports completion via the API callback. Any sandbox termination without a prior success callback is classified as `Failed`. This simplification avoids requiring Pod read RBAC on the operator (see [Failure Detection](#failure-detection)).
 
 Secondary condition `Notified` (managed by API server):
 
@@ -381,7 +422,7 @@ The existing `GET /api/v1/tasks` endpoint gains a `fleet` query parameter for fl
 
 #### GET /api/v1/tasks/{taskID}/data
 
-Returns task description and decompressed context. The API transparently decompresses gzip+base64 context from the CRD.
+Returns task description and decompressed context. The API transparently decompresses the context: the CRD stores gzip-compressed, base64-encoded data. The `/data` endpoint decodes base64, decompresses gzip, and returns plaintext.
 
 ```json
 {
@@ -418,6 +459,32 @@ The API runs a standalone controller-runtime cache that watches AgentTask resour
 
 This is unchanged from the current implementation.
 
+### Context Size Limits
+
+The API accepts raw plaintext context in `POST /api/v1/tasks`, compresses it via gzip, then base64-encodes the result for storage in the AgentTask CRD's `spec.task.context` field.
+
+etcd enforces a 1.5MB maximum object size. After accounting for CRD metadata, spec fields, and status (~100KB overhead), the effective limit for compressed+encoded context is **~1.4MB**. Given typical gzip compression ratios of 4-7x on text, this supports roughly 5-10MB of plaintext context.
+
+The API validates the compressed size before creating the CRD:
+- If compressed+encoded context exceeds 1.4MB: return HTTP `413 Request Entity Too Large`
+- The error response includes the compressed size and the limit, so callers can adjust
+
+For contexts exceeding this limit (rare — most issue threads and code snippets are well under 1MB), callers should truncate or summarize the context before submission.
+
+### Rate Limiting
+
+API endpoints are rate-limited to prevent abuse, especially while runner endpoints are unauthenticated in MVP Part 1.
+
+| Endpoint | Limit | Scope | Reasoning |
+| -------- | ----- | ----- | --------- |
+| `POST /api/v1/tasks` | 10 req/min | Per source IP | Prevent task creation floods |
+| `GET /api/v1/tasks/{id}/data` | 10 req/min | Per task ID | Runner calls once, maybe retries |
+| `GET /api/v1/tasks/{id}/token` | 5 req/min | Per task ID | Tokens last 1 hour, single call at start |
+| `POST /api/v1/tasks/{id}/status` | 30 req/min | Per task ID | Runner sends frequent progress updates |
+| `GET /api/v1/tasks` | 60 req/min | Per source IP | CLI polling for fleet status |
+
+Implementation: `golang.org/x/time/rate` with in-memory limiters keyed by task ID or source IP. For multi-replica API deployments in production, consider Redis-backed limiters.
+
 ## Operator Reconciliation
 
 ### Reconcile Loop (AgentTask)
@@ -436,12 +503,17 @@ This is unchanged from the current implementation.
    - Not found --> still creating, requeue
    - Found, check Ready condition:
      a. Ready=True --> assign task (if not already assigned)
-     b. Ready=False + pod terminated --> check exit code, mark terminal
-     c. Ready=False (other) --> still starting, requeue
+     b. Ready=False + task was previously Running --> mark Failed
+        (runner did not report success before sandbox terminated)
+     c. Ready=False (never was Running) --> still starting, requeue
 7. If task assigned + running --> check for timeout:
    - If now > startTime + timeout --> delete SandboxClaim, mark TimedOut
 8. On terminal state --> delete SandboxClaim (cascades cleanup)
 ```
+
+Note: The operator does NOT read Pod resources. It relies on Sandbox Ready condition transitions
+and the runner's status callbacks via the API to determine task outcome. This avoids requiring
+Pod read RBAC permissions.
 
 ### Task Assignment
 
@@ -450,55 +522,64 @@ When the operator detects `Sandbox Ready=True`, it POSTs to the runner:
 ```go
 func (r *AgentTaskReconciler) assignTask(ctx context.Context, task *v1alpha1.AgentTask, sandbox *sandboxv1alpha1.Sandbox) error {
     url := fmt.Sprintf("http://%s:8888/task", sandbox.Status.ServiceFQDN)
+    token := generateRunnerToken() // random 32-byte hex string
     body := TaskAssignment{
         TaskID: task.Name,
         APIURL: r.Config.APIURL,
-        Token:  generateRunnerToken(), // random 32-byte hex string (future: MVP Part 1 omits this)
+        Token:  token,
     }
     // POST with timeout and retry (up to 5 attempts, 2s between)
-    // Store SHA-256 hash of token in annotation: shepherd.io/runner-token
+    // Create K8s Secret "{task-name}-token" with owner reference to AgentTask:
+    //   data: { "hash": SHA-256(token) }
     // Mark task as Running on success
     // Track assignment in annotation to prevent duplicate POSTs
 }
 ```
 
-The operator tracks assignment state via an annotation (`shepherd.io/task-assigned: "true"`) to ensure idempotency across reconcile loops. The runner token hash is stored in `shepherd.io/runner-token` for API validation.
+The operator tracks assignment state via an annotation (`shepherd.io/task-assigned: "true"`) to ensure idempotency across reconcile loops. The runner token SHA-256 hash is stored in a K8s Secret named `{task-name}-token` with an owner reference to the AgentTask (cascade deletion). The API validates runner requests by reading the Secret via an informer cache.
 
 ### Failure Detection
 
-The operator inspects pod container status directly (more reliable than Job condition message parsing):
+The operator uses a simplified failure model that does **not** require Pod read RBAC. Instead of inspecting pod container status directly, it relies on two signals:
+
+1. **Runner success callback**: The runner reports completion via `POST /api/v1/tasks/{id}/status` with `event: completed`. The API updates the AgentTask CRD status. The operator sees `Succeeded=True` and proceeds to cleanup.
+
+2. **Sandbox Ready=False transition**: If the Sandbox transitions to `Ready=False` after the task was assigned (Running state), and no success callback was received, the operator marks the task as `Failed`.
 
 ```go
-func classifySandboxFailure(sandbox *sandboxv1alpha1.Sandbox, pod *corev1.Pod) (string, string) {
-    // Check pod container status for the "runner" container
-    for _, cs := range pod.Status.ContainerStatuses {
-        if cs.Name != "runner" { continue }
-        if cs.State.Terminated == nil { continue }
+func classifySandboxTermination(task *v1alpha1.AgentTask, sandbox *sandboxv1alpha1.Sandbox) (string, string) {
+    // If the runner already reported success via API callback, the CRD
+    // is already in terminal state — this function is only called for
+    // unexpected sandbox termination.
 
-        if cs.State.Terminated.Reason == "OOMKilled" {
-            return ReasonOOM, "Container killed: OOM"
-        }
-        if cs.State.Terminated.ExitCode == 137 {
-            return ReasonOOM, "Container killed: exit code 137"
-        }
-        if cs.State.Terminated.ExitCode == 0 {
-            return ReasonSucceeded, "Task completed"
-        }
-        return ReasonFailed, fmt.Sprintf("Exit code %d", cs.State.Terminated.ExitCode)
+    readyCond := meta.FindStatusCondition(sandbox.Status.Conditions, "Ready")
+    if readyCond == nil {
+        return ReasonFailed, "Sandbox status unavailable"
     }
-    return ReasonFailed, "Unknown failure"
+
+    if readyCond.Reason == "SandboxExpired" {
+        return ReasonTimedOut, "Sandbox expired"
+    }
+
+    // Generic failure — could be OOM, crash, or any other pod termination.
+    // The operator does not distinguish because it does not read Pod resources.
+    return ReasonFailed, fmt.Sprintf("Sandbox terminated: %s", readyCond.Message)
 }
 ```
 
+**Trade-off**: This model does not distinguish between OOM kills, crashes, and other failures. The `Failed` reason covers all non-success outcomes. Granular failure classification (OOM vs crash) would require either Pod read RBAC or a future agent-sandbox enhancement that propagates termination details to Sandbox status (see [Open Questions](#open-questions)).
+
+**Security benefit**: The operator does not need `get`/`list`/`watch` permissions on Pod resources, reducing its RBAC surface. It only needs permissions on AgentTask CRDs, SandboxClaim CRDs, Sandbox CRDs, and Secrets.
+
 ### Timeout Management
 
-Since agent-sandbox v0.1.0 does not support `Lifecycle.ShutdownTime`, the operator manages timeout:
+Since agent-sandbox v0.1.0 (the latest released version) does not support `Lifecycle.ShutdownTime`, the operator manages timeout:
 
 1. Record `status.startTime` when SandboxClaim is created
 2. On each reconcile, check if `now > startTime + spec.runner.timeout`
 3. If timed out: delete SandboxClaim, mark AgentTask as `Succeeded=False`, reason `TimedOut`
 
-When agent-sandbox adds Lifecycle support, this can be simplified by setting `shutdownTime` on the SandboxClaim and reacting to the sandbox expiry condition.
+**Future**: `Lifecycle` with `ShutdownTime` and `ShutdownPolicy` support exists on agent-sandbox's unreleased main branch (post-v0.1.0). When a release including Lifecycle ships, the operator can set `ShutdownTime` on the SandboxClaim and react to the `SandboxExpired` condition instead of managing its own timer. This would also give the sandbox time to gracefully shut down via `ShutdownPolicy`.
 
 ## Fleet Migrations (MVP Part 2)
 
@@ -557,6 +638,23 @@ Phase 5: Report results
   - POST {apiURL}/api/v1/tasks/{taskID}/status --> { event: completed, pr_url: "..." }
   - Exit 0 on success, exit 1 on failure
 ```
+
+### Branch Naming Convention
+
+The runner creates a branch for each task using a deterministic naming scheme that prevents collisions across concurrent tasks, retries, and fleet migrations:
+
+```text
+shepherd/{source-type}-{source-id}/{task-name}
+
+Examples:
+- shepherd/issue-123/task-abc123       (GitHub issue trigger)
+- shepherd/pr-456/task-def456          (GitHub PR trigger)
+- shepherd/fleet-update-deps/task-ghi789  (fleet migration)
+```
+
+The branch name is derived from `spec.task.sourceType`, `spec.task.sourceID`, and the AgentTask name. Since AgentTask names are unique within a namespace, branch collisions are impossible.
+
+This scheme also groups related branches visually — all attempts for issue #123 appear under `shepherd/issue-123/`.
 
 ### Readiness Probe
 
@@ -674,8 +772,7 @@ shepherd/
 ├── internal/
 │   └── controller/            # Kubebuilder-managed controllers
 │       ├── agenttask_controller.go   # AgentTask reconciler (sandbox-based)
-│       ├── sandbox_builder.go        # SandboxClaim construction
-│       └── failure.go                # Pod-based failure classification
+│       └── sandbox_builder.go        # SandboxClaim construction
 ├── config/                    # Kubebuilder-managed manifests (Kustomize)
 ├── pkg/
 │   ├── operator/              # Module orchestrator, errgroup lifecycle
@@ -705,7 +802,7 @@ shepherd/
 | ------- | ------ | -------------- |
 | `cmd/shepherd-init/` | Retired | API server (`handler_data.go`, `handler_token.go`) |
 | `internal/controller/job_builder.go` | Replaced | `internal/controller/sandbox_builder.go` |
-| Job-based failure classification | Replaced | Pod-based failure classification via direct container status |
+| Job-based failure classification | Replaced | Sandbox Ready condition + runner callback model (no Pod reads) |
 | `RunnerSpec.Image` field | Removed | Controlled by SandboxTemplate |
 | `AgentTaskStatus.JobName` | Replaced | `AgentTaskStatus.SandboxClaimName` |
 
@@ -715,10 +812,13 @@ shepherd/
 
 The runner-pull model requires the runner to authenticate when calling API endpoints (`/tasks/{id}/data`, `/tasks/{id}/token`, `/tasks/{id}/status`). Without authentication, any pod in the cluster could call these endpoints with a guessed task ID.
 
-**Approach:** The operator generates a random bearer token per task, includes it in the task assignment POST to the runner, and stores it as an annotation on the AgentTask CRD. The runner includes this token as an `Authorization: Bearer {token}` header on all API calls. The API validates the token against the CRD annotation.
+**Approach:** The operator generates a random bearer token per task, includes it in the task assignment POST to the runner, and stores the SHA-256 hash in a K8s Secret. The runner includes this token as an `Authorization: Bearer {token}` header on all API calls. The API validates the token by reading the Secret via an informer cache.
 
 ```text
 Operator                          Runner                          API
+   |                                |                              |
+   |-- Create Secret {task}-token   |                              |
+   |   { hash: SHA256(token) }      |                              |
    |                                |                              |
    |-- POST :8888/task ------------>|                              |
    |   { taskID, apiURL, token }    |                              |
@@ -733,12 +833,17 @@ Operator                          Runner                          API
 
 **Token lifecycle:**
 - Generated by operator when assigning task (random 32-byte hex string)
-- Stored in annotation `shepherd.io/runner-token` on the AgentTask CRD (SHA-256 hash)
+- SHA-256 hash stored in K8s Secret `{task-name}-token` with owner reference to AgentTask
+- Owner reference ensures cascade deletion when the AgentTask is deleted
 - Sent to runner in plaintext in the task assignment POST (cluster-internal networking)
-- Validated by API on every runner request (hash comparison)
+- Validated by API on every runner request (hash the presented token, compare to Secret)
 - Implicitly expires when the task reaches terminal state (API rejects requests for terminal tasks)
 
-**Trade-off:** The token hash is stored on the CRD, visible to anyone with CRD read access in the namespace. This is acceptable for MVP since CRD read access implies broad namespace access. For production hardening, the token could move to a K8s Secret, but this adds complexity without meaningful security gain in the single-namespace deployment model.
+**Why a Secret, not a CRD annotation:**
+- Secrets can be encrypted at rest via etcd encryption (annotations cannot)
+- Secret access is tracked separately in K8s audit logs
+- RBAC for Secrets is independent of CRD read access — follows least privilege
+- Owner reference provides automatic cleanup
 
 **MVP scope:** This authentication mechanism is documented but deferred from MVP Part 1. For initial development, the API endpoints are unauthenticated (cluster-internal networking + NetworkPolicy provides the security boundary). The per-task token should be implemented before production use.
 
@@ -760,6 +865,72 @@ Operator                          Runner                          API
 - SandboxTemplate and SandboxWarmPool deployed in same namespace
 - Operator uses ClusterRole/ClusterRoleBinding to watch all namespaces
 
+## RBAC Requirements
+
+Each component requires specific K8s RBAC permissions. These are namespace-scoped unless noted.
+
+### Operator
+
+```yaml
+rules:
+  # AgentTask CRDs — full lifecycle management
+  - apiGroups: ["toolkit.shepherd.io"]
+    resources: ["agenttasks"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["toolkit.shepherd.io"]
+    resources: ["agenttasks/status"]
+    verbs: ["update", "patch"]
+
+  # SandboxClaim — create and delete for task execution
+  - apiGroups: ["extensions.agents.x-k8s.io"]
+    resources: ["sandboxclaims"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+
+  # Sandbox — watch status for Ready condition transitions
+  - apiGroups: ["agents.x-k8s.io"]
+    resources: ["sandboxes"]
+    verbs: ["get", "list", "watch"]
+
+  # Secrets — create runner token secrets (owner ref for cleanup)
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create"]
+
+  # Events — emit K8s events for observability
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+
+  # Leader election
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+```
+
+**Notable exclusion**: The operator does NOT need `get`/`list`/`watch` on Pods. Failure detection uses Sandbox Ready condition transitions, not pod container status inspection.
+
+### API Server
+
+```yaml
+rules:
+  # AgentTask CRDs — create and watch
+  - apiGroups: ["toolkit.shepherd.io"]
+    resources: ["agenttasks"]
+    verbs: ["get", "list", "watch", "create"]
+  - apiGroups: ["toolkit.shepherd.io"]
+    resources: ["agenttasks/status"]
+    verbs: ["update", "patch"]
+
+  # Secrets — read runner token for validation
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch"]
+```
+
+### GitHub Adapter
+
+No K8s RBAC needed — communicates exclusively via the REST API.
+
 ## Dependencies (go.mod additions)
 
 ```go
@@ -778,8 +949,7 @@ Note: agent-sandbox v0.1.0 uses controller-runtime v0.22.2 and K8s v0.34.1. The 
 When a second execution backend (Modal, Cloudflare, etc.) becomes necessary, the refactoring surface is:
 
 1. **`internal/controller/sandbox_builder.go`** — builds SandboxClaims. Would become one implementation of a `SandboxBuilder` interface.
-2. **`internal/controller/agenttask_controller.go`** — the `assignTask()`, `classifySandboxFailure()`, and timeout management functions. These would move behind an `ExecutionBackend` interface.
-3. **`internal/controller/failure.go`** — pod-based failure classification. Different backends would have different failure detection mechanisms.
+2. **`internal/controller/agenttask_controller.go`** — the `assignTask()`, `classifySandboxTermination()`, and timeout management functions. These would move behind an `ExecutionBackend` interface.
 
 The API server and adapter are already backend-agnostic — they only talk to CRDs and HTTP endpoints. No changes needed there.
 
@@ -802,9 +972,19 @@ type ExecutionBackend interface {
 }
 ```
 
+## Known Limitations (MVP)
+
+1. **No retry mechanism**: MVP Part 1 has no automatic retry for failed tasks. If a task fails (runner crash, network error, OOM), the caller must resubmit manually. The adapter can re-trigger from a new GitHub comment, and the CLI can resubmit fleet tasks. Automatic retries (with backoff and retryable reason filtering) are a post-MVP feature that would require new CRD fields (`retryPolicy`, `attempts` counter).
+
+2. **Dangling branches on runner crash**: If a runner crashes after pushing a branch but before reporting completion, an orphaned branch remains in the repository. The adapter posts a failure comment (via the CRD watcher fallback, step 12), but branch cleanup is manual. This is especially relevant for fleet migrations where multiple tasks may crash, leaving partial branches across repos. Post-MVP: a cleanup job that lists `shepherd/*` branches, checks corresponding AgentTask terminal state, and deletes stale branches.
+
+3. **No granular failure classification**: The operator classifies all non-success sandbox terminations as `Failed` without distinguishing OOM, crash, or error. This is a deliberate trade-off to avoid Pod read RBAC. If agent-sandbox adds termination info to Sandbox status in a future release, granular classification can be added without RBAC changes. An upstream issue should be filed for this.
+
 ## Open Questions
 
 1. **Agent conversation log capture**: Claude Code produces conversation logs that could be valuable for debugging and auditing. Pod logs are accessible while the pod object exists, but are lost when the SandboxClaim is deleted. The operator should capture or persist these before cleanup. Options include object storage (S3/GCS) or a PVC, but conversation logs may contain sensitive internal information that makes a general logging solution (Loki, etc.) inappropriate. Left open for now — needs design when approaching production readiness.
+
+2. **agent-sandbox termination info upstream**: The Sandbox CRD status does not expose pod exit codes or termination reasons (OOMKilled, etc.). Filing an upstream issue to add a `TerminationInfo` field to Sandbox status would allow Shepherd to provide granular failure reasons without Pod read RBAC. Until then, all failures are classified as generic `Failed`.
 
 ## Resolved Decisions
 
@@ -814,6 +994,7 @@ These were previously open questions, now settled:
 - **Warm pool sizing**: User-configurable via SandboxWarmPool CRD. Start with `minReady: 1`. Each deployment adjusts based on their usage patterns.
 - **Fleet repo discovery**: Not a Shepherd feature. The user/CLI provides the explicit list of repos. Repo discovery is organization-specific and out of scope.
 - **Warm pool idle timeout**: Not Shepherd's concern. The agent-sandbox warm pool controller manages pod lifecycle. The runner entrypoint simply waits for a task assignment until the pod is terminated by the pool controller.
+- **Migration from Jobs-based architecture**: Clean break, no backwards compatibility. The `v1alpha1` API is pre-GA with no stability guarantees. All Jobs-based code (`cmd/shepherd-init/`, `job_builder.go`, etc.) is retired without migration tooling. Existing AgentTask resources should be deleted before deploying the new version.
 - **SandboxTemplate per language**: Per-language templates. The project provides one Go-based template as an example. Each organization creates their own templates for their language/build tool combinations (e.g., Java+Gradle, Java+Maven, Python+Poetry). Documentation should cover how to create a SandboxTemplate and what the runner container image needs to contain.
 
 ## Historical Context (from thoughts/)
@@ -828,4 +1009,4 @@ These were previously open questions, now settled:
 - `thoughts/research/2026-01-31-background-agents-session-management-learnings.md` — Session management patterns for future interactive mode
 - `thoughts/research/2026-01-28-oom-detection-without-pod-watching.md` — OOM detection research
 - `thoughts/reviews/2026-01-28-api-server-plan-review.md` — API server plan review
-- `thoughts/plans/2026-01-28-phase5-failure-handling-podfailurepolicy.md` — Pod failure policy (replaced by direct pod status inspection)
+- `thoughts/plans/2026-01-28-phase5-failure-handling-podfailurepolicy.md` — Pod failure policy (replaced by Sandbox condition-based detection, no Pod reads)
