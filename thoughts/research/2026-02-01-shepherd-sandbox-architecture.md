@@ -804,17 +804,17 @@ type ExecutionBackend interface {
 
 ## Open Questions
 
-1. **agent-sandbox API version alignment**: agent-sandbox v0.1.0 depends on K8s v0.34.1 / controller-runtime v0.22.2. Shepherd uses K8s v0.35.0 / controller-runtime v0.23.0. Can we import only the API types without pulling in the full controller? Needs testing.
+1. **Agent conversation log capture**: Claude Code produces conversation logs that could be valuable for debugging and auditing. Pod logs are accessible while the pod object exists, but are lost when the SandboxClaim is deleted. The operator should capture or persist these before cleanup. Options include object storage (S3/GCS) or a PVC, but conversation logs may contain sensitive internal information that makes a general logging solution (Loki, etc.) inappropriate. Left open for now — needs design when approaching production readiness.
 
-2. **Warm pool sizing**: What's the right `minReady` for different usage patterns? Start with 1 for development, adjust based on usage data.
+## Resolved Decisions
 
-3. **Fleet task repo discovery**: MVP uses explicit repo lists. Pattern-based discovery (e.g., "all repos in org") requires GitHub API access from the adapter or API server. Deferred to post-MVP.
+These were previously open questions, now settled:
 
-4. **Runner HTTP server idle timeout**: Warm pool pods sitting idle should eventually self-terminate. This may be handled by agent-sandbox's warm pool controller, or the entrypoint could implement an idle timeout (e.g., 30 minutes without receiving a task).
-
-5. **Log capture before cleanup**: Pod logs are accessible while the pod exists. The operator should capture logs (or at least confirm the runner reported its results via API callback) before deleting the SandboxClaim. What's the right mechanism?
-
-6. **SandboxTemplate per runner vs per language**: Should we have one template per language runtime (Go, Python, Node) or one universal template with all runtimes? Templates are cheap to create but the runner images get large. Recommend per-language templates.
+- **agent-sandbox API version alignment**: Shepherd imports only the API types (schema) from agent-sandbox, not the full controller. No version conflict — API types are plain Go structs with no controller-runtime dependency.
+- **Warm pool sizing**: User-configurable via SandboxWarmPool CRD. Start with `minReady: 1`. Each deployment adjusts based on their usage patterns.
+- **Fleet repo discovery**: Not a Shepherd feature. The user/CLI provides the explicit list of repos. Repo discovery is organization-specific and out of scope.
+- **Warm pool idle timeout**: Not Shepherd's concern. The agent-sandbox warm pool controller manages pod lifecycle. The runner entrypoint simply waits for a task assignment until the pod is terminated by the pool controller.
+- **SandboxTemplate per language**: Per-language templates. The project provides one Go-based template as an example. Each organization creates their own templates for their language/build tool combinations (e.g., Java+Gradle, Java+Maven, Python+Poetry). Documentation should cover how to create a SandboxTemplate and what the runner container image needs to contain.
 
 ## Historical Context (from thoughts/)
 
