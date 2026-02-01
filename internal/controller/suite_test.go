@@ -18,7 +18,9 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -34,6 +36,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	toolkitv1alpha1 "github.com/NissesSenap/shepherd/api/v1alpha1"
+	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
+	sandboxextv1alpha1 "sigs.k8s.io/agent-sandbox/extensions/api/v1alpha1"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -62,12 +66,21 @@ var _ = BeforeSuite(func() {
 	var err error
 	err = toolkitv1alpha1.AddToScheme(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())
+	err = sandboxv1alpha1.AddToScheme(scheme.Scheme)
+	Expect(err).NotTo(HaveOccurred())
+	err = sandboxextv1alpha1.AddToScheme(scheme.Scheme)
+	Expect(err).NotTo(HaveOccurred())
 
 	// +kubebuilder:scaffold:scheme
 
 	By("bootstrapping test environment")
+	sandboxCRDPath := resolveModuleCRDPath("sigs.k8s.io/agent-sandbox", "k8s", "crds")
+	crdPaths := []string{filepath.Join("..", "..", "config", "crd", "bases")}
+	if sandboxCRDPath != "" {
+		crdPaths = append(crdPaths, sandboxCRDPath)
+	}
 	testEnv = &envtest.Environment{
-		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "config", "crd", "bases")},
+		CRDDirectoryPaths:     crdPaths,
 		ErrorIfCRDPathMissing: true,
 	}
 
@@ -115,4 +128,27 @@ func getFirstFoundEnvTestBinaryDir() string {
 		}
 	}
 	return ""
+}
+
+// resolveModuleCRDPath resolves the filesystem path to CRD files within a Go module's
+// cache directory. It uses `go list -m -json` to find the module's Dir, then joins
+// the provided path segments.
+func resolveModuleCRDPath(module string, pathSegments ...string) string {
+	cmd := exec.Command("go", "list", "-m", "-json", module)
+	out, err := cmd.Output()
+	if err != nil {
+		logf.Log.Error(err, "Failed to resolve module path", "module", module)
+		return ""
+	}
+	var info struct {
+		Dir string `json:"Dir"`
+	}
+	if err := json.Unmarshal(out, &info); err != nil {
+		logf.Log.Error(err, "Failed to parse module info", "module", module)
+		return ""
+	}
+	if info.Dir == "" {
+		return ""
+	}
+	return filepath.Join(append([]string{info.Dir}, pathSegments...)...)
 }

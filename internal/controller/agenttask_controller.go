@@ -21,8 +21,6 @@ import (
 	"fmt"
 	"time"
 
-	batchv1 "k8s.io/api/batch/v1"
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -34,6 +32,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	toolkitv1alpha1 "github.com/NissesSenap/shepherd/api/v1alpha1"
+	sandboxextv1alpha1 "sigs.k8s.io/agent-sandbox/extensions/api/v1alpha1"
 )
 
 // AgentTaskReconciler reconciles a AgentTask object
@@ -52,7 +51,8 @@ type AgentTaskReconciler struct {
 // +kubebuilder:rbac:groups=toolkit.shepherd.io,resources=agenttasks,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=toolkit.shepherd.io,resources=agenttasks/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=toolkit.shepherd.io,resources=agenttasks/finalizers,verbs=update
-// +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=extensions.agents.x-k8s.io,resources=sandboxclaims,verbs=get;list;watch;create;delete
+// +kubebuilder:rbac:groups=agents.x-k8s.io,resources=sandboxes,verbs=get
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -76,7 +76,7 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			Type:               toolkitv1alpha1.ConditionSucceeded,
 			Status:             metav1.ConditionUnknown,
 			Reason:             toolkitv1alpha1.ReasonPending,
-			Message:            "Waiting for job to start",
+			Message:            "Waiting for sandbox to start",
 			ObservedGeneration: task.Generation,
 		})
 		task.Status.ObservedGeneration = task.Generation
@@ -84,121 +84,48 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		if err := r.Status().Update(ctx, &task); err != nil {
 			return ctrl.Result{}, fmt.Errorf("updating initial status: %w", err)
 		}
-		r.Recorder.Eventf(&task, nil, "Normal", "Pending", "Reconcile", "Task accepted, waiting for job creation")
+		r.Recorder.Eventf(&task, nil, "Normal", "Pending", "Reconcile", "Task accepted, waiting for sandbox creation")
 		log.Info("initialized task status", "task", req.NamespacedName)
 		// Use RequeueAfter instead of deprecated Requeue: true (controller-runtime v0.23+ PR #3107)
 		return ctrl.Result{RequeueAfter: time.Second}, nil
 	}
 
-	// Look for existing Job (name includes generation to avoid collision on delete/recreate)
-	var job batchv1.Job
-	jobName := fmt.Sprintf("%s-%d-job", task.Name, task.Generation)
-	jobKey := client.ObjectKey{Namespace: task.Namespace, Name: jobName}
+	// Look for existing SandboxClaim (name = task.Name)
+	var claim sandboxextv1alpha1.SandboxClaim
+	claimKey := client.ObjectKey{Namespace: task.Namespace, Name: task.Name}
 
-	err := r.Get(ctx, jobKey, &job)
+	err := r.Get(ctx, claimKey, &claim)
 	if client.IgnoreNotFound(err) != nil {
-		return ctrl.Result{}, fmt.Errorf("getting job: %w", err)
+		return ctrl.Result{}, fmt.Errorf("getting sandbox claim: %w", err)
 	}
 
 	if err != nil {
-		// Job doesn't exist — create it
-		newJob, buildErr := buildJob(&task, jobConfig{
-			AllowedRunnerImage:   r.AllowedRunnerImage,
-			RunnerSecretName:     r.RunnerSecretName,
-			InitImage:            r.InitImage,
-			Scheme:               r.Scheme,
-			GithubAppID:          r.GithubAppID,
-			GithubInstallationID: r.GithubInstallationID,
-			GithubAPIURL:         r.GithubAPIURL,
+		// SandboxClaim doesn't exist — create it
+		newClaim, buildErr := buildSandboxClaim(&task, sandboxConfig{
+			Scheme: r.Scheme,
 		})
 		if buildErr != nil {
 			return r.markFailed(ctx, &task, toolkitv1alpha1.ReasonFailed,
-				fmt.Sprintf("failed to build job: %v", buildErr))
+				fmt.Sprintf("failed to build sandbox claim: %v", buildErr))
 		}
-		if createErr := r.Create(ctx, newJob); createErr != nil {
-			return ctrl.Result{}, fmt.Errorf("creating job: %w", createErr)
+		if createErr := r.Create(ctx, newClaim); createErr != nil {
+			return ctrl.Result{}, fmt.Errorf("creating sandbox claim: %w", createErr)
 		}
 
-		task.Status.SandboxClaimName = newJob.Name
-		setCondition(&task, metav1.Condition{
-			Type:               toolkitv1alpha1.ConditionSucceeded,
-			Status:             metav1.ConditionUnknown,
-			Reason:             toolkitv1alpha1.ReasonRunning,
-			Message:            "Job created",
-			ObservedGeneration: task.Generation,
-		})
+		task.Status.SandboxClaimName = newClaim.Name
 		now := metav1.Now()
 		task.Status.StartTime = &now
 
 		if statusErr := r.Status().Update(ctx, &task); statusErr != nil {
-			return ctrl.Result{}, fmt.Errorf("updating status after job creation: %w", statusErr)
+			return ctrl.Result{}, fmt.Errorf("updating status after sandbox claim creation: %w", statusErr)
 		}
-		r.Recorder.Eventf(&task, nil, "Normal", "JobCreated", "Reconcile", "Created job %s", newJob.Name)
-		log.Info("created job", "job", newJob.Name)
+		r.Recorder.Eventf(&task, nil, "Normal", "SandboxClaimCreated", "Reconcile", "Created sandbox claim %s", newClaim.Name)
+		log.Info("created sandbox claim", "claim", newClaim.Name)
 		return ctrl.Result{}, nil
 	}
 
-	// Job exists — check its status
-	return r.reconcileJobStatus(ctx, &task, &job)
-}
-
-// failureClass represents the type of Job failure.
-type failureClass int
-
-const (
-	failureApplication failureClass = iota // Non-zero exit — permanent
-	failureTimeout                         // ActiveDeadlineSeconds exceeded — permanent
-)
-
-// classifyJobFailure examines a Job's Failed condition to determine the failure type.
-func classifyJobFailure(cond batchv1.JobCondition) failureClass {
-	if cond.Reason == "DeadlineExceeded" {
-		return failureTimeout
-	}
-	return failureApplication
-}
-
-func (r *AgentTaskReconciler) reconcileJobStatus(ctx context.Context, task *toolkitv1alpha1.AgentTask, job *batchv1.Job) (ctrl.Result, error) {
-	log := logf.FromContext(ctx)
-
-	for _, c := range job.Status.Conditions {
-		switch c.Type {
-		case batchv1.JobComplete:
-			if c.Status == corev1.ConditionTrue {
-				return r.markSucceeded(ctx, task, "Job completed successfully")
-			}
-		case batchv1.JobFailed:
-			if c.Status == corev1.ConditionTrue {
-				fc := classifyJobFailure(c)
-				switch fc {
-				case failureTimeout:
-					return r.markFailed(ctx, task, toolkitv1alpha1.ReasonTimedOut,
-						"Job exceeded timeout")
-				default:
-					return r.markFailed(ctx, task, toolkitv1alpha1.ReasonFailed, c.Message)
-				}
-			}
-		}
-	}
-
-	log.V(1).Info("job still running", "job", job.Name)
-	return ctrl.Result{}, nil
-}
-
-func (r *AgentTaskReconciler) markSucceeded(ctx context.Context, task *toolkitv1alpha1.AgentTask, message string) (ctrl.Result, error) {
-	now := metav1.Now()
-	task.Status.CompletionTime = &now
-	setCondition(task, metav1.Condition{
-		Type:               toolkitv1alpha1.ConditionSucceeded,
-		Status:             metav1.ConditionTrue,
-		Reason:             toolkitv1alpha1.ReasonSucceeded,
-		Message:            message,
-		ObservedGeneration: task.Generation,
-	})
-	if err := r.Status().Update(ctx, task); err != nil {
-		return ctrl.Result{}, fmt.Errorf("marking succeeded: %w", err)
-	}
-	r.Recorder.Eventf(task, nil, "Normal", "Succeeded", "Reconcile", message)
+	// SandboxClaim exists — status tracking deferred to Phase 3
+	log.V(1).Info("sandbox claim exists, status tracking pending", "claim", claim.Name)
 	return ctrl.Result{}, nil
 }
 
@@ -224,7 +151,7 @@ func (r *AgentTaskReconciler) markFailed(ctx context.Context, task *toolkitv1alp
 func (r *AgentTaskReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&toolkitv1alpha1.AgentTask{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
-		Owns(&batchv1.Job{}).
+		Owns(&sandboxextv1alpha1.SandboxClaim{}).
 		Complete(r)
 }
 

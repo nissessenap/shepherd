@@ -337,10 +337,10 @@ Unit tests using testify (follow `job_builder_test.go` patterns):
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `go mod tidy` succeeds without errors
-- [ ] `make build` compiles (may need temporary stubs in controller if it references old builder)
-- [ ] `make test` passes — new `sandbox_builder_test.go` passes, old Job tests removed
-- [ ] `make lint` passes
+- [x] `go mod tidy` succeeds without errors
+- [x] `make build` compiles (may need temporary stubs in controller if it references old builder)
+- [x] `make test` passes — new `sandbox_builder_test.go` passes, old Job tests removed
+- [x] `make lint` passes
 
 ---
 

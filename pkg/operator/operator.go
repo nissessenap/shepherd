@@ -32,6 +32,8 @@ import (
 
 	toolkitv1alpha1 "github.com/NissesSenap/shepherd/api/v1alpha1"
 	"github.com/NissesSenap/shepherd/internal/controller"
+	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
+	sandboxextv1alpha1 "sigs.k8s.io/agent-sandbox/extensions/api/v1alpha1"
 )
 
 var scheme = runtime.NewScheme()
@@ -39,6 +41,8 @@ var scheme = runtime.NewScheme()
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(toolkitv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(sandboxv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(sandboxextv1alpha1.AddToScheme(scheme))
 }
 
 // Options configures the operator.
