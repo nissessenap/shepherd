@@ -9,6 +9,7 @@ tags: [research, architecture, agent-sandbox, operator, api, runner, migration, 
 status: complete
 last_updated: 2026-02-01
 last_updated_by: claude
+last_updated_note: "Added runner auth model, moved fleet to roadmap, renamed contextUrl to sourceUrl"
 ---
 
 # Shepherd Architecture v2: Agent-Sandbox
@@ -25,8 +26,7 @@ This document replaces the Jobs-based architecture from the [2026-01-27 design](
 
 1. **Replace K8s Jobs with agent-sandbox SandboxClaims** for workload execution
 2. **Retire the init container** — token generation and task data serving move to the API server
-3. **Runner-pull model** — the runner pulls its configuration from the API instead of receiving it via environment variables and volumes
-4. **Fleet migrations** — support running the same task across multiple repositories
+3. **Runner-pull model** — the runner pulls its configuration from the API instead of receiving it via environment variables and volumes, authenticated via per-task bearer tokens
 
 ### What Stays the Same
 
@@ -51,15 +51,19 @@ Based on `thoughts/research/2026-01-31-poc-sandbox-learnings.md`:
 
 ## Goals
 
-### MVP
+### MVP (Part 1)
 
 1. **Issue-driven development** — Trigger agent from GitHub issue/PR comment to work on a single repo
-2. **Fleet migrations** — Run the same transformation across many repos (Spotify pattern)
+
+### MVP (Part 2)
+
+2. **Fleet migrations** — Run the same transformation across many repos (Spotify pattern). Implemented via CLI + API endpoints + shared labels (no FleetTask CRD). See [Fleet Migrations](#fleet-migrations-mvp-part-2) section.
 
 ### Future
 
 3. **Scheduled SRE tasks** — Daily/weekly automated analysis and fixes
 4. **Interactive sessions** — Long-running dev environments with remote access (see `thoughts/research/2026-01-31-background-agents-session-management-learnings.md`)
+5. **FleetTask CRD** — Server-side fleet orchestration with concurrency limiting, aggregate status, and cascade deletion. Upgrade from the CLI-based approach when server-side coordination proves necessary.
 
 ### Future Backend Extensibility
 
@@ -157,13 +161,14 @@ Two separate GitHub Apps with distinct responsibilities:
          |
          v
 8. Operator detects SandboxClaim ready via Sandbox status watch
+   Generates per-task bearer token, stores hash in CRD annotation
    POSTs to http://{sandbox-fqdn}:8888/task
-   Body: { "taskID": "task-abc123", "apiURL": "http://shepherd-api:8080" }
+   Body: { "taskID": "task-abc123", "apiURL": "http://shepherd-api:8080", "token": "..." }
          |
          v
 9. Runner entrypoint receives POST, begins work:
-   GET {apiURL}/api/v1/tasks/{taskID}        --> description, context
-   GET {apiURL}/api/v1/tasks/{taskID}/token   --> GitHub installation token
+   GET {apiURL}/api/v1/tasks/{taskID}/data    --> description, context (with Bearer token)
+   GET {apiURL}/api/v1/tasks/{taskID}/token   --> GitHub installation token (with Bearer token)
    git clone with token
    write TASK.md to repo
    claude -p "Read TASK.md and implement what it describes"
@@ -186,32 +191,38 @@ Two separate GitHub Apps with distinct responsibilities:
 
 Step 12 ensures the adapter is notified even if the runner crashes without calling its completion hook.
 
-### Data Flow (Fleet Migration)
+### Data Flow (Fleet Migration — MVP Part 2)
 
 ```text
-1. User creates a FleetTask CRD:
-   - pattern: "github.com/org/*" or explicit repo list
-   - task description and context
-   - concurrency limit (e.g. 5 at a time)
+1. User runs CLI tool:
+   shepherd fleet --repos repo1,repo2,repo3 \
+     --description "Update Go deps" \
+     --context "Run go get -u ./..." \
+     --concurrency 5
+
+   The CLI may use an LLM to customize the prompt per-repo
+   (like Spotify's approach) before submitting.
          |
          v
-2. Operator expands FleetTask into individual AgentTask CRDs:
-   - One AgentTask per matching repo
-   - Labels: shepherd.io/fleet-task={fleet-name}
-   - Owner reference: FleetTask
+2. CLI creates N AgentTasks via POST /api/v1/tasks:
+   - One per repo
+   - All share a label: shepherd.io/fleet={fleet-name}
+   - CLI manages concurrency (submit 5, wait for one to finish, submit next)
          |
          v
 3. Each AgentTask follows the single-task flow (steps 6-12 above)
-   Operator respects concurrency limit
          |
          v
-4. Operator tracks aggregate status on FleetTask:
-   - Total tasks, completed, failed, in-progress
-   - Terminal when all child tasks are terminal
+4. CLI polls GET /api/v1/tasks?fleet={fleet-name} for aggregate status
+   Displays progress: "7/10 completed, 1 failed, 2 in-progress"
          |
          v
-5. API reports fleet-level status to adapter callback
+5. Fleet complete when all tasks reach terminal state
 ```
+
+No FleetTask CRD is needed for MVP. The CLI is the orchestration layer. Users don't need K8s access — they use the CLI which talks to the API. Aggregate visibility comes from the shared fleet label + API query.
+
+Cancellation: `kubectl delete agenttask -l shepherd.io/fleet={fleet-name}` or a future `DELETE /api/v1/fleet/{fleet-name}` endpoint.
 
 ### Owner Reference Chain
 
@@ -223,11 +234,6 @@ AgentTask --> owns --> SandboxClaim
 ```
 
 Deleting an AgentTask cascades: SandboxClaim deletion triggers agent-sandbox cleanup of Sandbox, Pod, and Service.
-
-For fleet migrations:
-```text
-FleetTask --> owns --> AgentTask[] --> owns --> SandboxClaim[]
-```
 
 ## CRD Specification
 
@@ -250,7 +256,7 @@ spec:
     description: "Fix the null pointer exception in login.go"
     context: "<gzip+base64 encoded>"
     contextEncoding: "gzip"
-    contextUrl: "https://github.com/org/repo/issues/123"
+    sourceUrl: "https://github.com/org/repo/issues/123"
   callback:
     url: "https://github-adapter.example.com/callback"
   runner:
@@ -326,43 +332,7 @@ type AgentTaskStatus struct {
 - `RunnerSpec.Image` removed — the SandboxTemplate controls the image
 - `RunnerSpec.SandboxTemplateName` added — references the SandboxTemplate to use
 - `AgentTaskStatus.JobName` replaced by `AgentTaskStatus.SandboxClaimName`
-
-### FleetTask (new CRD)
-
-```yaml
-apiVersion: toolkit.shepherd.io/v1alpha1
-kind: FleetTask
-metadata:
-  name: fleet-update-deps
-  namespace: shepherd
-spec:
-  repos:
-    # Option A: explicit list
-    urls:
-      - "https://github.com/org/repo1.git"
-      - "https://github.com/org/repo2.git"
-    # Option B: pattern (future — requires GitHub API listing)
-    # pattern: "github.com/org/*"
-  task:
-    description: "Update all Go dependencies to latest"
-    context: "Run go get -u ./... && go mod tidy"
-  callback:
-    url: "https://github-adapter.example.com/fleet-callback"
-  runner:
-    sandboxTemplateName: "shepherd-go-runner"
-    timeout: 30m
-  concurrency: 5  # max parallel tasks
-status:
-  total: 10
-  completed: 7
-  failed: 1
-  inProgress: 2
-  conditions:
-    - type: Succeeded
-      status: "Unknown"
-      reason: Running
-      message: "7/10 tasks completed, 1 failed"
-```
+- `TaskSpec.ContextURL` renamed to `TaskSpec.SourceURL` — clarifies this is the origin of the task (e.g., GitHub issue URL), not a URL to download context from
 
 ### Condition State Machine
 
@@ -404,11 +374,10 @@ Secondary condition `Notified` (managed by API server):
 
 | Method | Path | Purpose |
 | ------ | ---- | ------- |
-| GET | `/api/v1/tasks/{taskID}/data` | Serve task description + decompressed context to runner |
-| GET | `/api/v1/tasks/{taskID}/token` | Generate GitHub installation token for runner |
-| POST | `/api/v1/fleet-tasks` | Create FleetTask CRD (future) |
-| GET | `/api/v1/fleet-tasks` | List fleet tasks (future) |
-| GET | `/api/v1/fleet-tasks/{fleetTaskID}` | Get fleet task details (future) |
+| GET | `/api/v1/tasks/{taskID}/data` | Serve task description + decompressed context to runner (authenticated via per-task bearer token) |
+| GET | `/api/v1/tasks/{taskID}/token` | Generate GitHub installation token for runner (authenticated via per-task bearer token) |
+
+The existing `GET /api/v1/tasks` endpoint gains a `fleet` query parameter for fleet label filtering: `GET /api/v1/tasks?fleet={fleet-name}`.
 
 #### GET /api/v1/tasks/{taskID}/data
 
@@ -418,7 +387,7 @@ Returns task description and decompressed context. The API transparently decompr
 {
   "description": "Fix the null pointer exception in login.go",
   "context": "<plaintext context, decompressed>",
-  "contextUrl": "https://github.com/org/repo/issues/123",
+  "sourceUrl": "https://github.com/org/repo/issues/123",
   "repo": {
     "url": "https://github.com/org/repo.git",
     "ref": "main"
@@ -484,14 +453,16 @@ func (r *AgentTaskReconciler) assignTask(ctx context.Context, task *v1alpha1.Age
     body := TaskAssignment{
         TaskID: task.Name,
         APIURL: r.Config.APIURL,
+        Token:  generateRunnerToken(), // random 32-byte hex string (future: MVP Part 1 omits this)
     }
     // POST with timeout and retry (up to 5 attempts, 2s between)
+    // Store SHA-256 hash of token in annotation: shepherd.io/runner-token
     // Mark task as Running on success
     // Track assignment in annotation to prevent duplicate POSTs
 }
 ```
 
-The operator tracks assignment state via an annotation (`shepherd.io/task-assigned: "true"`) to ensure idempotency across reconcile loops.
+The operator tracks assignment state via an annotation (`shepherd.io/task-assigned: "true"`) to ensure idempotency across reconcile loops. The runner token hash is stored in `shepherd.io/runner-token` for API validation.
 
 ### Failure Detection
 
@@ -529,21 +500,28 @@ Since agent-sandbox v0.1.0 does not support `Lifecycle.ShutdownTime`, the operat
 
 When agent-sandbox adds Lifecycle support, this can be simplified by setting `shutdownTime` on the SandboxClaim and reacting to the sandbox expiry condition.
 
-### Reconcile Loop (FleetTask)
+## Fleet Migrations (MVP Part 2)
 
-```text
-1. Fetch FleetTask
-2. If terminal --> return
-3. Expand repo list into AgentTask CRDs (if not already created):
-   - One AgentTask per repo
-   - OwnerReference: FleetTask --> AgentTask
-   - Labels: shepherd.io/fleet-task={fleet-name}
-4. Count child AgentTask states (completed, failed, in-progress)
-5. If in-progress < concurrency limit AND pending tasks exist:
-   - Create next AgentTask (it will be picked up by the single-task reconciler)
-6. Update FleetTask status with aggregate counts
-7. If all tasks terminal --> mark FleetTask terminal
-```
+Fleet migrations are orchestrated by a CLI tool, not a CRD. The CLI creates individual AgentTasks with a shared label and manages concurrency client-side.
+
+### CLI Responsibilities
+
+- Accept a list of repos (explicit URLs or from a file)
+- Optionally use an LLM to customize the prompt per-repo (Spotify pattern)
+- Create AgentTasks via `POST /api/v1/tasks` with a shared `shepherd.io/fleet` label
+- Manage concurrency (submit N, wait for one to finish, submit next)
+- Poll `GET /api/v1/tasks?fleet={fleet-name}` for aggregate status
+- Display progress and final results
+
+### API Support
+
+- `GET /api/v1/tasks?fleet={fleet-name}` — filter tasks by fleet label
+- No new CRD or controller needed
+- Tasks are independent AgentTasks — the operator handles each one normally
+
+### Future: FleetTask CRD
+
+If the CLI-based approach proves insufficient (e.g., CLI dies mid-fleet, need server-side concurrency, need atomic cancellation), a FleetTask CRD can be introduced. It would own AgentTask resources via owner references and manage concurrency + aggregate status in a dedicated controller. This is documented as a future goal, not part of MVP.
 
 ## Runner Entrypoint
 
@@ -561,9 +539,10 @@ Phase 1: HTTP server on :8888
   - POST /task (receives assignment from operator)
   - Blocks until task assignment arrives
 
-Phase 2: Pull task data from API
+Phase 2: Pull task data from API (authenticated via bearer token from assignment)
   - GET {apiURL}/api/v1/tasks/{taskID}/data --> description, context, repo info
   - GET {apiURL}/api/v1/tasks/{taskID}/token --> GitHub installation token
+  - All requests include Authorization: Bearer {token} header
 
 Phase 3: Setup workspace
   - Configure git credentials with token
@@ -691,11 +670,10 @@ shepherd/
 │   ├── shepherd/              # Kong CLI entrypoint (api, operator, github)
 │   └── shepherd-runner/       # Runner entrypoint binary
 ├── api/
-│   └── v1alpha1/              # Kubebuilder-managed CRD types (AgentTask, FleetTask)
+│   └── v1alpha1/              # Kubebuilder-managed CRD types (AgentTask)
 ├── internal/
 │   └── controller/            # Kubebuilder-managed controllers
 │       ├── agenttask_controller.go   # AgentTask reconciler (sandbox-based)
-│       ├── fleettask_controller.go   # FleetTask reconciler
 │       ├── sandbox_builder.go        # SandboxClaim construction
 │       └── failure.go                # Pod-based failure classification
 ├── config/                    # Kubebuilder-managed manifests (Kustomize)
@@ -733,19 +711,51 @@ shepherd/
 
 ## Security Considerations
 
-- **Runner App private key**: Mounted once into API server pod, not into runner pods. Tokens generated on-demand per runner request.
+### Runner Authentication (Per-Task Bearer Token)
+
+The runner-pull model requires the runner to authenticate when calling API endpoints (`/tasks/{id}/data`, `/tasks/{id}/token`, `/tasks/{id}/status`). Without authentication, any pod in the cluster could call these endpoints with a guessed task ID.
+
+**Approach:** The operator generates a random bearer token per task, includes it in the task assignment POST to the runner, and stores it as an annotation on the AgentTask CRD. The runner includes this token as an `Authorization: Bearer {token}` header on all API calls. The API validates the token against the CRD annotation.
+
+```text
+Operator                          Runner                          API
+   |                                |                              |
+   |-- POST :8888/task ------------>|                              |
+   |   { taskID, apiURL, token }    |                              |
+   |                                |-- GET /tasks/{id}/data ----->|
+   |                                |   Authorization: Bearer {t}  |
+   |                                |<---- 200 task data ----------|
+   |                                |                              |
+   |                                |-- GET /tasks/{id}/token ---->|
+   |                                |   Authorization: Bearer {t}  |
+   |                                |<---- 200 GitHub token -------|
+```
+
+**Token lifecycle:**
+- Generated by operator when assigning task (random 32-byte hex string)
+- Stored in annotation `shepherd.io/runner-token` on the AgentTask CRD (SHA-256 hash)
+- Sent to runner in plaintext in the task assignment POST (cluster-internal networking)
+- Validated by API on every runner request (hash comparison)
+- Implicitly expires when the task reaches terminal state (API rejects requests for terminal tasks)
+
+**Trade-off:** The token hash is stored on the CRD, visible to anyone with CRD read access in the namespace. This is acceptable for MVP since CRD read access implies broad namespace access. For production hardening, the token could move to a K8s Secret, but this adds complexity without meaningful security gain in the single-namespace deployment model.
+
+**MVP scope:** This authentication mechanism is documented but deferred from MVP Part 1. For initial development, the API endpoints are unauthenticated (cluster-internal networking + NetworkPolicy provides the security boundary). The per-task token should be implemented before production use.
+
+### General Security
+
+- **Runner App private key**: Mounted once into API server pod, not into runner pods. Tokens generated on-demand per runner request. This expands the API server's privilege surface (it holds the GitHub App private key), but since the API already has `create` on AgentTask CRDs and `update` on status subresources, it's already a privileged component. The private key is mounted as a volume, not accessed via K8s RBAC. Single-namespace deployment keeps the blast radius contained.
 - **Installation tokens**: Short-lived (1 hour), scoped to specific repos via GitHub App installation.
 - **Pre-approved runner images**: Controlled by SandboxTemplate, not by API callers.
 - **Internal communication**: Runner to API uses cluster-internal networking.
 - **Signed callbacks**: API to adapter uses HMAC-SHA256 signature verification.
 - **Webhook verification**: GitHub webhooks verified via `X-Hub-Signature-256` with constant-time comparison.
 - **Pod security**: Non-root containers, seccomp RuntimeDefault profile.
-- **Network isolation**: SandboxTemplate can specify NetworkPolicy (default-deny with explicit egress for DNS, Shepherd API, GitHub API, Anthropic API).
-- **Token endpoint access**: `GET /tasks/{id}/token` is cluster-internal only. Consider adding per-task bearer tokens for defense-in-depth.
+- **Network isolation**: SandboxTemplate can specify NetworkPolicy (default-deny with explicit egress for DNS, Shepherd API, GitHub API, Anthropic API). This limits the blast radius even without per-task auth — runner pods can only reach the Shepherd API on port 8080.
 
 ## Namespace Strategy
 
-- AgentTask and FleetTask are namespace-scoped (supports future multi-tenancy)
+- AgentTask is namespace-scoped (supports future multi-tenancy)
 - Default namespace: `shepherd`
 - SandboxTemplate and SandboxWarmPool deployed in same namespace
 - Operator uses ClusterRole/ClusterRoleBinding to watch all namespaces
