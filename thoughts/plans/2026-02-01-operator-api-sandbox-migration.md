@@ -24,11 +24,14 @@ Migrate the operator and API server from the Jobs-based architecture to the agen
 - Sandbox `status.serviceFQDN` provides the FQDN for HTTP calls to the runner
 - Sandbox `status.conditions` with type `Ready` tracks readiness
 - SandboxClaim extension type has `SandboxStatus.Name` (note: JSON tag is `Name` with capital N)
+- **SandboxClaim controller propagates the Sandbox Ready condition** to `SandboxClaim.Status.Conditions` (`extensions/controllers/sandboxclaim_controller.go:313-318`). This means the operator can use `Owns(&SandboxClaim{})` and read the claim's own Ready condition — no need to watch Sandbox resources directly or build a custom two-level owner mapper.
+- **SandboxClaim does NOT expose `ServiceFQDN`** — only `Status.SandboxStatus.Name` (the Sandbox name). To get the FQDN for task assignment, the operator must GET the Sandbox by name at reconcile time. This is a one-time lookup during task assignment, not a watch concern.
 
 ## Desired End State
 
 - Operator creates SandboxClaims instead of Jobs
-- Operator watches Sandbox Ready condition for status tracking
+- Operator watches SandboxClaim Ready condition for status tracking (SandboxClaim mirrors Sandbox's Ready condition — no direct Sandbox watching needed)
+- Operator GETs Sandbox by name (from `SandboxClaim.Status.SandboxStatus.Name`) to read `ServiceFQDN` for task assignment
 - Operator POSTs task assignment to runner when sandbox is ready
 - Operator manages timeout via its own timer (not Job `activeDeadlineSeconds`)
 - Operator creates per-task bearer token Secrets (hash stored, plaintext sent to runner)
@@ -368,73 +371,45 @@ type AgentTaskReconciler struct {
 **Reconcile loop** (new logic):
 ```
 1. Fetch AgentTask
-2. If terminal → return
+2. If terminal → return (+ cleanup SandboxClaim if still exists)
 3. If no Succeeded condition → set Pending, requeue
 4. Look for existing SandboxClaim (name = task.Name)
 5. If no SandboxClaim → create via buildSandboxClaim()
    - Record SandboxClaimName in status
    - Stay in Pending state
    - Requeue
-6. Get Sandbox resource (same name as claim)
-   - Use the SandboxClaim status to get sandbox name
-   - If not found → still creating, requeue after 5s
-   - If found, check Ready condition:
+6. Check SandboxClaim Ready condition (the SandboxClaim controller
+   mirrors the underlying Sandbox's Ready condition, so we don't
+   need to watch or GET the Sandbox for status tracking):
      a. Ready=True → set Running (task assignment deferred to Phase 4)
      b. Ready=False + was previously Running → mark Failed (Phase 5)
-     c. Ready=False (never was Running) → still starting, requeue after 5s
+     c. Ready=False/Unknown (never was Running) → still starting, requeue after 5s
 ```
 
-For this phase, step 6a just transitions to Running without task assignment. Phase 4 adds the assignment step.
+For this phase, step 6a just transitions to Running without task assignment. Phase 4 adds the assignment step (which needs a Sandbox GET to read `ServiceFQDN`).
 
 **Remove**: `reconcileJobStatus()`, `classifyJobFailure()`, `failureClass` type, all Job imports.
 
-**SetupWithManager** — change to watch SandboxClaims and Sandboxes:
+**SetupWithManager** — watch AgentTasks and owned SandboxClaims:
 ```go
 func (r *AgentTaskReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&toolkitv1alpha1.AgentTask{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Owns(&sandboxextv1alpha1.SandboxClaim{}).
-		Watches(&sandboxv1alpha1.Sandbox{}, handler.EnqueueRequestForOwner(
-			mgr.GetScheme(), mgr.GetRESTMapper(),
-			&sandboxextv1alpha1.SandboxClaim{},
-		)).
 		Complete(r)
 }
 ```
 
-Note: Sandbox is owned by SandboxClaim (via agent-sandbox controller), and SandboxClaim is owned by AgentTask. We need the `Watches` with `EnqueueRequestForOwner` on SandboxClaim to get the AgentTask from Sandbox changes. This may require `Watches` on Sandbox that maps back through SandboxClaim to AgentTask via a custom `handler.MapFunc`. The exact wiring depends on how controller-runtime resolves the two-level owner chain. If `EnqueueRequestForOwner` only looks one level up, we need a custom mapper:
+This is simpler than the original plan assumed. The SandboxClaim controller
+propagates the Sandbox Ready condition to `SandboxClaim.Status.Conditions`
+(`agent-sandbox extensions/controllers/sandboxclaim_controller.go:313-318`).
+When the SandboxClaim status changes, controller-runtime triggers reconciliation
+of the owning AgentTask via the `Owns()` binding. No direct Sandbox watching
+or custom two-level owner mapper is needed.
 
-```go
-Watches(&sandboxv1alpha1.Sandbox{}, handler.EnqueueRequestsFromMapFunc(
-	func(ctx context.Context, obj client.Object) []reconcile.Request {
-		sandbox := obj.(*sandboxv1alpha1.Sandbox)
-		// Find the SandboxClaim that owns this Sandbox
-		for _, ref := range sandbox.GetOwnerReferences() {
-			if ref.Kind == "SandboxClaim" {
-				// Find the AgentTask that owns the SandboxClaim
-				var claim sandboxextv1alpha1.SandboxClaim
-				if err := r.Get(ctx, client.ObjectKey{
-					Namespace: sandbox.Namespace,
-					Name:      ref.Name,
-				}, &claim); err != nil {
-					return nil
-				}
-				for _, claimRef := range claim.GetOwnerReferences() {
-					if claimRef.Kind == "AgentTask" {
-						return []reconcile.Request{{
-							NamespacedName: types.NamespacedName{
-								Namespace: sandbox.Namespace,
-								Name:      claimRef.Name,
-							},
-						}}
-					}
-				}
-			}
-		}
-		return nil
-	},
-))
-```
+The operator still needs `get` permission on Sandbox resources (used in Phase 4
+to read `ServiceFQDN` for the task assignment POST), but does not need
+`list`/`watch`.
 
 #### 2. Update RBAC markers (partial — completed in Phase 6)
 
@@ -449,12 +424,16 @@ Rewrite integration tests for the new flow:
 - "should create SandboxClaim on second reconcile"
   - Verify claim exists with correct template ref and owner ref
   - Verify `status.sandboxClaimName` set
-- "should set Running when Sandbox is Ready"
-  - Create a Sandbox with Ready=True condition (simulating agent-sandbox controller)
-  - Reconcile and verify condition transitions to Running
-- "should requeue when Sandbox not yet ready"
+- "should set Running when SandboxClaim Ready=True"
+  - Manually set the SandboxClaim's Ready condition to True (simulating
+    what the agent-sandbox SandboxClaim controller would do)
+  - Reconcile and verify AgentTask condition transitions to Running
+- "should requeue when SandboxClaim not yet ready"
 
-Note: envtest won't have the agent-sandbox controller running. Tests must manually create Sandbox resources with appropriate status to simulate the agent-sandbox controller's behavior.
+Note: envtest won't have the agent-sandbox controllers running. Tests
+simulate the SandboxClaim controller by manually setting conditions
+on the SandboxClaim's status. This is sufficient since we only read
+the SandboxClaim's Ready condition (not the Sandbox directly).
 
 **File**: `internal/controller/suite_test.go`
 
@@ -549,14 +528,21 @@ func (r *AgentTaskReconciler) assignTask(ctx context.Context, task *toolkitv1alp
 Modify the Ready=True branch in the reconcile loop:
 
 ```
-6a. Ready=True:
-    - If not assigned (no annotation) → call assignTask()
+6a. SandboxClaim Ready=True:
+    - If not assigned (no annotation):
+      1. GET Sandbox by name (from claim.Status.SandboxStatus.Name) to read ServiceFQDN
+      2. Call assignTask() with the ServiceFQDN
       - On success → set Running condition
       - On failure → requeue (transient) or mark Failed (after retries exhausted)
     - If already assigned → already Running, nothing to do
 ```
 
-The Running condition is now set AFTER successful task assignment, not just on Sandbox Ready.
+The Running condition is now set AFTER successful task assignment, not just on SandboxClaim Ready.
+
+The Sandbox GET is the only place the operator reads Sandbox resources directly.
+This is needed because `SandboxClaim.Status` only exposes the Sandbox name,
+not the ServiceFQDN. The operator needs `get` (but not `list`/`watch`) on
+Sandboxes for this lookup.
 
 #### 3. Tests
 **File**: `internal/controller/agenttask_controller_test.go`
@@ -591,15 +577,18 @@ Handle unhappy paths: Sandbox termination without success callback → Failed. T
 #### 1. Failure detection
 **File**: `internal/controller/agenttask_controller.go`
 
-Replace `classifyJobFailure()` with sandbox-based detection:
+Replace `classifyJobFailure()` with SandboxClaim condition-based detection.
+The SandboxClaim mirrors the Sandbox Ready condition, including the reason
+(e.g., `SandboxExpired`, `ClaimExpired`, `SandboxNotReady`):
 
 ```go
-func (r *AgentTaskReconciler) classifySandboxTermination(sandbox *sandboxv1alpha1.Sandbox) (string, string) {
-	readyCond := meta.FindStatusCondition(sandbox.Status.Conditions, string(sandboxv1alpha1.SandboxConditionReady))
+func classifyClaimTermination(claim *sandboxextv1alpha1.SandboxClaim) (string, string) {
+	readyCond := meta.FindStatusCondition(claim.Status.Conditions, string(sandboxv1alpha1.SandboxConditionReady))
 	if readyCond == nil {
-		return toolkitv1alpha1.ReasonFailed, "Sandbox status unavailable"
+		return toolkitv1alpha1.ReasonFailed, "SandboxClaim status unavailable"
 	}
-	if readyCond.Reason == sandboxv1alpha1.SandboxReasonExpired {
+	if readyCond.Reason == sandboxv1alpha1.SandboxReasonExpired ||
+		readyCond.Reason == sandboxextv1alpha1.ClaimExpiredReason {
 		return toolkitv1alpha1.ReasonTimedOut, "Sandbox expired"
 	}
 	return toolkitv1alpha1.ReasonFailed, fmt.Sprintf("Sandbox terminated: %s", readyCond.Message)
@@ -608,10 +597,10 @@ func (r *AgentTaskReconciler) classifySandboxTermination(sandbox *sandboxv1alpha
 
 Update reconcile loop step 6b:
 ```
-6b. Ready=False + task was previously Running (assignment annotation set):
+6b. SandboxClaim Ready=False + task was previously Running (assignment annotation set):
     - Check if task already has Succeeded=True (runner reported success via API)
       - If yes: task already terminal, just delete SandboxClaim
-    - If not: classify termination, mark Failed
+    - If not: classify termination from SandboxClaim conditions, mark Failed
     - Delete SandboxClaim (cascade cleanup)
 ```
 
@@ -655,17 +644,19 @@ This handles the case where the API updated the CRD to terminal (via runner call
 **File**: `internal/controller/agenttask_controller_test.go`
 
 Add tests:
-- "should mark Failed when Sandbox Ready=False after Running"
+- "should mark Failed when SandboxClaim Ready=False after Running"
 - "should mark TimedOut when timeout exceeded"
 - "should delete SandboxClaim on terminal state"
 - "should delete SandboxClaim when task already succeeded via API callback"
-- "should mark TimedOut when SandboxExpired reason"
+- "should mark TimedOut when SandboxExpired reason on SandboxClaim"
+- "should mark TimedOut when ClaimExpired reason on SandboxClaim"
 
 **File**: `internal/controller/failure_test.go` (new, replaces deleted one)
 
-Unit tests for `classifySandboxTermination()`:
+Unit tests for `classifyClaimTermination()`:
 - Ready condition nil → Failed
 - SandboxExpired reason → TimedOut
+- ClaimExpired reason → TimedOut
 - Other reason → Failed with message
 
 ### Success Criteria:
@@ -693,7 +684,7 @@ Replace all RBAC markers:
 // +kubebuilder:rbac:groups=toolkit.shepherd.io,resources=agenttasks/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=toolkit.shepherd.io,resources=agenttasks/finalizers,verbs=update
 // +kubebuilder:rbac:groups=extensions.agents.x-k8s.io,resources=sandboxclaims,verbs=get;list;watch;create;delete
-// +kubebuilder:rbac:groups=agents.x-k8s.io,resources=sandboxes,verbs=get;list;watch
+// +kubebuilder:rbac:groups=agents.x-k8s.io,resources=sandboxes,verbs=get
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=create
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;list;watch;create;update;patch;delete
@@ -702,8 +693,8 @@ Replace all RBAC markers:
 Key changes from current:
 - Remove `batch` group (no more Jobs)
 - Remove `create`/`delete` from AgentTask verbs (operator doesn't create tasks)
-- Add `extensions.agents.x-k8s.io/sandboxclaims` (create, delete, get, list, watch)
-- Add `agents.x-k8s.io/sandboxes` (get, list, watch)
+- Add `extensions.agents.x-k8s.io/sandboxclaims` (create, delete, get, list, watch — `Owns()` requires list/watch)
+- Add `agents.x-k8s.io/sandboxes` (`get` only — used once during task assignment to read ServiceFQDN from Sandbox; no list/watch needed since the operator watches SandboxClaim conditions, not Sandbox directly)
 - Add `secrets` (create only — no get/list/watch; operator just creates, doesn't read)
 - Add `coordination.k8s.io/leases` (leader election)
 
