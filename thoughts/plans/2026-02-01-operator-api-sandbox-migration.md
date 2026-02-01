@@ -15,7 +15,6 @@ Migrate the operator and API server from the Jobs-based architecture to the agen
 **Agent-sandbox**: Module `sigs.k8s.io/agent-sandbox`. SandboxClaim in `extensions.agents.x-k8s.io/v1alpha1`, Sandbox in `agents.x-k8s.io/v1alpha1`. SandboxClaim references a SandboxTemplate, gets a Sandbox with `Status.ServiceFQDN` and `Ready` condition. Lifecycle/ShutdownTime exists on both CRD types. Uses controller-runtime v0.22.2 + K8s v0.34.1 (Shepherd uses v0.23.0 + v0.35.0).
 
 ### Key Discoveries:
-- `golang.org/x/time v0.9.0` already in go.sum as indirect dep (needed for rate limiting)
 - agent-sandbox API types import `sigs.k8s.io/controller-runtime/pkg/scheme` for registration — importing them pulls controller-runtime, but Go module resolution picks v0.23.0 (Shepherd's version wins)
 - `decodeContext()` in `cmd/shepherd-init/taskfiles.go:83-114` has decompression bomb protection (10MiB limit) — reuse in API
 - `createJWT()` and `exchangeToken()` in `cmd/shepherd-init/github.go` handle PKCS1/PKCS8 key formats and repo-scoped tokens — move to `pkg/api/`
@@ -32,12 +31,10 @@ Migrate the operator and API server from the Jobs-based architecture to the agen
 - Operator creates SandboxClaims instead of Jobs
 - Operator watches SandboxClaim Ready condition for status tracking (SandboxClaim mirrors Sandbox's Ready condition — no direct Sandbox watching needed)
 - Operator GETs Sandbox by name (from `SandboxClaim.Status.SandboxStatus.Name`) to read `ServiceFQDN` for task assignment
-- Operator POSTs task assignment to runner when sandbox is ready
 - Operator manages timeout via its own timer (not Job `activeDeadlineSeconds`)
-- Operator creates per-task bearer token Secrets (hash stored, plaintext sent to runner)
+- Operator POSTs task assignment to runner (taskID + apiURL, no auth token yet — see [#22](https://github.com/nissessenap/shepherd/issues/22))
 - API serves task data and GitHub tokens to runners via new endpoints
 - API validates compressed context size (413 if exceeds 1.4MB)
-- API has rate limiting on all endpoints
 - API supports `fleet` query parameter on task listing
 - Runner stub exists at `cmd/shepherd-runner/` with HTTP server on :8888
 - Init container code (`cmd/shepherd-init/`) retired
@@ -57,7 +54,8 @@ Migrate the operator and API server from the Jobs-based architecture to the agen
 - Full runner implementation (stub only)
 - Fleet CLI tool
 - e2e tests (deferred to follow-up plan)
-- Per-task bearer token validation in API (TODO marker, rely on NetworkPolicy for now)
+- Per-task bearer token generation and validation (deferred to [#22](https://github.com/nissessenap/shepherd/issues/22), rely on NetworkPolicy for now)
+- Rate limiting on API endpoints (add TODO markers, implement as separate task)
 - GitHub App creation or configuration
 - SandboxTemplate/SandboxWarmPool manifests (deployment concern, not code)
 
@@ -111,7 +109,7 @@ type TaskSpec struct {
 	ContextEncoding string `json:"contextEncoding,omitempty"`
 
 	// SourceURL is the origin of the task (e.g., GitHub issue URL). Informational only.
-	SourceURL string `json:"sourceUrl,omitempty"`
+	SourceURL string `json:"sourceURL,omitempty"`
 
 	// SourceType identifies the trigger type: "issue", "pr", or "fleet".
 	SourceType string `json:"sourceType,omitempty"`
@@ -122,6 +120,8 @@ type TaskSpec struct {
 ```
 
 Note: `Context` changes from `+kubebuilder:validation:Required` + `MinLength=1` to `+optional`. The arch doc shows context as optional in the CRD (the API can accept tasks without context).
+
+Note: `SourceType`, `SourceID`, and `SourceURL` are all immutable — covered by the existing `+kubebuilder:validation:XValidation:rule="self == oldSelf"` on `TaskSpec`. This is intentional: source metadata is set at creation and never changed.
 
 **AgentTaskStatus changes** — replace `JobName` with `SandboxClaimName`:
 ```go
@@ -176,7 +176,7 @@ Update `TaskRequest` — rename `ContextURL` to `SourceURL`, add source fields:
 type TaskRequest struct {
 	Description string `json:"description"`
 	Context     string `json:"context,omitempty"`
-	SourceURL   string `json:"sourceUrl,omitempty"`
+	SourceURL   string `json:"sourceURL,omitempty"`
 	SourceType  string `json:"sourceType,omitempty"`
 	SourceID    string `json:"sourceID,omitempty"`
 }
@@ -234,16 +234,16 @@ Import agent-sandbox API types and create `sandbox_builder.go` that constructs S
 #### 1. Add agent-sandbox dependency
 **File**: `go.mod`
 
-Add dependency with replace directive pointing to local checkout:
+Add the upstream agent-sandbox module:
 ```go
 require (
-	sigs.k8s.io/agent-sandbox v0.0.0-00010101000000-000000000000
+	sigs.k8s.io/agent-sandbox v0.1.0  // or latest released version
 )
-
-replace sigs.k8s.io/agent-sandbox => /home/edvin/go/src/github.com/NissesSenap/agent-sandbox
 ```
 
-Run `go mod tidy` to resolve transitive dependencies. The agent-sandbox API types import `sigs.k8s.io/controller-runtime/pkg/scheme` — Go module resolution will use Shepherd's v0.23.0.
+Run `go mod tidy` to resolve transitive dependencies. The agent-sandbox API types import `sigs.k8s.io/controller-runtime/pkg/scheme` — Go module resolution will use Shepherd's v0.23.0 (higher version wins).
+
+Note: Do NOT use a `replace` directive. Use the published upstream package so CI and other developers can build without a local checkout.
 
 #### 2. Register agent-sandbox schemes
 **File**: `pkg/operator/operator.go`
@@ -356,17 +356,20 @@ Rewrite the reconcile loop core. Create SandboxClaims instead of Jobs. Watch San
 
 Replace the entire reconciler. Key structural changes:
 
-**Reconciler struct** — remove Job-related config, add API URL:
+**Reconciler struct** — remove Job-related config, add API URL and HTTP client:
 ```go
 type AgentTaskReconciler struct {
 	client.Client
-	Scheme   *runtime.Scheme
-	Recorder record.EventRecorder
-	APIURL   string // Internal API URL for runner task assignment
+	Scheme     *runtime.Scheme
+	Recorder   events.EventRecorder // k8s.io/client-go/tools/events (NOT record.EventRecorder)
+	APIURL     string               // Internal API URL for runner task assignment
+	HTTPClient *http.Client         // Injectable for testing; defaults to http.DefaultClient
 }
 ```
 
 `AllowedRunnerImage`, `RunnerSecretName`, `InitImage`, `GithubAppID`, `GithubInstallationID`, `GithubAPIURL` all removed. The reconciler no longer builds pods directly or handles GitHub config.
+
+`HTTPClient` is injected so tests can use `httptest.NewServer` to mock the runner endpoint. In production, set to `http.DefaultClient` (or a client with reasonable timeouts).
 
 **Reconcile loop** (new logic):
 ```
@@ -383,7 +386,11 @@ type AgentTaskReconciler struct {
    need to watch or GET the Sandbox for status tracking):
      a. Ready=True → set Running (task assignment deferred to Phase 4)
      b. Ready=False + was previously Running → mark Failed (Phase 5)
-     c. Ready=False/Unknown (never was Running) → still starting, requeue after 5s
+     c. Ready condition is nil, False, or Unknown AND task was never Running
+        → still starting, requeue after 5s
+   Note: When a SandboxClaim is first created, its conditions slice is
+   empty (`FindStatusCondition` returns nil). Treat nil the same as
+   "not ready yet" — the agent-sandbox controller hasn't reconciled yet.
 ```
 
 For this phase, step 6a just transitions to Running without task assignment. Phase 4 adds the assignment step (which needs a Sandbox GET to read `ServiceFQDN`).
@@ -437,10 +444,9 @@ the SandboxClaim's Ready condition (not the Sandbox directly).
 
 **File**: `internal/controller/suite_test.go`
 
-Register agent-sandbox CRDs in envtest. The CRD YAMLs are at:
-- `sigs.k8s.io/agent-sandbox/k8s/crds/` — or generate from types
+Register agent-sandbox CRDs in envtest. The CRD YAMLs are at `k8s/crds/` within the `sigs.k8s.io/agent-sandbox` module.
 
-Since we use a local replace directive, the CRD manifests should be available at the local path. Add CRD paths to envtest setup.
+Resolve the module path from the Go module cache at test time (e.g., via `go list -m -json sigs.k8s.io/agent-sandbox` or `runtime/debug.ReadBuildInfo`). Add the resolved CRD directory to envtest's `CRDDirectoryPaths`.
 
 ### Success Criteria:
 
@@ -452,10 +458,12 @@ Since we use a local replace directive, the CRD manifests should be available at
 
 ---
 
-## Phase 4: Reconcile — Task Assignment + Token Secret
+## Phase 4: Reconcile — Task Assignment
 
 ### Overview
-When the Sandbox becomes Ready, the operator generates a per-task bearer token, stores its hash in a K8s Secret, and POSTs the task assignment to the runner's HTTP endpoint.
+When the Sandbox becomes Ready, the operator POSTs the task assignment to the runner's HTTP endpoint. The Running condition serves as the idempotency marker — no annotations or extra status fields needed.
+
+Per-task bearer token authentication is deferred to [#22](https://github.com/nissessenap/shepherd/issues/22). Until then, runner endpoints are protected by NetworkPolicy only.
 
 ### Changes Required:
 
@@ -465,61 +473,47 @@ When the Sandbox becomes Ready, the operator generates a per-task bearer token, 
 Add `assignTask()` method:
 
 ```go
-const taskAssignedAnnotation = "shepherd.io/task-assigned"
+const (
+	taskAssignmentMaxRetries = 5
+	taskAssignmentRetryDelay = 2 * time.Second
+)
 
 type TaskAssignment struct {
 	TaskID string `json:"taskID"`
 	APIURL string `json:"apiURL"`
-	Token  string `json:"token"`
 }
 
-func (r *AgentTaskReconciler) assignTask(ctx context.Context, task *toolkitv1alpha1.AgentTask, sandboxFQDN string) error {
-	// Check idempotency annotation
-	if task.Annotations[taskAssignedAnnotation] == "true" {
-		return nil
-	}
+func (r *AgentTaskReconciler) assignTask(ctx context.Context, sandboxFQDN string, assignment TaskAssignment) error {
+	var lastErr error
+	for attempt := range taskAssignmentMaxRetries {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(taskAssignmentRetryDelay):
+			}
+		}
 
-	// Generate random bearer token
-	token := rand.String(64)
-	tokenHash := sha256.Sum256([]byte(token))
+		body, _ := json.Marshal(assignment)
+		url := fmt.Sprintf("http://%s:8888/task", sandboxFQDN)
+		resp, err := r.HTTPClient.Post(url, "application/json", bytes.NewReader(body))
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		resp.Body.Close()
 
-	// Create K8s Secret with hash
-	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      task.Name + "-token",
-			Namespace: task.Namespace,
-		},
-		Data: map[string][]byte{
-			"hash": []byte(hex.EncodeToString(tokenHash[:])),
-		},
+		switch resp.StatusCode {
+		case http.StatusOK:
+			return nil
+		case http.StatusConflict:
+			// Runner already has this task (idempotent retry after crash)
+			return nil
+		default:
+			lastErr = fmt.Errorf("runner returned %d", resp.StatusCode)
+		}
 	}
-	if err := controllerutil.SetControllerReference(task, secret, r.Scheme); err != nil {
-		return fmt.Errorf("setting secret owner: %w", err)
-	}
-	if err := r.Create(ctx, secret); err != nil && !errors.IsAlreadyExists(err) {
-		return fmt.Errorf("creating token secret: %w", err)
-	}
-
-	// POST task assignment to runner
-	assignment := TaskAssignment{
-		TaskID: task.Name,
-		APIURL: r.APIURL,
-		Token:  token,
-	}
-	// HTTP POST to http://{sandboxFQDN}:8888/task with retries
-	// Up to 5 attempts, 2s between retries
-	// ... (implementation details)
-
-	// Mark assigned via annotation
-	if task.Annotations == nil {
-		task.Annotations = make(map[string]string)
-	}
-	task.Annotations[taskAssignedAnnotation] = "true"
-	if err := r.Update(ctx, task); err != nil {
-		return fmt.Errorf("updating assignment annotation: %w", err)
-	}
-
-	return nil
+	return fmt.Errorf("task assignment failed after %d attempts: %w", taskAssignmentMaxRetries, lastErr)
 }
 ```
 
@@ -529,15 +523,17 @@ Modify the Ready=True branch in the reconcile loop:
 
 ```
 6a. SandboxClaim Ready=True:
-    - If not assigned (no annotation):
+    - If task is already Running → nothing to do (assignment already succeeded)
+    - If not Running:
       1. GET Sandbox by name (from claim.Status.SandboxStatus.Name) to read ServiceFQDN
       2. Call assignTask() with the ServiceFQDN
-      - On success → set Running condition
+      - On success → set Running condition (this IS the idempotency marker)
       - On failure → requeue (transient) or mark Failed (after retries exhausted)
-    - If already assigned → already Running, nothing to do
 ```
 
-The Running condition is now set AFTER successful task assignment, not just on SandboxClaim Ready.
+The Running condition is set AFTER successful task assignment. If the operator crashes
+after POST but before setting Running, the next reconcile retries the POST — the runner
+returns 409 (already assigned), which is treated as success, and Running is set.
 
 The Sandbox GET is the only place the operator reads Sandbox resources directly.
 This is needed because `SandboxClaim.Status` only exposes the Sandbox name,
@@ -548,21 +544,19 @@ Sandboxes for this lookup.
 **File**: `internal/controller/agenttask_controller_test.go`
 
 Add tests:
-- "should create token Secret when assigning task"
-  - Verify Secret exists with `{task-name}-token` name
-  - Verify Secret has owner reference to AgentTask
-  - Verify Secret contains `hash` key
-- "should set assignment annotation after successful assignment"
-- "should not re-assign if annotation already set" (idempotency)
+- "should POST assignment to runner when SandboxClaim Ready=True"
+  - Use `httptest.NewServer` to simulate runner endpoint
+  - Verify POST body contains taskID and apiURL
 - "should set Running after successful assignment"
-
-For the HTTP POST to runner: use `httptest.NewServer` in tests to simulate the runner endpoint. The reconciler needs an HTTP client that can be injected for testing.
+- "should not re-assign if already Running" (idempotency)
+- "should treat 409 from runner as success" (crash recovery)
+- "should requeue on transient assignment failure"
 
 ### Success Criteria:
 
 #### Automated Verification:
 - [ ] `make build` compiles
-- [ ] `make test` passes — assignment tests verify Secret creation, annotation, HTTP POST
+- [ ] `make test` passes — assignment tests verify HTTP POST and Running transition
 - [ ] `make lint` passes
 
 ---
@@ -597,12 +591,25 @@ func classifyClaimTermination(claim *sandboxextv1alpha1.SandboxClaim) (string, s
 
 Update reconcile loop step 6b:
 ```
-6b. SandboxClaim Ready=False + task was previously Running (assignment annotation set):
-    - Check if task already has Succeeded=True (runner reported success via API)
-      - If yes: task already terminal, just delete SandboxClaim
-    - If not: classify termination from SandboxClaim conditions, mark Failed
-    - Delete SandboxClaim (cascade cleanup)
+6b. SandboxClaim Ready=False + task has Running condition (assignment was successful):
+    - Refetch the AgentTask to get latest status (the API may have updated it
+      to terminal via the runner's success callback)
+    - If task is now terminal (Succeeded=True or Succeeded=False):
+      → just delete SandboxClaim, return
+    - If task is still Running:
+      → requeue after 30s grace period to give the API time to process
+        the runner's callback (race: sandbox can shut down before API
+        persists the runner's success report)
+    - On the SECOND reconcile after grace period, if task is STILL Running:
+      → classify termination from SandboxClaim conditions, mark Failed
+      → delete SandboxClaim
 ```
+
+**Why the grace period**: When a runner completes successfully, it POSTs to
+the API and then exits. The sandbox shuts down (Ready→False) potentially
+before the API persists `Succeeded=True`. Without the grace period, the
+operator would see Ready=False + Running and immediately mark Failed,
+destroying a successful result.
 
 #### 2. Timeout management
 **File**: `internal/controller/agenttask_controller.go`
@@ -644,7 +651,9 @@ This handles the case where the API updated the CRD to terminal (via runner call
 **File**: `internal/controller/agenttask_controller_test.go`
 
 Add tests:
-- "should mark Failed when SandboxClaim Ready=False after Running"
+- "should requeue with grace period when SandboxClaim Ready=False and task Running"
+- "should mark Failed after grace period if task still Running"
+- "should not mark Failed if API set Succeeded during grace period"
 - "should mark TimedOut when timeout exceeded"
 - "should delete SandboxClaim on terminal state"
 - "should delete SandboxClaim when task already succeeded via API callback"
@@ -685,7 +694,6 @@ Replace all RBAC markers:
 // +kubebuilder:rbac:groups=toolkit.shepherd.io,resources=agenttasks/finalizers,verbs=update
 // +kubebuilder:rbac:groups=extensions.agents.x-k8s.io,resources=sandboxclaims,verbs=get;list;watch;create;delete
 // +kubebuilder:rbac:groups=agents.x-k8s.io,resources=sandboxes,verbs=get
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=create
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;list;watch;create;update;patch;delete
 ```
@@ -695,8 +703,8 @@ Key changes from current:
 - Remove `create`/`delete` from AgentTask verbs (operator doesn't create tasks)
 - Add `extensions.agents.x-k8s.io/sandboxclaims` (create, delete, get, list, watch — `Owns()` requires list/watch)
 - Add `agents.x-k8s.io/sandboxes` (`get` only — used once during task assignment to read ServiceFQDN from Sandbox; no list/watch needed since the operator watches SandboxClaim conditions, not Sandbox directly)
-- Add `secrets` (create only — no get/list/watch; operator just creates, doesn't read)
 - Add `coordination.k8s.io/leases` (leader election)
+- Secrets RBAC deferred to [#22](https://github.com/nissessenap/shepherd/issues/22) (token authentication)
 
 #### 2. Operator Options
 **File**: `pkg/operator/operator.go`
@@ -714,10 +722,11 @@ type Options struct {
 Update `Run()` — wire new reconciler:
 ```go
 if err := (&controller.AgentTaskReconciler{
-	Client:   mgr.GetClient(),
-	Scheme:   mgr.GetScheme(),
-	Recorder: mgr.GetEventRecorder("shepherd-operator"),
-	APIURL:   opts.APIURL,
+	Client:     mgr.GetClient(),
+	Scheme:     mgr.GetScheme(),
+	Recorder:   mgr.GetEventRecorder("shepherd-operator"),
+	APIURL:     opts.APIURL,
+	HTTPClient: &http.Client{Timeout: 30 * time.Second},
 }).SetupWithManager(mgr); err != nil {
 	return fmt.Errorf("setting up controller: %w", err)
 }
@@ -742,7 +751,7 @@ Remove: `AllowedRunnerImage`, `InitImage`, `GithubAppID`, `GithubInstallationID`
 Run `make manifests` to regenerate `config/rbac/role.yaml` from the new markers.
 
 #### 5. Update config/rbac
-Verify generated `config/rbac/role.yaml` no longer references `batch` group and includes new sandbox/secret permissions. Update `config/api-rbac/role.yaml` if needed (API server RBAC — add secrets get/list/watch for future token validation).
+Verify generated `config/rbac/role.yaml` no longer references `batch` group and includes new sandbox permissions.
 
 ### Success Criteria:
 
@@ -755,10 +764,10 @@ Verify generated `config/rbac/role.yaml` no longer references `batch` group and 
 
 ---
 
-## Phase 7: API — New Runner Endpoints + Rate Limiting
+## Phase 7: API — New Runner Endpoints
 
 ### Overview
-Add endpoints for runner-pull model: serve task data and generate GitHub tokens. Add rate limiting. Add context size validation. Add fleet query parameter support.
+Add endpoints for runner-pull model: serve task data and generate GitHub tokens. Add context size validation. Add fleet query parameter support.
 
 ### Changes Required:
 
@@ -783,7 +792,7 @@ Response type in `types.go`:
 type TaskDataResponse struct {
 	Description string      `json:"description"`
 	Context     string      `json:"context"`
-	SourceURL   string      `json:"sourceUrl,omitempty"`
+	SourceURL   string      `json:"sourceURL,omitempty"`
 	Repo        RepoRequest `json:"repo"`
 }
 ```
@@ -853,32 +862,7 @@ if len(compressed) > maxCompressedContextSize {
 }
 ```
 
-#### 4. Rate limiting
-**File**: `pkg/api/ratelimit.go` (new)
-
-In-memory rate limiters using `golang.org/x/time/rate`:
-
-```go
-type rateLimiterStore struct {
-	mu       sync.Mutex
-	limiters map[string]*rate.Limiter
-}
-
-func newRateLimiterMiddleware(keyFunc func(*http.Request) string, r rate.Limit, b int) func(http.Handler) http.Handler
-```
-
-Rate limits per architecture doc:
-| Endpoint | Limit | Key |
-| -------- | ----- | --- |
-| `POST /api/v1/tasks` | 10/min | Source IP |
-| `GET /api/v1/tasks/{id}/data` | 10/min | Task ID |
-| `GET /api/v1/tasks/{id}/token` | 5/min | Task ID |
-| `POST /api/v1/tasks/{id}/status` | 30/min | Task ID |
-| `GET /api/v1/tasks` | 60/min | Source IP |
-
-Apply per-route in router setup.
-
-#### 5. Fleet query parameter
+#### 4. Fleet query parameter
 **File**: `pkg/api/handler_tasks.go`
 
 Add `fleet` query parameter to `listTasks()`:
@@ -888,7 +872,7 @@ if fleet := r.URL.Query().Get("fleet"); fleet != "" {
 }
 ```
 
-#### 6. Route registration
+#### 5. Route registration
 **File**: `pkg/api/server.go`
 
 Add new routes:
@@ -923,7 +907,7 @@ type APICmd struct {
 }
 ```
 
-#### 7. Tests
+#### 6. Tests
 
 **File**: `pkg/api/handler_data_test.go` (new)
 - Returns decompressed context for valid task
@@ -939,15 +923,10 @@ type APICmd struct {
 - Scopes token to repo from task spec
 - Rejects requests for terminal tasks
 
-**File**: `pkg/api/ratelimit_test.go` (new)
-- Allows requests within rate limit
-- Returns 429 when rate exceeded
-- Different keys get independent limits
-
 **File**: `pkg/api/handler_tasks_test.go` — update existing tests:
 - Add test for 413 response on oversized compressed context
 - Add test for `fleet` query parameter
-- Update tests that reference `ContextURL` → `SourceURL`
+- Update tests that reference `ContextURL` → `SourceURL` (JSON tag now `sourceURL`)
 - Update tests that reference `JobName` → `SandboxClaimName`
 
 **File**: `pkg/api/decompress_test.go` (new, or extend `compress_test.go`)
@@ -983,6 +962,7 @@ Minimal HTTP server that accepts task assignment and exits:
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -994,7 +974,6 @@ import (
 type TaskAssignment struct {
 	TaskID string `json:"taskID"`
 	APIURL string `json:"apiURL"`
-	Token  string `json:"token"`
 }
 
 func main() {
@@ -1090,19 +1069,18 @@ Add entry for runner binary if needed.
 ### Unit Tests:
 - Sandbox builder: construction, validation, owner refs (Phase 2)
 - Failure classification: sandbox condition parsing (Phase 5)
-- Rate limiting: limits, keys, 429 responses (Phase 7)
 - Decompression: roundtrip, limits, error cases (Phase 7)
 - Token generation: JWT creation, exchange mocking (Phase 7)
 
 ### Integration Tests (envtest):
 - Reconciler: full lifecycle Pending → Running → Succeeded/Failed (Phases 3-5)
-- Task assignment: Secret creation, annotation tracking (Phase 4)
+- Task assignment: HTTP POST to runner, idempotency via Running condition (Phase 4)
 - Timeout: operator-managed timeout detection (Phase 5)
+- Grace period: sandbox termination does not immediately mark Failed (Phase 5)
 - Agent-sandbox types registered in envtest scheme with CRD manifests
 
 ### HTTP Handler Tests:
 - All API endpoints with fake K8s client (Phases 1, 7)
-- Rate limiting middleware (Phase 7)
 
 ### NOT in this plan:
 - e2e tests requiring real cluster with agent-sandbox controller
@@ -1110,10 +1088,10 @@ Add entry for runner binary if needed.
 
 ## Performance Considerations
 
-- Rate limiters use in-memory maps — fine for single-replica API, needs Redis for multi-replica production
 - Decompression uses `io.LimitReader` to prevent decompression bombs (10MiB limit)
 - SandboxClaim creation is idempotent via owner reference + name matching
-- Token Secret creation uses `AlreadyExists` check for idempotency
+- Task assignment is idempotent: Running condition is the marker, runner returns 409 on duplicate POST
+- TODO: Rate limiting on API endpoints (deferred — see "What We're NOT Doing")
 
 ## Migration Notes
 
