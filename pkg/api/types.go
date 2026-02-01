@@ -43,7 +43,9 @@ type RepoRequest struct {
 type TaskRequest struct {
 	Description string `json:"description"`
 	Context     string `json:"context,omitempty"`
-	ContextURL  string `json:"contextUrl,omitempty"`
+	SourceURL   string `json:"sourceURL,omitempty"`
+	SourceType  string `json:"sourceType,omitempty"`
+	SourceID    string `json:"sourceID,omitempty"`
 }
 
 // RunnerConfig specifies optional runner overrides.
@@ -66,11 +68,11 @@ type TaskResponse struct {
 
 // TaskStatusSummary summarizes the task's current status.
 type TaskStatusSummary struct {
-	Phase   string `json:"phase"`
-	Message string `json:"message"`
-	JobName string `json:"jobName,omitempty"`
-	PRUrl   string `json:"prUrl,omitempty"`
-	Error   string `json:"error,omitempty"`
+	Phase            string `json:"phase"`
+	Message          string `json:"message"`
+	SandboxClaimName string `json:"sandboxClaimName,omitempty"`
+	PRUrl            string `json:"prUrl,omitempty"`
+	Error            string `json:"error,omitempty"`
 }
 
 // StatusUpdateRequest is the JSON body from the runner for POST /api/v1/tasks/{taskID}/status.

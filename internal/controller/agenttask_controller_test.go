@@ -200,8 +200,8 @@ var _ = Describe("AgentTask Controller", func() {
 			// Clean up Jobs first (owned by the task, but belt-and-suspenders)
 			var task toolkitv1alpha1.AgentTask
 			if err := k8sClient.Get(ctx, taskNN, &task); err == nil {
-				if task.Status.JobName != "" {
-					cleanupJob(task.Status.JobName, resourceNamespace)
+				if task.Status.SandboxClaimName != "" {
+					cleanupJob(task.Status.SandboxClaimName, resourceNamespace)
 				}
 				// Also clean up by expected name pattern in case status wasn't set
 				expectedJobName := fmt.Sprintf("%s-%d-job", taskName, task.Generation)
@@ -223,8 +223,8 @@ var _ = Describe("AgentTask Controller", func() {
 
 			var task toolkitv1alpha1.AgentTask
 			Expect(k8sClient.Get(ctx, taskNN, &task)).To(Succeed())
-			Expect(task.Status.JobName).NotTo(BeEmpty(), "JobName should be set after Job creation")
-			return task.Status.JobName
+			Expect(task.Status.SandboxClaimName).NotTo(BeEmpty(), "SandboxClaimName should be set after Job creation")
+			return task.Status.SandboxClaimName
 		}
 
 		It("should create a Job on second reconcile and set Running", func() {
@@ -278,7 +278,7 @@ var _ = Describe("AgentTask Controller", func() {
 			By("Verifying task status")
 			var task toolkitv1alpha1.AgentTask
 			Expect(k8sClient.Get(ctx, taskNN, &task)).To(Succeed())
-			Expect(task.Status.JobName).To(Equal(jobName))
+			Expect(task.Status.SandboxClaimName).To(Equal(jobName))
 			Expect(task.Status.StartTime).NotTo(BeNil())
 			cond := meta.FindStatusCondition(task.Status.Conditions, toolkitv1alpha1.ConditionSucceeded)
 			Expect(cond).NotTo(BeNil())
@@ -376,12 +376,12 @@ var _ = Describe("AgentTask Controller", func() {
 			Expect(task.Status.Result.Error).To(Equal("Job has reached the specified backoff limit"))
 		})
 
-		It("should set OOM reason when Job fails with PodFailurePolicy exit code 137", func() {
+		It("should set Failed reason when Job fails with PodFailurePolicy exit code 137", func() {
 			createAgentTask(taskName, resourceNamespace)
 			reconcileToPending()
 			jobName := reconcileToRunning()
 
-			By("Simulating PodFailurePolicy OOM failure")
+			By("Simulating PodFailurePolicy failure")
 			var job batchv1.Job
 			Expect(k8sClient.Get(ctx, client.ObjectKey{
 				Namespace: resourceNamespace,
@@ -390,8 +390,6 @@ var _ = Describe("AgentTask Controller", func() {
 
 			now := metav1.Now()
 			job.Status.StartTime = &now
-			// JobFailureTarget is set for realism (Kubernetes sets both conditions)
-			// but classifyJobFailure only examines the JobFailed condition.
 			job.Status.Conditions = append(job.Status.Conditions,
 				batchv1.JobCondition{
 					Type:   batchv1.JobFailureTarget,
@@ -406,19 +404,19 @@ var _ = Describe("AgentTask Controller", func() {
 			)
 			Expect(k8sClient.Status().Update(ctx, &job)).To(Succeed())
 
-			By("Reconciling after OOM failure")
+			By("Reconciling after PodFailurePolicy failure")
 			result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: taskNN})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.RequeueAfter).To(BeZero())
 
-			By("Verifying task has OOM reason")
+			By("Verifying task has Failed reason (simplified failure model)")
 			var task toolkitv1alpha1.AgentTask
 			Expect(k8sClient.Get(ctx, taskNN, &task)).To(Succeed())
 
 			cond := meta.FindStatusCondition(task.Status.Conditions, toolkitv1alpha1.ConditionSucceeded)
 			Expect(cond).NotTo(BeNil())
 			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
-			Expect(cond.Reason).To(Equal(toolkitv1alpha1.ReasonOOM))
+			Expect(cond.Reason).To(Equal(toolkitv1alpha1.ReasonFailed))
 			Expect(cond.Message).To(ContainSubstring("exit code 137"))
 			Expect(task.Status.CompletionTime).NotTo(BeNil())
 			Expect(task.Status.Result.Error).To(ContainSubstring("exit code 137"))

@@ -65,10 +65,6 @@ func (h *taskHandler) createTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "task.description is required", "")
 		return
 	}
-	if req.Task.Context == "" {
-		writeError(w, http.StatusBadRequest, "task.context is required", "")
-		return
-	}
 	if req.Callback == "" {
 		writeError(w, http.StatusBadRequest, "callbackUrl is required", "")
 		return
@@ -104,12 +100,16 @@ func (h *taskHandler) createTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Compress context
-	compressedCtx, encoding, err := compressContext(req.Task.Context)
-	if err != nil {
-		log.Error(err, "failed to compress context")
-		writeError(w, http.StatusInternalServerError, "failed to compress context", "")
-		return
+	// Compress context (if provided)
+	var compressedCtx, encoding string
+	if req.Task.Context != "" {
+		var err error
+		compressedCtx, encoding, err = compressContext(req.Task.Context)
+		if err != nil {
+			log.Error(err, "failed to compress context")
+			writeError(w, http.StatusInternalServerError, "failed to compress context", "")
+			return
+		}
 	}
 
 	// Generate task name
@@ -132,6 +132,12 @@ func (h *taskHandler) createTask(w http.ResponseWriter, r *http.Request) {
 	// Build labels — pass through adapter-provided labels
 	labels := make(map[string]string)
 	maps.Copy(labels, req.Labels)
+	if req.Task.SourceType != "" {
+		labels["shepherd.io/source-type"] = req.Task.SourceType
+	}
+	if req.Task.SourceID != "" {
+		labels["shepherd.io/source-id"] = req.Task.SourceID
+	}
 
 	// Create AgentTask CRD
 	task := &toolkitv1alpha1.AgentTask{
@@ -149,7 +155,9 @@ func (h *taskHandler) createTask(w http.ResponseWriter, r *http.Request) {
 				Description:     req.Task.Description,
 				Context:         compressedCtx,
 				ContextEncoding: encoding,
-				ContextURL:      req.Task.ContextURL,
+				SourceURL:       req.Task.SourceURL,
+				SourceType:      req.Task.SourceType,
+				SourceID:        req.Task.SourceID,
 			},
 			Callback: toolkitv1alpha1.CallbackSpec{
 				URL: req.Callback,
@@ -265,7 +273,9 @@ func taskToResponse(task *toolkitv1alpha1.AgentTask) TaskResponse {
 		},
 		Task: TaskRequest{
 			Description: task.Spec.Task.Description,
-			ContextURL:  task.Spec.Task.ContextURL,
+			SourceURL:   task.Spec.Task.SourceURL,
+			SourceType:  task.Spec.Task.SourceType,
+			SourceID:    task.Spec.Task.SourceID,
 		},
 		CallbackURL: task.Spec.Callback.URL,
 		Status:      extractStatus(task),
@@ -287,10 +297,10 @@ func extractStatus(task *toolkitv1alpha1.AgentTask) TaskStatusSummary {
 		message = cond.Message
 	}
 	return TaskStatusSummary{
-		Phase:   phase,
-		Message: message,
-		JobName: task.Status.JobName,
-		PRUrl:   task.Status.Result.PRUrl,
-		Error:   task.Status.Result.Error,
+		Phase:            phase,
+		Message:          message,
+		SandboxClaimName: task.Status.SandboxClaimName,
+		PRUrl:            task.Status.Result.PRUrl,
+		Error:            task.Status.Result.Error,
 	}
 }

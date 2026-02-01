@@ -38,20 +38,11 @@ func TestClassifyJobFailure(t *testing.T) {
 			expected: failureTimeout,
 		},
 		{
-			name: "PodFailurePolicy with exit code 137 → OOM",
+			name: "PodFailurePolicy → application",
 			cond: batchv1.JobCondition{
 				Type:    batchv1.JobFailed,
 				Reason:  "PodFailurePolicy",
 				Message: "Container runner for pod default/my-task-1-job-xyz failed with exit code 137 matching FailJob rule at index 0",
-			},
-			expected: failureOOM,
-		},
-		{
-			name: "PodFailurePolicy without exit code 137 → application",
-			cond: batchv1.JobCondition{
-				Type:    batchv1.JobFailed,
-				Reason:  "PodFailurePolicy",
-				Message: "Container runner for pod default/my-task-1-job-xyz failed with exit code 1 matching FailJob rule at index 0",
 			},
 			expected: failureApplication,
 		},

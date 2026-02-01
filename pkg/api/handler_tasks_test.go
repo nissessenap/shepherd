@@ -188,7 +188,7 @@ func TestCreateTask_MissingDescription(t *testing.T) {
 	assert.Equal(t, "task.description is required", errResp.Error)
 }
 
-func TestCreateTask_MissingContext(t *testing.T) {
+func TestCreateTask_EmptyContextIsAllowed(t *testing.T) {
 	h := newTestHandler()
 	router := testRouter(h)
 
@@ -196,10 +196,20 @@ func TestCreateTask_MissingContext(t *testing.T) {
 	req.Task.Context = ""
 	w := postCreateTask(t, router, req)
 
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	var errResp ErrorResponse
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &errResp))
-	assert.Equal(t, "task.context is required", errResp.Error)
+	assert.Equal(t, http.StatusCreated, w.Code)
+
+	var resp TaskResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	// Verify the CRD has no context
+	var task toolkitv1alpha1.AgentTask
+	err := h.client.Get(context.Background(), client.ObjectKey{
+		Namespace: "default",
+		Name:      resp.ID,
+	}, &task)
+	require.NoError(t, err)
+	assert.Empty(t, task.Spec.Task.Context)
+	assert.Empty(t, task.Spec.Task.ContextEncoding)
 }
 
 func TestCreateTask_MissingCallbackURL(t *testing.T) {
@@ -326,7 +336,7 @@ func TestCreateTask_ResponseStatus(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, "Pending", resp.Status.Phase)
 	assert.Empty(t, resp.Status.Message)
-	assert.Empty(t, resp.Status.JobName)
+	assert.Empty(t, resp.Status.SandboxClaimName)
 }
 
 func TestCreateTask_BodyTooLarge(t *testing.T) {
@@ -390,13 +400,13 @@ func TestExtractStatus_WithCondition(t *testing.T) {
 					Message: "Job is running",
 				},
 			},
-			JobName: "task-abc-1-job",
+			SandboxClaimName: "task-abc-1-job",
 		},
 	}
 	status := extractStatus(task)
 	assert.Equal(t, "Running", status.Phase)
 	assert.Equal(t, "Job is running", status.Message)
-	assert.Equal(t, "task-abc-1-job", status.JobName)
+	assert.Equal(t, "task-abc-1-job", status.SandboxClaimName)
 }
 
 func TestExtractStatus_Terminal(t *testing.T) {

@@ -19,7 +19,6 @@ package controller
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -120,7 +119,7 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			return ctrl.Result{}, fmt.Errorf("creating job: %w", createErr)
 		}
 
-		task.Status.JobName = newJob.Name
+		task.Status.SandboxClaimName = newJob.Name
 		setCondition(&task, metav1.Condition{
 			Type:               toolkitv1alpha1.ConditionSucceeded,
 			Status:             metav1.ConditionUnknown,
@@ -148,25 +147,15 @@ type failureClass int
 
 const (
 	failureApplication failureClass = iota // Non-zero exit — permanent
-	failureOOM                             // Exit code 137 (SIGKILL/OOM) — permanent
 	failureTimeout                         // ActiveDeadlineSeconds exceeded — permanent
 )
 
 // classifyJobFailure examines a Job's Failed condition to determine the failure type.
-// It relies on podFailurePolicy surfacing exit code 137 as reason "PodFailurePolicy"
-// with a message containing "exit code 137".
 func classifyJobFailure(cond batchv1.JobCondition) failureClass {
-	switch cond.Reason {
-	case "DeadlineExceeded":
+	if cond.Reason == "DeadlineExceeded" {
 		return failureTimeout
-	case "PodFailurePolicy":
-		if strings.Contains(cond.Message, "exit code 137") {
-			return failureOOM
-		}
-		return failureApplication
-	default:
-		return failureApplication
 	}
+	return failureApplication
 }
 
 func (r *AgentTaskReconciler) reconcileJobStatus(ctx context.Context, task *toolkitv1alpha1.AgentTask, job *batchv1.Job) (ctrl.Result, error) {
@@ -182,17 +171,10 @@ func (r *AgentTaskReconciler) reconcileJobStatus(ctx context.Context, task *tool
 			if c.Status == corev1.ConditionTrue {
 				fc := classifyJobFailure(c)
 				switch fc {
-				case failureOOM:
-					return r.markFailed(ctx, task, toolkitv1alpha1.ReasonOOM,
-						"Container killed: exit code 137 (OOM)")
 				case failureTimeout:
 					return r.markFailed(ctx, task, toolkitv1alpha1.ReasonTimedOut,
 						"Job exceeded timeout")
 				default:
-					if c.Reason == "PodFailurePolicy" {
-						log.Info("PodFailurePolicy failure not classified as OOM — message format may have changed",
-							"reason", c.Reason, "message", c.Message)
-					}
 					return r.markFailed(ctx, task, toolkitv1alpha1.ReasonFailed, c.Message)
 				}
 			}

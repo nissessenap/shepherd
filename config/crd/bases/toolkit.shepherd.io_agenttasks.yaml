@@ -22,8 +22,8 @@ spec:
       name: PR
       priority: 1
       type: string
-    - jsonPath: .status.jobName
-      name: Job
+    - jsonPath: .status.sandboxClaimName
+      name: Claim
       type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
@@ -75,9 +75,6 @@ spec:
                   rule: self == oldSelf
               runner:
                 properties:
-                  image:
-                    default: shepherd-runner:latest
-                    type: string
                   resources:
                     description: ResourceRequirements describes the compute resource
                       requirements.
@@ -138,28 +135,50 @@ spec:
                           More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                         type: object
                     type: object
+                  sandboxTemplateName:
+                    description: SandboxTemplateName references a SandboxTemplate
+                      for the runner environment.
+                    type: string
                   serviceAccountName:
                     type: string
                   timeout:
+                    default: 30m
+                    description: |-
+                      Timeout is the maximum duration for task execution.
+                      The operator enforces this via its own timer since agent-sandbox v0.1.0
+                      does not support Lifecycle/ShutdownTime in released versions.
                     type: string
+                required:
+                - sandboxTemplateName
                 type: object
               task:
                 properties:
                   context:
-                    minLength: 1
+                    description: |-
+                      Context is additional context, gzip-compressed then base64-encoded.
+                      The API accepts raw text, compresses for CRD storage.
                     type: string
                   contextEncoding:
                     enum:
                     - ""
                     - gzip
                     type: string
-                  contextUrl:
-                    type: string
                   description:
                     minLength: 1
                     type: string
+                  sourceID:
+                    description: SourceID identifies the specific trigger instance
+                      (e.g., issue number).
+                    type: string
+                  sourceType:
+                    description: 'SourceType identifies the trigger type: "issue",
+                      "pr", or "fleet".'
+                    type: string
+                  sourceURL:
+                    description: SourceURL is the origin of the task (e.g., GitHub
+                      issue URL). Informational only.
+                    type: string
                 required:
-                - context
                 - description
                 type: object
                 x-kubernetes-validations:
@@ -234,8 +253,6 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
-              jobName:
-                type: string
               observedGeneration:
                 format: int64
                 type: integer
@@ -246,6 +263,8 @@ spec:
                   prUrl:
                     type: string
                 type: object
+              sandboxClaimName:
+                type: string
               startTime:
                 format: date-time
                 type: string

@@ -26,7 +26,7 @@ import (
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Status",type=string,JSONPath=`.status.conditions[?(@.type=="Succeeded")].reason`
 // +kubebuilder:printcolumn:name="PR",type=string,JSONPath=`.status.result.prUrl`,priority=1
-// +kubebuilder:printcolumn:name="Job",type=string,JSONPath=`.status.jobName`
+// +kubebuilder:printcolumn:name="Claim",type=string,JSONPath=`.status.sandboxClaimName`
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
 // AgentTask is the Schema for the agenttasks API.
@@ -60,12 +60,23 @@ type TaskSpec struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	Description string `json:"description"`
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:MinLength=1
-	Context string `json:"context"`
+
+	// Context is additional context, gzip-compressed then base64-encoded.
+	// The API accepts raw text, compresses for CRD storage.
+	// +optional
+	Context string `json:"context,omitempty"`
+
 	// +kubebuilder:validation:Enum="";gzip
 	ContextEncoding string `json:"contextEncoding,omitempty"`
-	ContextURL      string `json:"contextUrl,omitempty"`
+
+	// SourceURL is the origin of the task (e.g., GitHub issue URL). Informational only.
+	SourceURL string `json:"sourceURL,omitempty"`
+
+	// SourceType identifies the trigger type: "issue", "pr", or "fleet".
+	SourceType string `json:"sourceType,omitempty"`
+
+	// SourceID identifies the specific trigger instance (e.g., issue number).
+	SourceID string `json:"sourceID,omitempty"`
 }
 
 type CallbackSpec struct {
@@ -75,12 +86,20 @@ type CallbackSpec struct {
 }
 
 type RunnerSpec struct {
-	// +kubebuilder:default="shepherd-runner:latest"
-	Image string `json:"image,omitempty"`
+	// SandboxTemplateName references a SandboxTemplate for the runner environment.
+	// +kubebuilder:validation:Required
+	SandboxTemplateName string `json:"sandboxTemplateName"`
+
+	// Timeout is the maximum duration for task execution.
+	// The operator enforces this via its own timer since agent-sandbox v0.1.0
+	// does not support Lifecycle/ShutdownTime in released versions.
+	// +kubebuilder:default="30m"
 	// +optional
 	Timeout metav1.Duration `json:"timeout,omitzero"`
+
 	// +optional
 	ServiceAccountName string `json:"serviceAccountName,omitempty"`
+
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitzero"`
 }
@@ -91,8 +110,8 @@ type AgentTaskStatus struct {
 	CompletionTime     *metav1.Time `json:"completionTime,omitempty"`
 	// +listType=map
 	// +listMapKey=type
-	Conditions []metav1.Condition `json:"conditions,omitempty"`
-	JobName    string             `json:"jobName,omitempty"`
+	Conditions       []metav1.Condition `json:"conditions,omitempty"`
+	SandboxClaimName string             `json:"sandboxClaimName,omitempty"`
 	// +optional
 	Result TaskResult `json:"result,omitzero"`
 }

@@ -214,11 +214,11 @@ Every reference to `JobName`, `ContextURL`, `ReasonOOM`, `RunnerSpec.Image` acro
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `make generate` succeeds
-- [ ] `make manifests` succeeds — CRD YAML shows `sandboxClaimName` not `jobName`, shows `sandboxTemplateName` not `image`
-- [ ] `make build` compiles without errors
-- [ ] `make test` passes (update all tests referencing old field names)
-- [ ] `make lint` passes
+- [x] `make generate` succeeds
+- [x] `make manifests` succeeds — CRD YAML shows `sandboxClaimName` not `jobName`, shows `sandboxTemplateName` not `image`
+- [x] `make build` compiles without errors
+- [x] `make test` passes (update all tests referencing old field names)
+- [x] `make lint` passes
 
 **Implementation Note**: After completing this phase and all automated verification passes, pause for review before proceeding.
 
