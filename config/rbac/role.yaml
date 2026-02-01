@@ -18,6 +18,18 @@ rules:
   verbs:
   - get
 - apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
   - extensions.agents.x-k8s.io
   resources:
   - sandboxclaims
@@ -32,8 +44,6 @@ rules:
   resources:
   - agenttasks
   verbs:
-  - create
-  - delete
   - get
   - list
   - patch

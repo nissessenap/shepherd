@@ -56,7 +56,7 @@ sync-external-crds: ## Copy external CRDs from Go module cache for envtest.
 	@mkdir -p config/crd/external
 	@MODCACHE=$$(go env GOMODCACHE) && \
 	 SANDBOX_VERSION=$$(go list -m -f '{{.Version}}' sigs.k8s.io/agent-sandbox) && \
-	 cp "$${MODCACHE}/sigs.k8s.io/agent-sandbox@$${SANDBOX_VERSION}/k8s/crds/"*.yaml config/crd/external/
+	 cp --no-preserve=mode "$${MODCACHE}/sigs.k8s.io/agent-sandbox@$${SANDBOX_VERSION}/k8s/crds/"*.yaml config/crd/external/
 	@echo "Synced agent-sandbox CRDs to config/crd/external/"
 
 .PHONY: test

@@ -19,9 +19,11 @@ package operator
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -47,15 +49,10 @@ func init() {
 
 // Options configures the operator.
 type Options struct {
-	MetricsAddr          string
-	HealthAddr           string
-	LeaderElection       bool
-	AllowedRunnerImage   string
-	RunnerSecretName     string
-	InitImage            string
-	GithubAppID          int64
-	GithubInstallationID int64
-	GithubAPIURL         string
+	MetricsAddr    string
+	HealthAddr     string
+	LeaderElection bool
+	APIURL         string // Internal API URL (e.g., http://shepherd-api.shepherd.svc.cluster.local:8080)
 }
 
 // Run starts the operator with the given options.
@@ -79,15 +76,11 @@ func Run(opts Options) error {
 	}
 
 	if err := (&controller.AgentTaskReconciler{
-		Client:               mgr.GetClient(),
-		Scheme:               mgr.GetScheme(),
-		Recorder:             mgr.GetEventRecorder("shepherd-operator"),
-		AllowedRunnerImage:   opts.AllowedRunnerImage,
-		RunnerSecretName:     opts.RunnerSecretName,
-		InitImage:            opts.InitImage,
-		GithubAppID:          opts.GithubAppID,
-		GithubInstallationID: opts.GithubInstallationID,
-		GithubAPIURL:         opts.GithubAPIURL,
+		Client:     mgr.GetClient(),
+		Scheme:     mgr.GetScheme(),
+		Recorder:   mgr.GetEventRecorder("shepherd-operator"),
+		APIURL:     opts.APIURL,
+		HTTPClient: &http.Client{Timeout: 30 * time.Second},
 	}).SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("setting up controller: %w", err)
 	}

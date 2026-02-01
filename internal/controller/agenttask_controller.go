@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -32,45 +33,46 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	toolkitv1alpha1 "github.com/NissesSenap/shepherd/api/v1alpha1"
+	sandboxv1alpha1 "sigs.k8s.io/agent-sandbox/api/v1alpha1"
 	sandboxextv1alpha1 "sigs.k8s.io/agent-sandbox/extensions/api/v1alpha1"
 )
 
 // AgentTaskReconciler reconciles a AgentTask object
 type AgentTaskReconciler struct {
 	client.Client
-	Scheme               *runtime.Scheme
-	Recorder             events.EventRecorder
-	AllowedRunnerImage   string
-	RunnerSecretName     string
-	InitImage            string
-	GithubAppID          int64
-	GithubInstallationID int64
-	GithubAPIURL         string
+	Scheme     *runtime.Scheme
+	Recorder   events.EventRecorder
+	APIURL     string       // Internal API URL for runner task assignment
+	HTTPClient *http.Client // Injectable for testing; defaults to http.DefaultClient
 }
 
-// +kubebuilder:rbac:groups=toolkit.shepherd.io,resources=agenttasks,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=toolkit.shepherd.io,resources=agenttasks,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=toolkit.shepherd.io,resources=agenttasks/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=toolkit.shepherd.io,resources=agenttasks/finalizers,verbs=update
 // +kubebuilder:rbac:groups=extensions.agents.x-k8s.io,resources=sandboxclaims,verbs=get;list;watch;create;delete
 // +kubebuilder:rbac:groups=agents.x-k8s.io,resources=sandboxes,verbs=get
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;list;watch;create;update;patch;delete
 
 func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
-	// Fetch the AgentTask
+	// 1. Fetch the AgentTask
 	var task toolkitv1alpha1.AgentTask
 	if err := r.Get(ctx, req.NamespacedName, &task); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	// Skip if already in terminal state
+	// 2. If terminal → clean up SandboxClaim if still exists, then return
 	if task.IsTerminal() {
-		log.V(1).Info("skipping reconcile for terminal task", "task", req.NamespacedName)
+		log.V(1).Info("task is terminal, checking for SandboxClaim cleanup", "task", req.NamespacedName)
+		if err := r.cleanupSandboxClaim(ctx, &task); err != nil {
+			return ctrl.Result{}, err
+		}
 		return ctrl.Result{}, nil
 	}
 
-	// Initialize condition if not set
+	// 3. Initialize condition if not set → set Pending, requeue
 	if !hasCondition(&task, toolkitv1alpha1.ConditionSucceeded) {
 		setCondition(&task, metav1.Condition{
 			Type:               toolkitv1alpha1.ConditionSucceeded,
@@ -90,7 +92,7 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{RequeueAfter: time.Second}, nil
 	}
 
-	// Look for existing SandboxClaim (name = task.Name)
+	// 4. Look for existing SandboxClaim (name = task.Name)
 	var claim sandboxextv1alpha1.SandboxClaim
 	claimKey := client.ObjectKey{Namespace: task.Namespace, Name: task.Name}
 
@@ -99,8 +101,8 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, fmt.Errorf("getting sandbox claim: %w", err)
 	}
 
+	// 5. No SandboxClaim → create it
 	if err != nil {
-		// SandboxClaim doesn't exist — create it
 		newClaim, buildErr := buildSandboxClaim(&task, sandboxConfig{
 			Scheme: r.Scheme,
 		})
@@ -121,12 +123,69 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 		r.Recorder.Eventf(&task, nil, "Normal", "SandboxClaimCreated", "Reconcile", "Created sandbox claim %s", newClaim.Name)
 		log.Info("created sandbox claim", "claim", newClaim.Name)
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	}
+
+	// 6. SandboxClaim exists — check Ready condition
+	readyCond := meta.FindStatusCondition(claim.Status.Conditions, string(sandboxv1alpha1.SandboxConditionReady))
+
+	succeededCond := meta.FindStatusCondition(task.Status.Conditions, toolkitv1alpha1.ConditionSucceeded)
+	isRunning := succeededCond != nil && succeededCond.Reason == toolkitv1alpha1.ReasonRunning
+
+	// 6a. Ready=True → transition to Running (task assignment deferred to Phase 4)
+	if readyCond != nil && readyCond.Status == metav1.ConditionTrue {
+		if isRunning {
+			// Already Running — nothing to do
+			log.V(1).Info("sandbox ready and task already running", "claim", claim.Name)
+			return ctrl.Result{}, nil
+		}
+
+		// Transition to Running
+		setCondition(&task, metav1.Condition{
+			Type:               toolkitv1alpha1.ConditionSucceeded,
+			Status:             metav1.ConditionUnknown,
+			Reason:             toolkitv1alpha1.ReasonRunning,
+			Message:            "Sandbox is ready, task is running",
+			ObservedGeneration: task.Generation,
+		})
+		if statusErr := r.Status().Update(ctx, &task); statusErr != nil {
+			return ctrl.Result{}, fmt.Errorf("updating status to running: %w", statusErr)
+		}
+		r.Recorder.Eventf(&task, nil, "Normal", "Running", "Reconcile", "Sandbox %s is ready, task running", claim.Name)
+		log.Info("sandbox ready, task running", "claim", claim.Name)
 		return ctrl.Result{}, nil
 	}
 
-	// SandboxClaim exists — status tracking deferred to Phase 3
-	log.V(1).Info("sandbox claim exists, status tracking pending", "claim", claim.Name)
-	return ctrl.Result{}, nil
+	// 6b. Ready=False and task was previously Running → sandbox terminated
+	if readyCond != nil && readyCond.Status == metav1.ConditionFalse && isRunning {
+		log.Info("sandbox terminated while task was running", "claim", claim.Name, "reason", readyCond.Reason)
+		return r.markFailed(ctx, &task, toolkitv1alpha1.ReasonFailed,
+			fmt.Sprintf("Sandbox terminated: %s", readyCond.Message))
+	}
+
+	// 6c. Ready condition nil, False, or Unknown AND task not yet Running → still starting
+	log.V(1).Info("sandbox claim not yet ready, requeuing", "claim", claim.Name)
+	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+}
+
+// cleanupSandboxClaim deletes the SandboxClaim if it still exists for a terminal task.
+func (r *AgentTaskReconciler) cleanupSandboxClaim(ctx context.Context, task *toolkitv1alpha1.AgentTask) error {
+	if task.Status.SandboxClaimName == "" {
+		return nil
+	}
+	log := logf.FromContext(ctx)
+
+	var claim sandboxextv1alpha1.SandboxClaim
+	claimKey := client.ObjectKey{Namespace: task.Namespace, Name: task.Status.SandboxClaimName}
+	if err := r.Get(ctx, claimKey, &claim); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+
+	if err := r.Delete(ctx, &claim); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+	log.Info("deleted SandboxClaim for terminal task", "claim", claim.Name)
+	return nil
 }
 
 func (r *AgentTaskReconciler) markFailed(ctx context.Context, task *toolkitv1alpha1.AgentTask, reason, message string) (ctrl.Result, error) {

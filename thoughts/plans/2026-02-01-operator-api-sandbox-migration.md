@@ -451,10 +451,10 @@ Resolve the module path from the Go module cache at test time (e.g., via `go lis
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `make build` compiles
-- [ ] `make test` passes — new reconciler tests cover Pending → SandboxClaim creation → Running transition
-- [ ] `make lint` passes
-- [ ] No references to `batchv1.Job` remain in `internal/controller/`
+- [x] `make build` compiles
+- [x] `make test` passes — new reconciler tests cover Pending → SandboxClaim creation → Running transition
+- [x] `make lint` passes
+- [x] No references to `batchv1.Job` remain in `internal/controller/`
 
 ---
 
