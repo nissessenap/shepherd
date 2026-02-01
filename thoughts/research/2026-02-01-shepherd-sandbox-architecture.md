@@ -255,6 +255,8 @@ metadata:
   labels:
     shepherd.io/repo: org-repo
     shepherd.io/issue: "123"
+    shepherd.io/source-type: issue
+    shepherd.io/source-id: "123"
 spec:
   repo:
     url: "https://github.com/org/repo.git"
@@ -373,6 +375,8 @@ type AgentTaskStatus struct {
 - `TaskSpec.ContextURL` renamed to `TaskSpec.SourceURL` — clarifies this is the origin of the task (e.g., GitHub issue URL), not a URL to download context from
 - `TaskSpec.SourceType` added — identifies trigger type ("issue", "pr", "fleet") for deduplication and branch naming
 - `TaskSpec.SourceID` added — identifies specific trigger instance (issue number, fleet name)
+
+**Labels vs spec fields**: `sourceType` and `sourceID` exist in both `spec.task` (canonical data) and as labels (`shepherd.io/source-type`, `shepherd.io/source-id`). The spec fields are the source of truth. The labels mirror the spec to enable efficient K8s label selector queries for deduplication (e.g., "is there an active task for this repo + issue?") and fleet filtering without fetching every CRD. The API server sets both when creating the AgentTask.
 
 ### Condition State Machine
 
