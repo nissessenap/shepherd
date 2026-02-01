@@ -18,9 +18,7 @@ package controller
 
 import (
 	"context"
-	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -74,13 +72,12 @@ var _ = BeforeSuite(func() {
 	// +kubebuilder:scaffold:scheme
 
 	By("bootstrapping test environment")
-	sandboxCRDPath := resolveModuleCRDPath("sigs.k8s.io/agent-sandbox", "k8s", "crds")
-	crdPaths := []string{filepath.Join("..", "..", "config", "crd", "bases")}
-	if sandboxCRDPath != "" {
-		crdPaths = append(crdPaths, sandboxCRDPath)
-	}
 	testEnv = &envtest.Environment{
-		CRDDirectoryPaths:     crdPaths,
+		CRDDirectoryPaths: []string{
+			filepath.Join("..", "..", "config", "crd", "bases"),
+			// External CRDs synced from module cache via `make sync-external-crds`
+			filepath.Join("..", "..", "config", "crd", "external"),
+		},
 		ErrorIfCRDPathMissing: true,
 	}
 
@@ -128,27 +125,4 @@ func getFirstFoundEnvTestBinaryDir() string {
 		}
 	}
 	return ""
-}
-
-// resolveModuleCRDPath resolves the filesystem path to CRD files within a Go module's
-// cache directory. It uses `go list -m -json` to find the module's Dir, then joins
-// the provided path segments.
-func resolveModuleCRDPath(module string, pathSegments ...string) string {
-	cmd := exec.Command("go", "list", "-m", "-json", module)
-	out, err := cmd.Output()
-	if err != nil {
-		logf.Log.Error(err, "Failed to resolve module path", "module", module)
-		return ""
-	}
-	var info struct {
-		Dir string `json:"Dir"`
-	}
-	if err := json.Unmarshal(out, &info); err != nil {
-		logf.Log.Error(err, "Failed to parse module info", "module", module)
-		return ""
-	}
-	if info.Dir == "" {
-		return ""
-	}
-	return filepath.Join(append([]string{info.Dir}, pathSegments...)...)
 }

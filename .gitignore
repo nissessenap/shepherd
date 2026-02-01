@@ -31,3 +31,6 @@ go.work
 *.kubeconfig
 
 cmd/shepherd-init/shepherd-init
+
+# External CRDs copied from module cache for envtest
+config/crd/external/

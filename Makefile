@@ -51,8 +51,16 @@ fmt: ## Run go fmt against code.
 vet: ## Run go vet against code.
 	go vet ./...
 
+.PHONY: sync-external-crds
+sync-external-crds: ## Copy external CRDs from Go module cache for envtest.
+	@mkdir -p config/crd/external
+	@MODCACHE=$$(go env GOMODCACHE) && \
+	 SANDBOX_VERSION=$$(go list -m -f '{{.Version}}' sigs.k8s.io/agent-sandbox) && \
+	 cp "$${MODCACHE}/sigs.k8s.io/agent-sandbox@$${SANDBOX_VERSION}/k8s/crds/"*.yaml config/crd/external/
+	@echo "Synced agent-sandbox CRDs to config/crd/external/"
+
 .PHONY: test
-test: manifests generate fmt vet setup-envtest test-init ## Run all tests.
+test: manifests generate fmt vet setup-envtest sync-external-crds test-init ## Run all tests.
 	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
 .PHONY: lint
