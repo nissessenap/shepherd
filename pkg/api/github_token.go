@@ -134,7 +134,12 @@ func exchangeToken(ctx context.Context, httpClient *http.Client, baseURL string,
 	}
 
 	if resp.StatusCode != http.StatusCreated {
-		return "", "", fmt.Errorf("GitHub API returned %d: %s", resp.StatusCode, string(respBody))
+		// Truncate error body to prevent excessive log sizes
+		errBody := string(respBody)
+		if len(errBody) > 200 {
+			errBody = errBody[:200] + "..."
+		}
+		return "", "", fmt.Errorf("GitHub API returned %d: %s", resp.StatusCode, errBody)
 	}
 
 	var result struct {

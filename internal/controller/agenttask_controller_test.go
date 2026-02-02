@@ -599,10 +599,10 @@ var _ = Describe("AgentTask Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.RequeueAfter).To(BeNumerically(">", 0), "should requeue for grace period")
 
-			By("Verifying grace annotation is set")
+			By("Verifying GraceDeadline is set in status")
 			var task toolkitv1alpha1.AgentTask
 			Expect(k8sClient.Get(ctx, taskNN, &task)).To(Succeed())
-			Expect(task.Annotations).To(HaveKey("shepherd.io/grace-deadline"))
+			Expect(task.Status.GraceDeadline).NotTo(BeNil())
 
 			By("Verifying task is still Running (not yet Failed)")
 			cond := meta.FindStatusCondition(task.Status.Conditions, toolkitv1alpha1.ConditionSucceeded)
@@ -635,11 +635,9 @@ var _ = Describe("AgentTask Controller", func() {
 			By("Setting an already-expired grace deadline to simulate elapsed grace period")
 			var task toolkitv1alpha1.AgentTask
 			Expect(k8sClient.Get(ctx, taskNN, &task)).To(Succeed())
-			if task.Annotations == nil {
-				task.Annotations = make(map[string]string)
-			}
-			task.Annotations["shepherd.io/grace-deadline"] = time.Now().Add(-1 * time.Minute).Format(time.RFC3339)
-			Expect(k8sClient.Update(ctx, &task)).To(Succeed())
+			expiredDeadline := metav1.NewTime(time.Now().Add(-1 * time.Minute))
+			task.Status.GraceDeadline = &expiredDeadline
+			Expect(k8sClient.Status().Update(ctx, &task)).To(Succeed())
 
 			By("Reconciling — grace period elapsed, should mark Failed")
 			result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: taskNN})
@@ -655,7 +653,7 @@ var _ = Describe("AgentTask Controller", func() {
 			Expect(cond.Message).To(ContainSubstring("Sandbox terminated"))
 			Expect(task.Status.CompletionTime).NotTo(BeNil())
 			Expect(task.Status.Result.Error).To(ContainSubstring("Sandbox terminated"))
-			Expect(task.Annotations).NotTo(HaveKey("shepherd.io/grace-deadline"), "grace annotation should be removed")
+			Expect(task.Status.GraceDeadline).To(BeNil(), "GraceDeadline should be cleared")
 		})
 
 		It("should not mark Failed if API set Succeeded during grace period", func() {
@@ -767,11 +765,9 @@ var _ = Describe("AgentTask Controller", func() {
 			By("Setting an already-expired grace deadline")
 			var task toolkitv1alpha1.AgentTask
 			Expect(k8sClient.Get(ctx, taskNN, &task)).To(Succeed())
-			if task.Annotations == nil {
-				task.Annotations = make(map[string]string)
-			}
-			task.Annotations["shepherd.io/grace-deadline"] = time.Now().Add(-1 * time.Minute).Format(time.RFC3339)
-			Expect(k8sClient.Update(ctx, &task)).To(Succeed())
+			expiredDeadline := metav1.NewTime(time.Now().Add(-1 * time.Minute))
+			task.Status.GraceDeadline = &expiredDeadline
+			Expect(k8sClient.Status().Update(ctx, &task)).To(Succeed())
 
 			By("Reconciling — should classify as TimedOut")
 			result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: taskNN})
@@ -812,11 +808,9 @@ var _ = Describe("AgentTask Controller", func() {
 			By("Setting an already-expired grace deadline")
 			var task toolkitv1alpha1.AgentTask
 			Expect(k8sClient.Get(ctx, taskNN, &task)).To(Succeed())
-			if task.Annotations == nil {
-				task.Annotations = make(map[string]string)
-			}
-			task.Annotations["shepherd.io/grace-deadline"] = time.Now().Add(-1 * time.Minute).Format(time.RFC3339)
-			Expect(k8sClient.Update(ctx, &task)).To(Succeed())
+			expiredDeadline := metav1.NewTime(time.Now().Add(-1 * time.Minute))
+			task.Status.GraceDeadline = &expiredDeadline
+			Expect(k8sClient.Status().Update(ctx, &task)).To(Succeed())
 
 			By("Reconciling — should classify as TimedOut")
 			result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: taskNN})

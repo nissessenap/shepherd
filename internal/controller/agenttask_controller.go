@@ -206,7 +206,7 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// 6b. Ready=False and task was previously Running → sandbox terminated
 	if readyCond != nil && readyCond.Status == metav1.ConditionFalse && isRunning {
 		log.Info("sandbox terminated while task was running", "claim", claim.Name, "reason", readyCond.Reason)
-		return r.handleSandboxTermination(ctx, req, &task, &claim)
+		return r.handleSandboxTermination(ctx, req)
 	}
 
 	// 7. Timeout check — covers the edge case where the Ready condition is temporarily
@@ -310,8 +310,6 @@ func (r *AgentTaskReconciler) markFailed(ctx context.Context, task *toolkitv1alp
 func (r *AgentTaskReconciler) handleSandboxTermination(
 	ctx context.Context,
 	req ctrl.Request,
-	task *toolkitv1alpha1.AgentTask,
-	claim *sandboxextv1alpha1.SandboxClaim,
 ) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
@@ -329,41 +327,52 @@ func (r *AgentTaskReconciler) handleSandboxTermination(
 	}
 
 	// Grace period: give the API time to process the runner's callback.
-	// Use an annotation to track the grace deadline.
-	const graceAnnotation = "shepherd.io/grace-deadline"
+	// Use a status field to track the grace deadline.
 	const graceDuration = 30 * time.Second
 
-	if deadline, ok := task.Annotations[graceAnnotation]; ok {
+	if freshTask.Status.GraceDeadline != nil {
 		// Grace period was already set — check if it has elapsed
-		deadlineTime, parseErr := time.Parse(time.RFC3339, deadline)
-		if parseErr != nil || time.Now().After(deadlineTime) {
-			// Grace period elapsed — classify and fail
-			reason, message := classifyClaimTermination(claim)
+		if time.Now().After(freshTask.Status.GraceDeadline.Time) {
+			// Grace period elapsed — refetch claim (it may have changed during grace period),
+			// classify termination reason, then clear GraceDeadline and mark failed
+			var freshClaim sandboxextv1alpha1.SandboxClaim
+			claimKey := client.ObjectKey{Namespace: freshTask.Namespace, Name: freshTask.Status.SandboxClaimName}
+			if err := r.Get(ctx, claimKey, &freshClaim); err != nil {
+				return ctrl.Result{}, fmt.Errorf("refetching claim: %w", err)
+			}
+
+			reason, message := classifyClaimTermination(&freshClaim)
 			log.Info("grace period elapsed, marking task terminal", "reason", reason)
-			// Clean up the annotation before marking failed
-			delete(task.Annotations, graceAnnotation)
-			if err := r.Update(ctx, task); err != nil {
-				return ctrl.Result{}, fmt.Errorf("removing grace annotation: %w", err)
+
+			// Clear GraceDeadline and mark failed in one status update
+			now := metav1.Now()
+			freshTask.Status.GraceDeadline = nil
+			freshTask.Status.CompletionTime = &now
+			freshTask.Status.Result.Error = message
+			setCondition(&freshTask, metav1.Condition{
+				Type:               toolkitv1alpha1.ConditionSucceeded,
+				Status:             metav1.ConditionFalse,
+				Reason:             reason,
+				Message:            message,
+				ObservedGeneration: freshTask.Generation,
+			})
+			if err := r.Status().Update(ctx, &freshTask); err != nil {
+				return ctrl.Result{}, fmt.Errorf("marking failed: %w", err)
 			}
-			// Refetch after metadata update to avoid conflict
-			if err := r.Get(ctx, req.NamespacedName, task); err != nil {
-				return ctrl.Result{}, fmt.Errorf("refetching task after annotation removal: %w", err)
-			}
-			return r.markFailed(ctx, task, reason, message)
+			r.Recorder.Eventf(&freshTask, nil, "Warning", reason, "Reconcile", message)
+			return ctrl.Result{}, nil
 		}
 		// Still within grace period — requeue until deadline
-		remaining := time.Until(deadlineTime)
+		remaining := time.Until(freshTask.Status.GraceDeadline.Time)
 		log.V(1).Info("within grace period, requeuing", "remaining", remaining)
 		return ctrl.Result{RequeueAfter: remaining}, nil
 	}
 
 	// First time seeing Ready=False while Running — start grace period
-	if task.Annotations == nil {
-		task.Annotations = make(map[string]string)
-	}
-	task.Annotations[graceAnnotation] = time.Now().Add(graceDuration).Format(time.RFC3339)
-	if err := r.Update(ctx, task); err != nil {
-		return ctrl.Result{}, fmt.Errorf("setting grace annotation: %w", err)
+	graceDeadline := metav1.NewTime(time.Now().Add(graceDuration))
+	freshTask.Status.GraceDeadline = &graceDeadline
+	if err := r.Status().Update(ctx, &freshTask); err != nil {
+		return ctrl.Result{}, fmt.Errorf("setting grace deadline: %w", err)
 	}
 	log.Info("started grace period for sandbox termination")
 	return ctrl.Result{RequeueAfter: graceDuration}, nil

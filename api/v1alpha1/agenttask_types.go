@@ -115,6 +115,11 @@ type AgentTaskStatus struct {
 	SandboxClaimName string             `json:"sandboxClaimName,omitempty"`
 	// +optional
 	Result TaskResult `json:"result,omitzero"`
+	// GraceDeadline tracks the deadline for the grace period when a sandbox
+	// terminates while the task is still running. This gives the API time to
+	// process success callbacks before marking the task as failed.
+	// +optional
+	GraceDeadline *metav1.Time `json:"graceDeadline,omitempty"`
 }
 
 type TaskResult struct {

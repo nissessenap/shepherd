@@ -258,6 +258,13 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              graceDeadline:
+                description: |-
+                  GraceDeadline tracks the deadline for the grace period when a sandbox
+                  terminates while the task is still running. This gives the API time to
+                  process success callbacks before marking the task as failed.
+                format: date-time
+                type: string
               observedGeneration:
                 format: int64
                 type: integer
