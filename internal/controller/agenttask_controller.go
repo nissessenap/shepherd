@@ -49,11 +49,6 @@ type AgentTaskReconciler struct {
 	HTTPClient *http.Client // Injectable for testing; defaults to http.DefaultClient
 }
 
-const (
-	taskAssignmentMaxRetries = 5
-	taskAssignmentRetryDelay = 2 * time.Second
-)
-
 // TaskAssignment is the payload POSTed to the runner's /task endpoint.
 type TaskAssignment struct {
 	TaskID string `json:"taskID"`
@@ -173,7 +168,7 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 		// POST task assignment to the runner
 		assignment := TaskAssignment{
-			TaskID: string(task.UID),
+			TaskID: task.Name,
 			APIURL: r.APIURL,
 		}
 		if err := r.assignTask(ctx, sandbox.Status.ServiceFQDN, assignment); err != nil {
@@ -209,7 +204,9 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 }
 
-// assignTask POSTs a task assignment to the runner's HTTP endpoint with retries.
+// assignTask POSTs a task assignment to the runner's HTTP endpoint.
+// Returns nil on success (200 OK or 409 Conflict), error otherwise.
+// The caller handles retries via controller-runtime's RequeueAfter.
 func (r *AgentTaskReconciler) assignTask(ctx context.Context, sandboxFQDN string, assignment TaskAssignment) error {
 	log := logf.FromContext(ctx)
 	httpClient := r.HTTPClient
@@ -217,44 +214,29 @@ func (r *AgentTaskReconciler) assignTask(ctx context.Context, sandboxFQDN string
 		httpClient = http.DefaultClient
 	}
 
-	var lastErr error
-	for attempt := range taskAssignmentMaxRetries {
-		if attempt > 0 {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(taskAssignmentRetryDelay):
-			}
-		}
-
-		body, err := json.Marshal(assignment)
-		if err != nil {
-			return fmt.Errorf("marshaling assignment: %w", err)
-		}
-
-		url := fmt.Sprintf("http://%s:8888/task", sandboxFQDN)
-		resp, err := httpClient.Post(url, "application/json", bytes.NewReader(body))
-		if err != nil {
-			lastErr = err
-			log.V(1).Info("task assignment attempt failed", "attempt", attempt+1, "error", err)
-			continue
-		}
-		_, _ = io.Copy(io.Discard, resp.Body)
-		_ = resp.Body.Close()
-
-		switch resp.StatusCode {
-		case http.StatusOK:
-			return nil
-		case http.StatusConflict:
-			// Runner already has this task (idempotent retry after crash)
-			log.V(1).Info("runner already has task (409), treating as success")
-			return nil
-		default:
-			lastErr = fmt.Errorf("runner returned %d", resp.StatusCode)
-			log.V(1).Info("task assignment attempt got unexpected status", "attempt", attempt+1, "status", resp.StatusCode)
-		}
+	body, err := json.Marshal(assignment)
+	if err != nil {
+		return fmt.Errorf("marshaling assignment: %w", err)
 	}
-	return fmt.Errorf("task assignment failed after %d attempts: %w", taskAssignmentMaxRetries, lastErr)
+
+	url := fmt.Sprintf("http://%s:8888/task", sandboxFQDN)
+	resp, err := httpClient.Post(url, "application/json", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("posting to runner: %w", err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return nil
+	case http.StatusConflict:
+		// Runner already has this task (idempotent retry after crash)
+		log.V(1).Info("runner already has task (409), treating as success")
+		return nil
+	default:
+		return fmt.Errorf("runner returned %d", resp.StatusCode)
+	}
 }
 
 // cleanupSandboxClaim deletes the SandboxClaim if it still exists for a terminal task.

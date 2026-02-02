@@ -397,7 +397,7 @@ func TestExtractStatus_WithCondition(t *testing.T) {
 					Type:    toolkitv1alpha1.ConditionSucceeded,
 					Status:  metav1.ConditionUnknown,
 					Reason:  toolkitv1alpha1.ReasonRunning,
-					Message: "Job is running",
+					Message: "Task is running",
 				},
 			},
 			SandboxClaimName: "task-abc-1-job",
@@ -405,7 +405,7 @@ func TestExtractStatus_WithCondition(t *testing.T) {
 	}
 	status := extractStatus(task)
 	assert.Equal(t, "Running", status.Phase)
-	assert.Equal(t, "Job is running", status.Message)
+	assert.Equal(t, "Task is running", status.Message)
 	assert.Equal(t, "task-abc-1-job", status.SandboxClaimName)
 }
 
@@ -645,7 +645,7 @@ func TestGetTask_ReturnsTaskDetails(t *testing.T) {
 			Type:    toolkitv1alpha1.ConditionSucceeded,
 			Status:  metav1.ConditionUnknown,
 			Reason:  toolkitv1alpha1.ReasonRunning,
-			Message: "Job is running",
+			Message: "Task is running",
 		},
 	})
 
@@ -662,7 +662,7 @@ func TestGetTask_ReturnsTaskDetails(t *testing.T) {
 	assert.Equal(t, "default", resp.Namespace)
 	assert.Equal(t, "https://github.com/test/repo", resp.Repo.URL)
 	assert.Equal(t, "Running", resp.Status.Phase)
-	assert.Equal(t, "Job is running", resp.Status.Message)
+	assert.Equal(t, "Task is running", resp.Status.Message)
 }
 
 func TestGetTask_NotFound(t *testing.T) {

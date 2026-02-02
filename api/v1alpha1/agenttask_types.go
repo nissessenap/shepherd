@@ -73,6 +73,7 @@ type TaskSpec struct {
 	SourceURL string `json:"sourceURL,omitempty"`
 
 	// SourceType identifies the trigger type: "issue", "pr", or "fleet".
+	// +kubebuilder:validation:Enum="";issue;pr;fleet
 	SourceType string `json:"sourceType,omitempty"`
 
 	// SourceID identifies the specific trigger instance (e.g., issue number).

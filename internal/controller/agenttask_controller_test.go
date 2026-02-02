@@ -22,6 +22,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"sync/atomic"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -30,6 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -196,12 +198,10 @@ var _ = Describe("AgentTask Controller", func() {
 		var (
 			taskName string
 			taskNN   types.NamespacedName
-			testIdx  int
 		)
 
 		BeforeEach(func() {
-			testIdx++
-			taskName = fmt.Sprintf("test-claim-%d", testIdx)
+			taskName = fmt.Sprintf("test-claim-%s", rand.String(8))
 			taskNN = types.NamespacedName{Name: taskName, Namespace: resourceNamespace}
 		})
 
@@ -420,10 +420,10 @@ var _ = Describe("AgentTask Controller", func() {
 			Expect(result.RequeueAfter).To(BeZero())
 
 			By("Verifying POST body contains taskID and apiURL")
-			// Fetch the task to get its UID
+			// Fetch the task to get its name
 			var task toolkitv1alpha1.AgentTask
 			Expect(k8sClient.Get(ctx, taskNN, &task)).To(Succeed())
-			Expect(receivedAssignment.TaskID).To(Equal(string(task.UID)))
+			Expect(receivedAssignment.TaskID).To(Equal(task.Name))
 			Expect(receivedAssignment.APIURL).To(Equal("http://shepherd-api.shepherd.svc.cluster.local:8080"))
 			Expect(receivedContentType).To(Equal("application/json"))
 
@@ -651,7 +651,8 @@ type rewriteTransport struct {
 
 func (t *rewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	// Rewrite the URL to point to the test server
-	req.URL.Scheme = "http"
-	req.URL.Host = t.targetURL[len("http://"):]
+	parsed, _ := url.Parse(t.targetURL)
+	req.URL.Scheme = parsed.Scheme
+	req.URL.Host = parsed.Host
 	return t.base.RoundTrip(req)
 }

@@ -173,6 +173,11 @@ spec:
                   sourceType:
                     description: 'SourceType identifies the trigger type: "issue",
                       "pr", or "fleet".'
+                    enum:
+                    - ""
+                    - issue
+                    - pr
+                    - fleet
                     type: string
                   sourceURL:
                     description: SourceURL is the origin of the task (e.g., GitHub
