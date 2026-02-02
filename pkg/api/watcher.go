@@ -171,8 +171,8 @@ func (w *statusWatcher) handleTerminalTransition(ctx context.Context, task *tool
 		Message: succeededCond.Message,
 		Details: map[string]any{},
 	}
-	if fresh.Status.Result.PRUrl != "" {
-		payload.Details["pr_url"] = fresh.Status.Result.PRUrl
+	if fresh.Status.Result.PRURL != "" {
+		payload.Details["pr_url"] = fresh.Status.Result.PRURL
 	}
 	if fresh.Status.Result.Error != "" {
 		payload.Details["error"] = fresh.Status.Result.Error

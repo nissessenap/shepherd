@@ -123,7 +123,7 @@ func TestUpdateTaskStatus_CompletedWithPRUrl(t *testing.T) {
 	var updated toolkitv1alpha1.AgentTask
 	err := h.client.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "task-abc"}, &updated)
 	require.NoError(t, err)
-	assert.Equal(t, "https://github.com/org/repo/pull/1", updated.Status.Result.PRUrl)
+	assert.Equal(t, "https://github.com/org/repo/pull/1", updated.Status.Result.PRURL)
 
 	notified := apimeta.FindStatusCondition(updated.Status.Conditions, toolkitv1alpha1.ConditionNotified)
 	require.NotNil(t, notified)

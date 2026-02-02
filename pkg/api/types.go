@@ -28,7 +28,7 @@ const (
 type CreateTaskRequest struct {
 	Repo     RepoRequest       `json:"repo"`
 	Task     TaskRequest       `json:"task"`
-	Callback string            `json:"callbackUrl"`
+	Callback string            `json:"callbackURL"`
 	Runner   *RunnerConfig     `json:"runner,omitempty"`
 	Labels   map[string]string `json:"labels,omitempty"`
 }
@@ -61,7 +61,7 @@ type TaskResponse struct {
 	Namespace      string            `json:"namespace"`
 	Repo           RepoRequest       `json:"repo"`
 	Task           TaskRequest       `json:"task"`
-	CallbackURL    string            `json:"callbackUrl"`
+	CallbackURL    string            `json:"callbackURL"`
 	Status         TaskStatusSummary `json:"status"`
 	CreatedAt      string            `json:"createdAt"`
 	CompletionTime *string           `json:"completionTime,omitempty"`
@@ -72,7 +72,7 @@ type TaskStatusSummary struct {
 	Phase            string `json:"phase"`
 	Message          string `json:"message"`
 	SandboxClaimName string `json:"sandboxClaimName,omitempty"`
-	PRUrl            string `json:"prUrl,omitempty"`
+	PRURL            string `json:"prURL,omitempty"`
 	Error            string `json:"error,omitempty"`
 }
 
@@ -85,7 +85,7 @@ type StatusUpdateRequest struct {
 
 // CallbackPayload is the JSON body sent to adapters.
 type CallbackPayload struct {
-	TaskID  string         `json:"taskId"`
+	TaskID  string         `json:"taskID"`
 	Event   string         `json:"event"` // started, progress, completed, failed
 	Message string         `json:"message"`
 	Details map[string]any `json:"details,omitempty"`

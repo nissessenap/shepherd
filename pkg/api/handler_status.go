@@ -102,7 +102,7 @@ func (h *taskHandler) updateTaskStatus(w http.ResponseWriter, r *http.Request) {
 		switch req.Event {
 		case EventCompleted:
 			if prURL, ok := req.Details["pr_url"].(string); ok {
-				task.Status.Result.PRUrl = prURL
+				task.Status.Result.PRURL = prURL
 			}
 		case EventFailed:
 			if errMsg, ok := req.Details["error"].(string); ok {
