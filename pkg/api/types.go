@@ -91,6 +91,20 @@ type CallbackPayload struct {
 	Details map[string]any `json:"details,omitempty"`
 }
 
+// TaskDataResponse is the JSON response for GET /api/v1/tasks/{taskID}/data.
+type TaskDataResponse struct {
+	Description string      `json:"description"`
+	Context     string      `json:"context"`
+	SourceURL   string      `json:"sourceURL,omitempty"`
+	Repo        RepoRequest `json:"repo"`
+}
+
+// TokenResponse is the JSON response for GET /api/v1/tasks/{taskID}/token.
+type TokenResponse struct {
+	Token     string `json:"token"`
+	ExpiresAt string `json:"expiresAt"`
+}
+
 // ErrorResponse is the standard error response.
 type ErrorResponse struct {
 	Error   string `json:"error"`

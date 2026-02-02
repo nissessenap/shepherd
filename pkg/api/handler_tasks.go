@@ -17,6 +17,7 @@ limitations under the License.
 package api
 
 import (
+	"crypto/rsa"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -35,11 +36,18 @@ import (
 	toolkitv1alpha1 "github.com/NissesSenap/shepherd/api/v1alpha1"
 )
 
+const maxCompressedContextSize = 1_400_000 // ~1.4MB, etcd limit minus overhead
+
 // taskHandler holds dependencies for task endpoints.
 type taskHandler struct {
-	client    client.Client
-	namespace string
-	callback  *callbackSender
+	client          client.Client
+	namespace       string
+	callback        *callbackSender
+	githubAppID     int64
+	githubInstallID int64
+	githubAPIURL    string
+	githubKey       *rsa.PrivateKey // Loaded once at startup
+	httpClient      *http.Client    // For GitHub API calls; defaults to http.DefaultClient
 }
 
 // createTask handles POST /api/v1/tasks.
@@ -114,6 +122,12 @@ func (h *taskHandler) createTask(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			log.Error(err, "failed to compress context")
 			writeError(w, http.StatusInternalServerError, "failed to compress context", "")
+			return
+		}
+		if len(compressedCtx) > maxCompressedContextSize {
+			writeError(w, http.StatusRequestEntityTooLarge,
+				"compressed context exceeds size limit",
+				fmt.Sprintf("compressed size %d exceeds %d byte limit", len(compressedCtx), maxCompressedContextSize))
 			return
 		}
 	}
@@ -207,6 +221,9 @@ func (h *taskHandler) listTasks(w http.ResponseWriter, r *http.Request) {
 	}
 	if issue := r.URL.Query().Get("issue"); issue != "" {
 		labelSelector["shepherd.io/issue"] = issue
+	}
+	if fleet := r.URL.Query().Get("fleet"); fleet != "" {
+		labelSelector["shepherd.io/fleet"] = fleet
 	}
 	if len(labelSelector) > 0 {
 		listOpts = append(listOpts, client.MatchingLabels(labelSelector))

@@ -939,10 +939,10 @@ type APICmd struct {
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `go mod tidy` succeeds (jwt dependency added)
-- [ ] `make build` compiles
-- [ ] `make test` passes — all new endpoint tests pass
-- [ ] `make lint` passes
+- [x] `go mod tidy` succeeds (jwt dependency added)
+- [x] `make build` compiles
+- [x] `make test` passes — all new endpoint tests pass
+- [x] `make lint` passes
 
 ---
 

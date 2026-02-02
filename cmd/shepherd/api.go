@@ -21,15 +21,23 @@ import (
 )
 
 type APICmd struct {
-	ListenAddr     string `help:"API listen address" default:":8080" env:"SHEPHERD_API_ADDR"`
-	CallbackSecret string `help:"HMAC secret for adapter callbacks" env:"SHEPHERD_CALLBACK_SECRET"`
-	Namespace      string `help:"Namespace for task creation" default:"shepherd" env:"SHEPHERD_NAMESPACE"`
+	ListenAddr           string `help:"API listen address" default:":8080" env:"SHEPHERD_API_ADDR"`
+	CallbackSecret       string `help:"HMAC secret for adapter callbacks" env:"SHEPHERD_CALLBACK_SECRET"`
+	Namespace            string `help:"Namespace for task creation" default:"shepherd" env:"SHEPHERD_NAMESPACE"`
+	GithubAppID          int64  `help:"GitHub Runner App ID" required:"" env:"SHEPHERD_GITHUB_APP_ID"`
+	GithubInstallationID int64  `help:"GitHub Installation ID" required:"" env:"SHEPHERD_GITHUB_INSTALLATION_ID"`
+	GithubAPIURL         string `help:"GitHub API URL" default:"https://api.github.com" env:"SHEPHERD_GITHUB_API_URL"`
+	GithubPrivateKeyPath string `help:"Path to Runner App private key" required:"" env:"SHEPHERD_GITHUB_PRIVATE_KEY_PATH"`
 }
 
 func (c *APICmd) Run(_ *CLI) error {
 	return api.Run(api.Options{
-		ListenAddr:     c.ListenAddr,
-		CallbackSecret: c.CallbackSecret,
-		Namespace:      c.Namespace,
+		ListenAddr:           c.ListenAddr,
+		CallbackSecret:       c.CallbackSecret,
+		Namespace:            c.Namespace,
+		GithubAppID:          c.GithubAppID,
+		GithubInstallationID: c.GithubInstallationID,
+		GithubAPIURL:         c.GithubAPIURL,
+		GithubPrivateKeyPath: c.GithubPrivateKeyPath,
 	})
 }
