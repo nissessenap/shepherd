@@ -25,6 +25,7 @@ import (
 	"net/http"
 	"time"
 
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -132,6 +133,16 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		r.Recorder.Eventf(&task, nil, "Normal", "SandboxClaimCreated", "Reconcile", "Created sandbox claim %s", newClaim.Name)
 		log.Info("created sandbox claim", "claim", newClaim.Name)
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	}
+
+	// 5a. Claim exists — backfill SandboxClaimName if empty (e.g., after crash between creation and status update)
+	if task.Status.SandboxClaimName == "" {
+		task.Status.SandboxClaimName = claim.Name
+		if statusErr := r.Status().Update(ctx, &task); statusErr != nil {
+			return ctrl.Result{}, fmt.Errorf("backfilling sandbox claim name: %w", statusErr)
+		}
+		log.Info("backfilled sandbox claim name", "claim", claim.Name)
+		return ctrl.Result{RequeueAfter: time.Second}, nil
 	}
 
 	// 6. SandboxClaim exists — check Ready condition
@@ -271,13 +282,16 @@ func (r *AgentTaskReconciler) assignTask(ctx context.Context, sandboxFQDN string
 
 // cleanupSandboxClaim deletes the SandboxClaim if it still exists for a terminal task.
 func (r *AgentTaskReconciler) cleanupSandboxClaim(ctx context.Context, task *toolkitv1alpha1.AgentTask) error {
-	if task.Status.SandboxClaimName == "" {
-		return nil
-	}
 	log := logf.FromContext(ctx)
 
+	// Use SandboxClaimName from status if available, otherwise fall back to task.Name (deterministic)
+	claimName := task.Status.SandboxClaimName
+	if claimName == "" {
+		claimName = task.Name
+	}
+
 	var claim sandboxextv1alpha1.SandboxClaim
-	claimKey := client.ObjectKey{Namespace: task.Namespace, Name: task.Status.SandboxClaimName}
+	claimKey := client.ObjectKey{Namespace: task.Namespace, Name: claimName}
 	if err := r.Get(ctx, claimKey, &claim); err != nil {
 		return client.IgnoreNotFound(err)
 	}
@@ -337,15 +351,36 @@ func (r *AgentTaskReconciler) handleSandboxTermination(
 		// Grace period was already set — check if it has elapsed
 		if time.Now().After(freshTask.Status.GraceDeadline.Time) {
 			// Grace period elapsed — refetch claim (it may have changed during grace period),
-			// classify termination reason, then clear GraceDeadline and mark failed
-			var freshClaim sandboxextv1alpha1.SandboxClaim
-			claimKey := client.ObjectKey{Namespace: freshTask.Namespace, Name: freshTask.Status.SandboxClaimName}
-			if err := r.Get(ctx, claimKey, &freshClaim); err != nil {
-				return ctrl.Result{}, fmt.Errorf("refetching claim: %w", err)
+			// classify termination reason, then cleanup claim and mark failed
+
+			// Use SandboxClaimName from status if available, otherwise fall back to task.Name (deterministic)
+			claimName := freshTask.Status.SandboxClaimName
+			if claimName == "" {
+				claimName = freshTask.Name
 			}
 
-			reason, message := classifyClaimTermination(&freshClaim)
-			log.Info("grace period elapsed, marking task terminal", "reason", reason)
+			var freshClaim sandboxextv1alpha1.SandboxClaim
+			claimKey := client.ObjectKey{Namespace: freshTask.Namespace, Name: claimName}
+			reason := toolkitv1alpha1.ReasonFailed
+			message := "Sandbox terminated unexpectedly"
+
+			if err := r.Get(ctx, claimKey, &freshClaim); err != nil {
+				if !errors.IsNotFound(err) {
+					return ctrl.Result{}, fmt.Errorf("refetching claim: %w", err)
+				}
+				// Claim is gone — use generic message
+				log.V(1).Info("claim not found during grace expiration, using generic failure message")
+			} else {
+				// Classify termination based on claim status
+				reason, message = classifyClaimTermination(&freshClaim)
+			}
+
+			log.Info("grace period elapsed, cleaning up and marking task terminal", "reason", reason)
+
+			// Cleanup claim before marking terminal (status-only updates won't retrigger reconciliation)
+			if err := r.cleanupSandboxClaim(ctx, &freshTask); err != nil {
+				return ctrl.Result{}, err
+			}
 
 			// Clear GraceDeadline and mark failed in one status update
 			now := metav1.Now()

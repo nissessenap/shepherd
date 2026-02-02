@@ -23,6 +23,7 @@ import (
 	"maps"
 	"net/http"
 	"net/url"
+	"regexp"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -37,6 +38,21 @@ import (
 )
 
 const maxCompressedContextSize = 1_400_000 // ~1.4MB, etcd limit minus overhead
+
+// Kubernetes label value regex: must be ≤63 characters and match [a-z0-9A-Z]([a-z0-9A-Z-_.]*[a-z0-9A-Z])? (or empty)
+var labelValueRegex = regexp.MustCompile(`^$|^[a-z0-9A-Z]([a-z0-9A-Z-_.]*[a-z0-9A-Z])?$`)
+
+// validateLabelValue checks if a string is a valid Kubernetes label value.
+// Returns an error if the value exceeds 63 characters or doesn't match the required pattern.
+func validateLabelValue(value string) error {
+	if len(value) > 63 {
+		return fmt.Errorf("label value exceeds 63 characters (got %d)", len(value))
+	}
+	if !labelValueRegex.MatchString(value) {
+		return fmt.Errorf("label value contains invalid characters or format")
+	}
+	return nil
+}
 
 // taskHandler holds dependencies for task endpoints.
 type taskHandler struct {
@@ -150,6 +166,20 @@ func (h *taskHandler) createTask(w http.ResponseWriter, r *http.Request) {
 		runnerSpec.ServiceAccountName = req.Runner.ServiceAccountName
 	}
 
+	// Validate SourceType and SourceID as Kubernetes label values
+	if req.Task.SourceType != "" {
+		if err := validateLabelValue(req.Task.SourceType); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid task.sourceType for Kubernetes label", err.Error())
+			return
+		}
+	}
+	if req.Task.SourceID != "" {
+		if err := validateLabelValue(req.Task.SourceID); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid task.sourceID for Kubernetes label", err.Error())
+			return
+		}
+	}
+
 	// Build labels — pass through adapter-provided labels
 	labels := make(map[string]string)
 	maps.Copy(labels, req.Labels)
@@ -190,6 +220,10 @@ func (h *taskHandler) createTask(w http.ResponseWriter, r *http.Request) {
 	if err := h.client.Create(r.Context(), task); err != nil {
 		if errors.IsAlreadyExists(err) {
 			writeError(w, http.StatusConflict, "task already exists", err.Error())
+			return
+		}
+		if errors.IsInvalid(err) {
+			writeError(w, http.StatusBadRequest, "invalid task specification", err.Error())
 			return
 		}
 		log.Error(err, "failed to create task")
