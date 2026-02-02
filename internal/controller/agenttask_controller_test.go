@@ -336,7 +336,7 @@ var _ = Describe("AgentTask Controller", func() {
 
 			result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: taskNN})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RequeueAfter).To(BeZero())
+			Expect(result.RequeueAfter).To(BeNumerically(">", 0), "should schedule requeue for timeout enforcement")
 
 			var task toolkitv1alpha1.AgentTask
 			Expect(k8sClient.Get(ctx, taskNN, &task)).To(Succeed())
@@ -419,7 +419,7 @@ var _ = Describe("AgentTask Controller", func() {
 			By("Reconciling — should POST assignment and transition to Running")
 			result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: taskNN})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RequeueAfter).To(BeZero())
+			Expect(result.RequeueAfter).To(BeNumerically(">", 0), "should schedule requeue for timeout enforcement")
 
 			By("Verifying POST body contains taskID and apiURL")
 			// Fetch the task to get its name
@@ -450,10 +450,10 @@ var _ = Describe("AgentTask Controller", func() {
 			})
 			defer server.Close()
 
-			By("Reconciling — should transition to Running")
+			By("Reconciling — should transition to Running and schedule timeout requeue")
 			result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: taskNN})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RequeueAfter).To(BeZero())
+			Expect(result.RequeueAfter).To(BeNumerically(">", 0), "should schedule requeue for timeout enforcement")
 
 			By("Verifying Running condition")
 			var task toolkitv1alpha1.AgentTask
@@ -479,10 +479,10 @@ var _ = Describe("AgentTask Controller", func() {
 			})
 			defer server.Close()
 
-			By("Reconciling again — already Running, should not POST")
+			By("Reconciling again — already Running, should not POST but should schedule timeout requeue")
 			result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: taskNN})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RequeueAfter).To(BeZero())
+			Expect(result.RequeueAfter).To(BeNumerically(">", 0), "should schedule requeue for timeout enforcement")
 			Expect(callCount.Load()).To(Equal(int32(0)), "should not POST to runner when already Running")
 
 			By("Verifying condition is still Running")
@@ -510,7 +510,7 @@ var _ = Describe("AgentTask Controller", func() {
 			By("Reconciling — should treat 409 as success and set Running")
 			result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: taskNN})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RequeueAfter).To(BeZero())
+			Expect(result.RequeueAfter).To(BeNumerically(">", 0), "should schedule requeue for timeout enforcement")
 
 			By("Verifying Running condition")
 			var task toolkitv1alpha1.AgentTask

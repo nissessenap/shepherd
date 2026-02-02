@@ -154,8 +154,10 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 				return r.markFailed(ctx, &task, toolkitv1alpha1.ReasonTimedOut,
 					fmt.Sprintf("Task exceeded timeout of %s", task.Spec.Runner.Timeout.Duration))
 			}
-			log.V(1).Info("sandbox ready and task already running", "claim", claim.Name)
-			return ctrl.Result{}, nil
+			// Requeue at the timeout deadline so it fires even without external events.
+			remaining := max(time.Until(task.Status.StartTime.Add(taskTimeout(&task))), time.Second)
+			log.V(1).Info("sandbox ready and task already running", "claim", claim.Name, "requeueIn", remaining)
+			return ctrl.Result{RequeueAfter: remaining}, nil
 		}
 
 		// GET Sandbox by name to read ServiceFQDN
@@ -200,7 +202,8 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 		r.Recorder.Eventf(&task, nil, "Normal", "Running", "Reconcile", "Task assigned to sandbox %s", sandboxName)
 		log.Info("task assigned and running", "sandbox", sandboxName, "claim", claim.Name)
-		return ctrl.Result{}, nil
+		// Schedule requeue at timeout deadline.
+		return ctrl.Result{RequeueAfter: taskTimeout(&task)}, nil
 	}
 
 	// 6b. Ready=False and task was previously Running → sandbox terminated
@@ -400,16 +403,22 @@ func classifyClaimTermination(claim *sandboxextv1alpha1.SandboxClaim) (string, s
 	return toolkitv1alpha1.ReasonFailed, fmt.Sprintf("Sandbox terminated: %s", readyCond.Message)
 }
 
+const defaultTimeout = 30 * time.Minute
+
+// taskTimeout returns the configured timeout or the default (30m).
+func taskTimeout(task *toolkitv1alpha1.AgentTask) time.Duration {
+	if d := task.Spec.Runner.Timeout.Duration; d > 0 {
+		return d
+	}
+	return defaultTimeout
+}
+
 // checkTimeout returns true if the task has exceeded its timeout duration.
 func checkTimeout(task *toolkitv1alpha1.AgentTask) bool {
 	if task.Status.StartTime == nil {
 		return false
 	}
-	timeout := task.Spec.Runner.Timeout.Duration
-	if timeout == 0 {
-		timeout = 30 * time.Minute
-	}
-	return time.Now().After(task.Status.StartTime.Add(timeout))
+	return time.Now().After(task.Status.StartTime.Add(taskTimeout(task)))
 }
 
 // SetupWithManager sets up the controller with the Manager.

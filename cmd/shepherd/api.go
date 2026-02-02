@@ -17,6 +17,8 @@ limitations under the License.
 package main
 
 import (
+	"fmt"
+
 	"github.com/NissesSenap/shepherd/pkg/api"
 )
 
@@ -31,6 +33,13 @@ type APICmd struct {
 }
 
 func (c *APICmd) Run(_ *CLI) error {
+	githubFlagsSet := c.GithubAppID != 0 || c.GithubInstallationID != 0 || c.GithubPrivateKeyPath != ""
+	if githubFlagsSet {
+		if c.GithubAppID == 0 || c.GithubInstallationID == 0 || c.GithubPrivateKeyPath == "" {
+			return fmt.Errorf("github-app-id, github-installation-id, and github-private-key-path must all be set together")
+		}
+	}
+
 	return api.Run(api.Options{
 		ListenAddr:           c.ListenAddr,
 		CallbackSecret:       c.CallbackSecret,
