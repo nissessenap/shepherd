@@ -52,6 +52,7 @@ func newMux(assigned chan<- TaskAssignment) *http.ServeMux {
 		_, _ = w.Write([]byte("ok"))
 	})
 	mux.HandleFunc("POST /task", func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1MB limit
 		var ta TaskAssignment
 		if err := json.NewDecoder(r.Body).Decode(&ta); err != nil {
 			http.Error(w, "invalid request", http.StatusBadRequest)
