@@ -671,9 +671,9 @@ Unit tests for `classifyClaimTermination()`:
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `make build` compiles
-- [ ] `make test` passes — failure and timeout tests pass
-- [ ] `make lint` passes
+- [x] `make build` compiles
+- [x] `make test` passes — failure and timeout tests pass
+- [x] `make lint` passes
 
 ---
 

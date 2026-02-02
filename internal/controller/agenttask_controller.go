@@ -143,7 +143,15 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// 6a. Ready=True → assign task to runner, then transition to Running
 	if readyCond != nil && readyCond.Status == metav1.ConditionTrue {
 		if isRunning {
-			// Already Running — assignment already succeeded
+			// Already Running — assignment already succeeded; check timeout
+			if checkTimeout(&task) {
+				log.Info("task timed out", "task", req.NamespacedName, "timeout", task.Spec.Runner.Timeout.Duration)
+				if err := r.cleanupSandboxClaim(ctx, &task); err != nil {
+					return ctrl.Result{}, err
+				}
+				return r.markFailed(ctx, &task, toolkitv1alpha1.ReasonTimedOut,
+					fmt.Sprintf("Task exceeded timeout of %s", task.Spec.Runner.Timeout.Duration))
+			}
 			log.V(1).Info("sandbox ready and task already running", "claim", claim.Name)
 			return ctrl.Result{}, nil
 		}
@@ -196,8 +204,17 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// 6b. Ready=False and task was previously Running → sandbox terminated
 	if readyCond != nil && readyCond.Status == metav1.ConditionFalse && isRunning {
 		log.Info("sandbox terminated while task was running", "claim", claim.Name, "reason", readyCond.Reason)
-		return r.markFailed(ctx, &task, toolkitv1alpha1.ReasonFailed,
-			fmt.Sprintf("Sandbox terminated: %s", readyCond.Message))
+		return r.handleSandboxTermination(ctx, req, &task, &claim)
+	}
+
+	// 7. Timeout check — if Running and timeout exceeded, mark TimedOut
+	if isRunning && checkTimeout(&task) {
+		log.Info("task timed out", "task", req.NamespacedName, "timeout", task.Spec.Runner.Timeout.Duration)
+		if err := r.cleanupSandboxClaim(ctx, &task); err != nil {
+			return ctrl.Result{}, err
+		}
+		return r.markFailed(ctx, &task, toolkitv1alpha1.ReasonTimedOut,
+			fmt.Sprintf("Task exceeded timeout of %s", task.Spec.Runner.Timeout.Duration))
 	}
 
 	// 6c. Ready condition nil, False, or Unknown AND task not yet Running → still starting
@@ -282,6 +299,105 @@ func (r *AgentTaskReconciler) markFailed(ctx context.Context, task *toolkitv1alp
 	}
 	r.Recorder.Eventf(task, nil, "Warning", reason, "Reconcile", message)
 	return ctrl.Result{}, nil
+}
+
+// handleSandboxTermination manages the grace period when a sandbox terminates
+// while the task is still Running. This gives the API time to process the
+// runner's success callback before we mark the task as failed.
+func (r *AgentTaskReconciler) handleSandboxTermination(
+	ctx context.Context,
+	req ctrl.Request,
+	task *toolkitv1alpha1.AgentTask,
+	claim *sandboxextv1alpha1.SandboxClaim,
+) (ctrl.Result, error) {
+	log := logf.FromContext(ctx)
+
+	// Refetch the task — the API may have updated it to terminal via callback
+	var freshTask toolkitv1alpha1.AgentTask
+	if err := r.Get(ctx, req.NamespacedName, &freshTask); err != nil {
+		return ctrl.Result{}, fmt.Errorf("refetching task: %w", err)
+	}
+	if freshTask.IsTerminal() {
+		log.Info("task already terminal after refetch, cleaning up SandboxClaim")
+		if err := r.cleanupSandboxClaim(ctx, &freshTask); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, nil
+	}
+
+	// Grace period: give the API time to process the runner's callback.
+	// Use an annotation to track the grace deadline.
+	const graceAnnotation = "shepherd.io/grace-deadline"
+	const graceDuration = 30 * time.Second
+
+	if deadline, ok := task.Annotations[graceAnnotation]; ok {
+		// Grace period was already set — check if it has elapsed
+		deadlineTime, parseErr := time.Parse(time.RFC3339, deadline)
+		if parseErr != nil || time.Now().After(deadlineTime) {
+			// Grace period elapsed — classify and fail
+			reason, message := classifyClaimTermination(claim)
+			log.Info("grace period elapsed, marking task terminal", "reason", reason)
+			// Clean up the annotation before marking failed
+			delete(task.Annotations, graceAnnotation)
+			if err := r.Update(ctx, task); err != nil {
+				return ctrl.Result{}, fmt.Errorf("removing grace annotation: %w", err)
+			}
+			// Refetch after metadata update to avoid conflict
+			if err := r.Get(ctx, req.NamespacedName, task); err != nil {
+				return ctrl.Result{}, fmt.Errorf("refetching task after annotation removal: %w", err)
+			}
+			return r.markFailed(ctx, task, reason, message)
+		}
+		// Still within grace period — requeue until deadline
+		remaining := time.Until(deadlineTime)
+		log.V(1).Info("within grace period, requeuing", "remaining", remaining)
+		return ctrl.Result{RequeueAfter: remaining}, nil
+	}
+
+	// First time seeing Ready=False while Running — start grace period
+	if task.Annotations == nil {
+		task.Annotations = make(map[string]string)
+	}
+	task.Annotations[graceAnnotation] = time.Now().Add(graceDuration).Format(time.RFC3339)
+	if err := r.Update(ctx, task); err != nil {
+		return ctrl.Result{}, fmt.Errorf("setting grace annotation: %w", err)
+	}
+	log.Info("started grace period for sandbox termination")
+	return ctrl.Result{RequeueAfter: graceDuration}, nil
+}
+
+// Condition reasons used by agent-sandbox controllers. These are string literals
+// in agent-sandbox v0.1.0; upstream defines them as constants in later versions.
+const (
+	reasonSandboxExpired = "SandboxExpired"
+	reasonClaimExpired   = "ClaimExpired"
+)
+
+// classifyClaimTermination inspects SandboxClaim conditions to determine the
+// failure reason. SandboxExpired and ClaimExpired map to TimedOut; all others
+// map to Failed.
+func classifyClaimTermination(claim *sandboxextv1alpha1.SandboxClaim) (string, string) {
+	readyCond := meta.FindStatusCondition(claim.Status.Conditions, string(sandboxv1alpha1.SandboxConditionReady))
+	if readyCond == nil {
+		return toolkitv1alpha1.ReasonFailed, "SandboxClaim status unavailable"
+	}
+	if readyCond.Reason == reasonSandboxExpired ||
+		readyCond.Reason == reasonClaimExpired {
+		return toolkitv1alpha1.ReasonTimedOut, "Sandbox expired"
+	}
+	return toolkitv1alpha1.ReasonFailed, fmt.Sprintf("Sandbox terminated: %s", readyCond.Message)
+}
+
+// checkTimeout returns true if the task has exceeded its timeout duration.
+func checkTimeout(task *toolkitv1alpha1.AgentTask) bool {
+	if task.Status.StartTime == nil {
+		return false
+	}
+	timeout := task.Spec.Runner.Timeout.Duration
+	if timeout == 0 {
+		timeout = 30 * time.Minute
+	}
+	return time.Now().After(task.Status.StartTime.Add(timeout))
 }
 
 // SetupWithManager sets up the controller with the Manager.

@@ -24,6 +24,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"sync/atomic"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -571,7 +572,7 @@ var _ = Describe("AgentTask Controller", func() {
 			Expect(result.RequeueAfter).To(BeNumerically(">", 0))
 		})
 
-		It("should mark Failed when SandboxClaim Ready=False and task was Running", func() {
+		It("should requeue with grace period when SandboxClaim Ready=False and task Running", func() {
 			createAgentTask(taskName, resourceNamespace)
 			reconcileToPending()
 			claimName := reconcileToClaimed()
@@ -593,13 +594,59 @@ var _ = Describe("AgentTask Controller", func() {
 			})
 			Expect(k8sClient.Status().Update(ctx, &claim)).To(Succeed())
 
-			By("Reconciling — should mark Failed")
+			By("First reconcile — should start grace period and requeue")
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: taskNN})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(BeNumerically(">", 0), "should requeue for grace period")
+
+			By("Verifying grace annotation is set")
+			var task toolkitv1alpha1.AgentTask
+			Expect(k8sClient.Get(ctx, taskNN, &task)).To(Succeed())
+			Expect(task.Annotations).To(HaveKey("shepherd.io/grace-deadline"))
+
+			By("Verifying task is still Running (not yet Failed)")
+			cond := meta.FindStatusCondition(task.Status.Conditions, toolkitv1alpha1.ConditionSucceeded)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(toolkitv1alpha1.ReasonRunning))
+		})
+
+		It("should mark Failed after grace period if task still Running", func() {
+			createAgentTask(taskName, resourceNamespace)
+			reconcileToPending()
+			claimName := reconcileToClaimed()
+
+			By("Transitioning to Running via successful assignment")
+			reconcileToRunning(claimName)
+
+			By("Simulating SandboxClaim Ready=False (sandbox terminated)")
+			var claim sandboxextv1alpha1.SandboxClaim
+			Expect(k8sClient.Get(ctx, client.ObjectKey{
+				Namespace: resourceNamespace,
+				Name:      claimName,
+			}, &claim)).To(Succeed())
+			meta.SetStatusCondition(&claim.Status.Conditions, metav1.Condition{
+				Type:    string(sandboxv1alpha1.SandboxConditionReady),
+				Status:  metav1.ConditionFalse,
+				Reason:  "SandboxNotReady",
+				Message: "Sandbox pod terminated unexpectedly",
+			})
+			Expect(k8sClient.Status().Update(ctx, &claim)).To(Succeed())
+
+			By("Setting an already-expired grace deadline to simulate elapsed grace period")
+			var task toolkitv1alpha1.AgentTask
+			Expect(k8sClient.Get(ctx, taskNN, &task)).To(Succeed())
+			if task.Annotations == nil {
+				task.Annotations = make(map[string]string)
+			}
+			task.Annotations["shepherd.io/grace-deadline"] = time.Now().Add(-1 * time.Minute).Format(time.RFC3339)
+			Expect(k8sClient.Update(ctx, &task)).To(Succeed())
+
+			By("Reconciling — grace period elapsed, should mark Failed")
 			result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: taskNN})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.RequeueAfter).To(BeZero())
 
 			By("Verifying Failed condition")
-			var task toolkitv1alpha1.AgentTask
 			Expect(k8sClient.Get(ctx, taskNN, &task)).To(Succeed())
 			cond := meta.FindStatusCondition(task.Status.Conditions, toolkitv1alpha1.ConditionSucceeded)
 			Expect(cond).NotTo(BeNil())
@@ -608,6 +655,236 @@ var _ = Describe("AgentTask Controller", func() {
 			Expect(cond.Message).To(ContainSubstring("Sandbox terminated"))
 			Expect(task.Status.CompletionTime).NotTo(BeNil())
 			Expect(task.Status.Result.Error).To(ContainSubstring("Sandbox terminated"))
+			Expect(task.Annotations).NotTo(HaveKey("shepherd.io/grace-deadline"), "grace annotation should be removed")
+		})
+
+		It("should not mark Failed if API set Succeeded during grace period", func() {
+			createAgentTask(taskName, resourceNamespace)
+			reconcileToPending()
+			claimName := reconcileToClaimed()
+
+			By("Transitioning to Running via successful assignment")
+			reconcileToRunning(claimName)
+
+			By("Simulating SandboxClaim Ready=False (sandbox terminated)")
+			var claim sandboxextv1alpha1.SandboxClaim
+			Expect(k8sClient.Get(ctx, client.ObjectKey{
+				Namespace: resourceNamespace,
+				Name:      claimName,
+			}, &claim)).To(Succeed())
+			meta.SetStatusCondition(&claim.Status.Conditions, metav1.Condition{
+				Type:    string(sandboxv1alpha1.SandboxConditionReady),
+				Status:  metav1.ConditionFalse,
+				Reason:  "SandboxNotReady",
+				Message: "Sandbox pod terminated unexpectedly",
+			})
+			Expect(k8sClient.Status().Update(ctx, &claim)).To(Succeed())
+
+			By("Simulating API already setting task to Succeeded (runner callback)")
+			var task toolkitv1alpha1.AgentTask
+			Expect(k8sClient.Get(ctx, taskNN, &task)).To(Succeed())
+			meta.SetStatusCondition(&task.Status.Conditions, metav1.Condition{
+				Type:   toolkitv1alpha1.ConditionSucceeded,
+				Status: metav1.ConditionTrue,
+				Reason: toolkitv1alpha1.ReasonSucceeded,
+			})
+			Expect(k8sClient.Status().Update(ctx, &task)).To(Succeed())
+
+			By("Reconciling — should see terminal state on refetch and clean up")
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: taskNN})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(BeZero())
+
+			By("Verifying task is still Succeeded (not Failed)")
+			Expect(k8sClient.Get(ctx, taskNN, &task)).To(Succeed())
+			cond := meta.FindStatusCondition(task.Status.Conditions, toolkitv1alpha1.ConditionSucceeded)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Status).To(Equal(metav1.ConditionTrue))
+			Expect(cond.Reason).To(Equal(toolkitv1alpha1.ReasonSucceeded))
+		})
+
+		It("should mark TimedOut when timeout exceeded", func() {
+			createAgentTask(taskName, resourceNamespace)
+			reconcileToPending()
+			claimName := reconcileToClaimed()
+
+			By("Transitioning to Running via successful assignment")
+			reconcileToRunning(claimName)
+
+			By("Setting StartTime to past the timeout")
+			var task toolkitv1alpha1.AgentTask
+			Expect(k8sClient.Get(ctx, taskNN, &task)).To(Succeed())
+			pastTime := metav1.NewTime(time.Now().Add(-31 * time.Minute))
+			task.Status.StartTime = &pastTime
+			Expect(k8sClient.Status().Update(ctx, &task)).To(Succeed())
+
+			By("Reconciling — should mark TimedOut")
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: taskNN})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(BeZero())
+
+			By("Verifying TimedOut condition")
+			Expect(k8sClient.Get(ctx, taskNN, &task)).To(Succeed())
+			cond := meta.FindStatusCondition(task.Status.Conditions, toolkitv1alpha1.ConditionSucceeded)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(cond.Reason).To(Equal(toolkitv1alpha1.ReasonTimedOut))
+			Expect(cond.Message).To(ContainSubstring("timeout"))
+			Expect(task.Status.CompletionTime).NotTo(BeNil())
+
+			By("Verifying SandboxClaim is deleted")
+			var claim sandboxextv1alpha1.SandboxClaim
+			err = k8sClient.Get(ctx, client.ObjectKey{
+				Namespace: resourceNamespace,
+				Name:      claimName,
+			}, &claim)
+			Expect(err).To(HaveOccurred())
+			Expect(client.IgnoreNotFound(err)).To(Succeed(), "SandboxClaim should be deleted after timeout")
+		})
+
+		It("should mark TimedOut when SandboxExpired reason on SandboxClaim", func() {
+			createAgentTask(taskName, resourceNamespace)
+			reconcileToPending()
+			claimName := reconcileToClaimed()
+
+			By("Transitioning to Running via successful assignment")
+			reconcileToRunning(claimName)
+
+			By("Simulating SandboxClaim Ready=False with SandboxExpired reason")
+			var claim sandboxextv1alpha1.SandboxClaim
+			Expect(k8sClient.Get(ctx, client.ObjectKey{
+				Namespace: resourceNamespace,
+				Name:      claimName,
+			}, &claim)).To(Succeed())
+			meta.SetStatusCondition(&claim.Status.Conditions, metav1.Condition{
+				Type:    string(sandboxv1alpha1.SandboxConditionReady),
+				Status:  metav1.ConditionFalse,
+				Reason:  reasonSandboxExpired,
+				Message: "sandbox lifetime exceeded",
+			})
+			Expect(k8sClient.Status().Update(ctx, &claim)).To(Succeed())
+
+			By("Setting an already-expired grace deadline")
+			var task toolkitv1alpha1.AgentTask
+			Expect(k8sClient.Get(ctx, taskNN, &task)).To(Succeed())
+			if task.Annotations == nil {
+				task.Annotations = make(map[string]string)
+			}
+			task.Annotations["shepherd.io/grace-deadline"] = time.Now().Add(-1 * time.Minute).Format(time.RFC3339)
+			Expect(k8sClient.Update(ctx, &task)).To(Succeed())
+
+			By("Reconciling — should classify as TimedOut")
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: taskNN})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(BeZero())
+
+			By("Verifying TimedOut condition")
+			Expect(k8sClient.Get(ctx, taskNN, &task)).To(Succeed())
+			cond := meta.FindStatusCondition(task.Status.Conditions, toolkitv1alpha1.ConditionSucceeded)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(cond.Reason).To(Equal(toolkitv1alpha1.ReasonTimedOut))
+			Expect(cond.Message).To(Equal("Sandbox expired"))
+		})
+
+		It("should mark TimedOut when ClaimExpired reason on SandboxClaim", func() {
+			createAgentTask(taskName, resourceNamespace)
+			reconcileToPending()
+			claimName := reconcileToClaimed()
+
+			By("Transitioning to Running via successful assignment")
+			reconcileToRunning(claimName)
+
+			By("Simulating SandboxClaim Ready=False with ClaimExpired reason")
+			var claim sandboxextv1alpha1.SandboxClaim
+			Expect(k8sClient.Get(ctx, client.ObjectKey{
+				Namespace: resourceNamespace,
+				Name:      claimName,
+			}, &claim)).To(Succeed())
+			meta.SetStatusCondition(&claim.Status.Conditions, metav1.Condition{
+				Type:    string(sandboxv1alpha1.SandboxConditionReady),
+				Status:  metav1.ConditionFalse,
+				Reason:  reasonClaimExpired,
+				Message: "claim lifetime exceeded",
+			})
+			Expect(k8sClient.Status().Update(ctx, &claim)).To(Succeed())
+
+			By("Setting an already-expired grace deadline")
+			var task toolkitv1alpha1.AgentTask
+			Expect(k8sClient.Get(ctx, taskNN, &task)).To(Succeed())
+			if task.Annotations == nil {
+				task.Annotations = make(map[string]string)
+			}
+			task.Annotations["shepherd.io/grace-deadline"] = time.Now().Add(-1 * time.Minute).Format(time.RFC3339)
+			Expect(k8sClient.Update(ctx, &task)).To(Succeed())
+
+			By("Reconciling — should classify as TimedOut")
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: taskNN})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(BeZero())
+
+			By("Verifying TimedOut condition")
+			Expect(k8sClient.Get(ctx, taskNN, &task)).To(Succeed())
+			cond := meta.FindStatusCondition(task.Status.Conditions, toolkitv1alpha1.ConditionSucceeded)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(cond.Reason).To(Equal(toolkitv1alpha1.ReasonTimedOut))
+			Expect(cond.Message).To(Equal("Sandbox expired"))
+		})
+
+		It("should delete SandboxClaim when task already succeeded via API callback", func() {
+			createAgentTask(taskName, resourceNamespace)
+			reconcileToPending()
+			claimName := reconcileToClaimed()
+
+			By("Transitioning to Running via successful assignment")
+			reconcileToRunning(claimName)
+
+			By("Simulating SandboxClaim Ready=False (sandbox terminated)")
+			var claim sandboxextv1alpha1.SandboxClaim
+			Expect(k8sClient.Get(ctx, client.ObjectKey{
+				Namespace: resourceNamespace,
+				Name:      claimName,
+			}, &claim)).To(Succeed())
+			meta.SetStatusCondition(&claim.Status.Conditions, metav1.Condition{
+				Type:    string(sandboxv1alpha1.SandboxConditionReady),
+				Status:  metav1.ConditionFalse,
+				Reason:  "SandboxNotReady",
+				Message: "Sandbox shut down",
+			})
+			Expect(k8sClient.Status().Update(ctx, &claim)).To(Succeed())
+
+			By("Simulating API setting task to Succeeded")
+			var task toolkitv1alpha1.AgentTask
+			Expect(k8sClient.Get(ctx, taskNN, &task)).To(Succeed())
+			now := metav1.Now()
+			task.Status.CompletionTime = &now
+			meta.SetStatusCondition(&task.Status.Conditions, metav1.Condition{
+				Type:   toolkitv1alpha1.ConditionSucceeded,
+				Status: metav1.ConditionTrue,
+				Reason: toolkitv1alpha1.ReasonSucceeded,
+			})
+			Expect(k8sClient.Status().Update(ctx, &task)).To(Succeed())
+
+			By("Reconciling — should detect terminal task and clean up SandboxClaim")
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: taskNN})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(BeZero())
+
+			By("Verifying SandboxClaim is deleted")
+			err = k8sClient.Get(ctx, client.ObjectKey{
+				Namespace: resourceNamespace,
+				Name:      claimName,
+			}, &claim)
+			Expect(err).To(HaveOccurred())
+			Expect(client.IgnoreNotFound(err)).To(Succeed(), "SandboxClaim should be deleted")
+
+			By("Verifying task is still Succeeded")
+			Expect(k8sClient.Get(ctx, taskNN, &task)).To(Succeed())
+			cond := meta.FindStatusCondition(task.Status.Conditions, toolkitv1alpha1.ConditionSucceeded)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Status).To(Equal(metav1.ConditionTrue))
+			Expect(cond.Reason).To(Equal(toolkitv1alpha1.ReasonSucceeded))
 		})
 
 		It("should delete SandboxClaim on terminal state", func() {
