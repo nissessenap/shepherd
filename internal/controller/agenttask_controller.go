@@ -143,7 +143,9 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// 6a. Ready=True → assign task to runner, then transition to Running
 	if readyCond != nil && readyCond.Status == metav1.ConditionTrue {
 		if isRunning {
-			// Already Running — assignment already succeeded; check timeout
+			// Already Running — assignment already succeeded; check timeout.
+			// (Also checked in section 7 for the edge case where Ready becomes nil/Unknown
+			// while the task is Running.)
 			if checkTimeout(&task) {
 				log.Info("task timed out", "task", req.NamespacedName, "timeout", task.Spec.Runner.Timeout.Duration)
 				if err := r.cleanupSandboxClaim(ctx, &task); err != nil {
@@ -207,7 +209,8 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return r.handleSandboxTermination(ctx, req, &task, &claim)
 	}
 
-	// 7. Timeout check — if Running and timeout exceeded, mark TimedOut
+	// 7. Timeout check — covers the edge case where the Ready condition is temporarily
+	// nil/Unknown while the task is Running (section 6a handles Ready=True).
 	if isRunning && checkTimeout(&task) {
 		log.Info("task timed out", "task", req.NamespacedName, "timeout", task.Spec.Runner.Timeout.Duration)
 		if err := r.cleanupSandboxClaim(ctx, &task); err != nil {

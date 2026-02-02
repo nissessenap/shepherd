@@ -17,6 +17,9 @@ limitations under the License.
 package main
 
 import (
+	"fmt"
+	"net/url"
+
 	"github.com/NissesSenap/shepherd/pkg/operator"
 )
 
@@ -28,6 +31,11 @@ type OperatorCmd struct {
 }
 
 func (c *OperatorCmd) Run(_ *CLI) error {
+	u, err := url.Parse(c.APIURL)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return fmt.Errorf("invalid SHEPHERD_API_URL %q: must be a valid URL with scheme and host", c.APIURL)
+	}
+
 	return operator.Run(operator.Options{
 		MetricsAddr:    c.MetricsAddr,
 		HealthAddr:     c.HealthAddr,

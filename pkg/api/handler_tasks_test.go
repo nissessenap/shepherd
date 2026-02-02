@@ -78,6 +78,7 @@ func validCreateRequest() CreateTaskRequest {
 			Context:     "Issue #42: login page throws NPE on empty password",
 		},
 		Callback: "https://example.com/callback",
+		Runner:   &RunnerConfig{SandboxTemplateName: "default-template"},
 	}
 }
 
@@ -226,6 +227,34 @@ func TestCreateTask_MissingCallbackURL(t *testing.T) {
 	assert.Equal(t, "callbackUrl is required", errResp.Error)
 }
 
+func TestCreateTask_MissingSandboxTemplateName(t *testing.T) {
+	h := newTestHandler()
+	router := testRouter(h)
+
+	req := validCreateRequest()
+	req.Runner = nil
+	w := postCreateTask(t, router, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	var errResp ErrorResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &errResp))
+	assert.Equal(t, "runner.sandboxTemplateName is required", errResp.Error)
+}
+
+func TestCreateTask_EmptySandboxTemplateName(t *testing.T) {
+	h := newTestHandler()
+	router := testRouter(h)
+
+	req := validCreateRequest()
+	req.Runner = &RunnerConfig{SandboxTemplateName: ""}
+	w := postCreateTask(t, router, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	var errResp ErrorResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &errResp))
+	assert.Equal(t, "runner.sandboxTemplateName is required", errResp.Error)
+}
+
 func TestCreateTask_InvalidBody(t *testing.T) {
 	h := newTestHandler()
 	router := testRouter(h)
@@ -246,7 +275,7 @@ func TestCreateTask_RunnerTimeout(t *testing.T) {
 	router := testRouter(h)
 
 	req := validCreateRequest()
-	req.Runner = &RunnerConfig{Timeout: "30m"}
+	req.Runner = &RunnerConfig{SandboxTemplateName: "default-template", Timeout: "30m"}
 	w := postCreateTask(t, router, req)
 
 	require.Equal(t, http.StatusCreated, w.Code)
@@ -269,7 +298,7 @@ func TestCreateTask_InvalidRunnerTimeout(t *testing.T) {
 	router := testRouter(h)
 
 	req := validCreateRequest()
-	req.Runner = &RunnerConfig{Timeout: "invalid"}
+	req.Runner = &RunnerConfig{SandboxTemplateName: "default-template", Timeout: "invalid"}
 	w := postCreateTask(t, router, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)

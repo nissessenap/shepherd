@@ -100,6 +100,12 @@ func (h *taskHandler) createTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate runner config
+	if req.Runner == nil || req.Runner.SandboxTemplateName == "" {
+		writeError(w, http.StatusBadRequest, "runner.sandboxTemplateName is required", "")
+		return
+	}
+
 	// Compress context (if provided)
 	var compressedCtx, encoding string
 	if req.Task.Context != "" {
