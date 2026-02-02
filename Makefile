@@ -60,7 +60,7 @@ sync-external-crds: ## Copy external CRDs from Go module cache for envtest.
 	@echo "Synced agent-sandbox CRDs to config/crd/external/"
 
 .PHONY: test
-test: manifests generate fmt vet setup-envtest sync-external-crds test-init ## Run all tests.
+test: manifests generate fmt vet setup-envtest sync-external-crds ## Run all tests.
 	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
 .PHONY: lint
@@ -83,34 +83,19 @@ build: manifests generate fmt vet ## Build manager binary.
 
 .PHONY: run
 run: manifests generate fmt vet ## Run the operator from your host.
-	SHEPHERD_RUNNER_IMAGE=shepherd-runner:latest \
-	SHEPHERD_GITHUB_APP_ID=12345 \
-	SHEPHERD_GITHUB_INSTALLATION_ID=67890 \
-	SHEPHERD_GITHUB_API_URL=https://api.github.com \
+	SHEPHERD_API_URL=http://localhost:8080 \
 	go run ./cmd/shepherd/ operator --leader-election=false
 
 .PHONY: ko-build-local
 ko-build-local: ko ## Build container image locally with ko.
 	KO_DOCKER_REPO=$(KO_DOCKER_REPO) "$(KO)" build --sbom=none --bare ./cmd/shepherd/
 
-.PHONY: ko-build-init
-ko-build-init: ko ## Build init container image locally with ko.
-	cd cmd/shepherd-init && KO_DOCKER_REPO=$(KO_DOCKER_REPO) "$(KO)" build --sbom=none --bare .
-
-.PHONY: test-init
-test-init: ## Run init container tests.
-	cd cmd/shepherd-init && go test ./... -coverprofile cover-init.out
-
-.PHONY: lint-init
-lint-init: golangci-lint ## Lint init container code.
-	cd cmd/shepherd-init && "$(GOLANGCI_LINT)" run
-
-.PHONY: vet-init
-vet-init: ## Vet init container code.
-	cd cmd/shepherd-init && go vet ./...
+.PHONY: ko-build-runner
+ko-build-runner: ko ## Build runner stub image locally with ko.
+	KO_DOCKER_REPO=$(KO_DOCKER_REPO) "$(KO)" build --sbom=none --bare ./cmd/shepherd-runner/
 
 .PHONY: build-smoke
-build-smoke: ko-build-local ko-build-init manifests kustomize ## Verify ko builds + kustomize render.
+build-smoke: ko-build-local ko-build-runner manifests kustomize ## Verify ko builds + kustomize render.
 	"$(KUSTOMIZE)" build config/default > /dev/null
 	@echo "Build smoke test passed: ko images built, kustomize renders cleanly"
 

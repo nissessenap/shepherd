@@ -1056,11 +1056,11 @@ Add entry for runner binary if needed.
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `make build` compiles (both binaries)
-- [ ] `make test` passes — runner stub tests pass
-- [ ] `make lint` passes
-- [ ] `cmd/shepherd-init/` directory does not exist
-- [ ] `make build-smoke` passes
+- [x] `make build` compiles (both binaries)
+- [x] `make test` passes — runner stub tests pass
+- [x] `make lint` passes
+- [x] `cmd/shepherd-init/` directory does not exist
+- [x] `make build-smoke` passes
 
 ---
 
