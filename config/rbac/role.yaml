@@ -12,9 +12,15 @@ rules:
   - create
   - patch
 - apiGroups:
-  - batch
+  - agents.x-k8s.io
   resources:
-  - jobs
+  - sandboxes
+  verbs:
+  - get
+- apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
   verbs:
   - create
   - delete
@@ -24,12 +30,20 @@ rules:
   - update
   - watch
 - apiGroups:
+  - extensions.agents.x-k8s.io
+  resources:
+  - sandboxclaims
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - watch
+- apiGroups:
   - toolkit.shepherd.io
   resources:
   - agenttasks
   verbs:
-  - create
-  - delete
   - get
   - list
   - patch

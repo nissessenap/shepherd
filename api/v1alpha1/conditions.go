@@ -26,7 +26,6 @@ const (
 	ReasonSucceeded = "Succeeded"
 	ReasonFailed    = "Failed"
 	ReasonTimedOut  = "TimedOut"
-	ReasonOOM       = "OOM"
 	ReasonCancelled = "Cancelled"
 
 	// ConditionNotified indicates the adapter callback has been sent for a terminal state.

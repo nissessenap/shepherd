@@ -30,4 +30,7 @@ go.work
 # Kubeconfig might contain secrets
 *.kubeconfig
 
-cmd/shepherd-init/shepherd-init
+cmd/shepherd-runner/shepherd-runner
+
+# External CRDs copied from module cache for envtest
+config/crd/external/

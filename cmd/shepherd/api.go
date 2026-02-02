@@ -17,19 +17,36 @@ limitations under the License.
 package main
 
 import (
+	"fmt"
+
 	"github.com/NissesSenap/shepherd/pkg/api"
 )
 
 type APICmd struct {
-	ListenAddr     string `help:"API listen address" default:":8080" env:"SHEPHERD_API_ADDR"`
-	CallbackSecret string `help:"HMAC secret for adapter callbacks" env:"SHEPHERD_CALLBACK_SECRET"`
-	Namespace      string `help:"Namespace for task creation" default:"shepherd" env:"SHEPHERD_NAMESPACE"`
+	ListenAddr           string `help:"API listen address" default:":8080" env:"SHEPHERD_API_ADDR"`
+	CallbackSecret       string `help:"HMAC secret for adapter callbacks" env:"SHEPHERD_CALLBACK_SECRET"`
+	Namespace            string `help:"Namespace for task creation" default:"shepherd" env:"SHEPHERD_NAMESPACE"`
+	GithubAppID          int64  `help:"GitHub Runner App ID" env:"SHEPHERD_GITHUB_APP_ID"`
+	GithubInstallationID int64  `help:"GitHub Installation ID" env:"SHEPHERD_GITHUB_INSTALLATION_ID"`
+	GithubAPIURL         string `help:"GitHub API URL" default:"https://api.github.com" env:"SHEPHERD_GITHUB_API_URL"`
+	GithubPrivateKeyPath string `help:"Path to Runner App private key" env:"SHEPHERD_GITHUB_PRIVATE_KEY_PATH"`
 }
 
 func (c *APICmd) Run(_ *CLI) error {
+	githubFlagsSet := c.GithubAppID != 0 || c.GithubInstallationID != 0 || c.GithubPrivateKeyPath != ""
+	if githubFlagsSet {
+		if c.GithubAppID == 0 || c.GithubInstallationID == 0 || c.GithubPrivateKeyPath == "" {
+			return fmt.Errorf("github-app-id, github-installation-id, and github-private-key-path must all be set together")
+		}
+	}
+
 	return api.Run(api.Options{
-		ListenAddr:     c.ListenAddr,
-		CallbackSecret: c.CallbackSecret,
-		Namespace:      c.Namespace,
+		ListenAddr:           c.ListenAddr,
+		CallbackSecret:       c.CallbackSecret,
+		Namespace:            c.Namespace,
+		GithubAppID:          c.GithubAppID,
+		GithubInstallationID: c.GithubInstallationID,
+		GithubAPIURL:         c.GithubAPIURL,
+		GithubPrivateKeyPath: c.GithubPrivateKeyPath,
 	})
 }

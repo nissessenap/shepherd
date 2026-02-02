@@ -214,11 +214,11 @@ Every reference to `JobName`, `ContextURL`, `ReasonOOM`, `RunnerSpec.Image` acro
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `make generate` succeeds
-- [ ] `make manifests` succeeds — CRD YAML shows `sandboxClaimName` not `jobName`, shows `sandboxTemplateName` not `image`
-- [ ] `make build` compiles without errors
-- [ ] `make test` passes (update all tests referencing old field names)
-- [ ] `make lint` passes
+- [x] `make generate` succeeds
+- [x] `make manifests` succeeds — CRD YAML shows `sandboxClaimName` not `jobName`, shows `sandboxTemplateName` not `image`
+- [x] `make build` compiles without errors
+- [x] `make test` passes (update all tests referencing old field names)
+- [x] `make lint` passes
 
 **Implementation Note**: After completing this phase and all automated verification passes, pause for review before proceeding.
 
@@ -337,10 +337,10 @@ Unit tests using testify (follow `job_builder_test.go` patterns):
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `go mod tidy` succeeds without errors
-- [ ] `make build` compiles (may need temporary stubs in controller if it references old builder)
-- [ ] `make test` passes — new `sandbox_builder_test.go` passes, old Job tests removed
-- [ ] `make lint` passes
+- [x] `go mod tidy` succeeds without errors
+- [x] `make build` compiles (may need temporary stubs in controller if it references old builder)
+- [x] `make test` passes — new `sandbox_builder_test.go` passes, old Job tests removed
+- [x] `make lint` passes
 
 ---
 
@@ -451,10 +451,10 @@ Resolve the module path from the Go module cache at test time (e.g., via `go lis
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `make build` compiles
-- [ ] `make test` passes — new reconciler tests cover Pending → SandboxClaim creation → Running transition
-- [ ] `make lint` passes
-- [ ] No references to `batchv1.Job` remain in `internal/controller/`
+- [x] `make build` compiles
+- [x] `make test` passes — new reconciler tests cover Pending → SandboxClaim creation → Running transition
+- [x] `make lint` passes
+- [x] No references to `batchv1.Job` remain in `internal/controller/`
 
 ---
 
@@ -473,49 +473,49 @@ Per-task bearer token authentication is deferred to [#22](https://github.com/nis
 Add `assignTask()` method:
 
 ```go
-const (
-	taskAssignmentMaxRetries = 5
-	taskAssignmentRetryDelay = 2 * time.Second
-)
-
 type TaskAssignment struct {
 	TaskID string `json:"taskID"`
 	APIURL string `json:"apiURL"`
 }
 
+// assignTask POSTs a task assignment to the runner's HTTP endpoint.
+// Returns nil on success (200 OK or 409 Conflict), error otherwise.
+// The caller (reconcile loop) handles retries via controller-runtime's RequeueAfter.
 func (r *AgentTaskReconciler) assignTask(ctx context.Context, sandboxFQDN string, assignment TaskAssignment) error {
-	var lastErr error
-	for attempt := range taskAssignmentMaxRetries {
-		if attempt > 0 {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(taskAssignmentRetryDelay):
-			}
-		}
-
-		body, _ := json.Marshal(assignment)
-		url := fmt.Sprintf("http://%s:8888/task", sandboxFQDN)
-		resp, err := r.HTTPClient.Post(url, "application/json", bytes.NewReader(body))
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		resp.Body.Close()
-
-		switch resp.StatusCode {
-		case http.StatusOK:
-			return nil
-		case http.StatusConflict:
-			// Runner already has this task (idempotent retry after crash)
-			return nil
-		default:
-			lastErr = fmt.Errorf("runner returned %d", resp.StatusCode)
-		}
+	body, err := json.Marshal(assignment)
+	if err != nil {
+		return fmt.Errorf("marshaling assignment: %w", err)
 	}
-	return fmt.Errorf("task assignment failed after %d attempts: %w", taskAssignmentMaxRetries, lastErr)
+
+	url := fmt.Sprintf("http://%s:8888/task", sandboxFQDN)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("building request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := r.HTTPClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("posting to runner: %w", err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return nil
+	case http.StatusConflict:
+		// Runner already has this task (idempotent retry after crash)
+		return nil
+	default:
+		return fmt.Errorf("runner returned %d", resp.StatusCode)
+	}
 }
 ```
+
+**Note**: This implementation uses single-attempt with controller-runtime's exponential backoff
+requeue instead of an in-method retry loop. This is simpler and consistent with Kubernetes
+controller patterns where transient errors are handled by requeueing the entire reconcile.
 
 #### 2. Update reconcile loop
 
@@ -555,9 +555,9 @@ Add tests:
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `make build` compiles
-- [ ] `make test` passes — assignment tests verify HTTP POST and Running transition
-- [ ] `make lint` passes
+- [x] `make build` compiles
+- [x] `make test` passes — assignment tests verify HTTP POST and Running transition
+- [x] `make lint` passes
 
 ---
 
@@ -671,9 +671,9 @@ Unit tests for `classifyClaimTermination()`:
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `make build` compiles
-- [ ] `make test` passes — failure and timeout tests pass
-- [ ] `make lint` passes
+- [x] `make build` compiles
+- [x] `make test` passes — failure and timeout tests pass
+- [x] `make lint` passes
 
 ---
 
@@ -756,11 +756,11 @@ Verify generated `config/rbac/role.yaml` no longer references `batch` group and 
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `make manifests` regenerates RBAC — no `batch` group in role.yaml
-- [ ] `make build` compiles
-- [ ] `make test` passes
-- [ ] `make lint` passes
-- [ ] `make build-smoke` passes (kustomize renders correctly)
+- [x] `make manifests` regenerates RBAC — no `batch` group in role.yaml
+- [x] `make build` compiles
+- [x] `make test` passes
+- [x] `make lint` passes
+- [x] `make build-smoke` passes (kustomize renders correctly)
 
 ---
 
@@ -939,10 +939,10 @@ type APICmd struct {
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `go mod tidy` succeeds (jwt dependency added)
-- [ ] `make build` compiles
-- [ ] `make test` passes — all new endpoint tests pass
-- [ ] `make lint` passes
+- [x] `go mod tidy` succeeds (jwt dependency added)
+- [x] `make build` compiles
+- [x] `make test` passes — all new endpoint tests pass
+- [x] `make lint` passes
 
 ---
 
@@ -1056,11 +1056,11 @@ Add entry for runner binary if needed.
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `make build` compiles (both binaries)
-- [ ] `make test` passes — runner stub tests pass
-- [ ] `make lint` passes
-- [ ] `cmd/shepherd-init/` directory does not exist
-- [ ] `make build-smoke` passes
+- [x] `make build` compiles (both binaries)
+- [x] `make test` passes — runner stub tests pass
+- [x] `make lint` passes
+- [x] `cmd/shepherd-init/` directory does not exist
+- [x] `make build-smoke` passes
 
 ---
 

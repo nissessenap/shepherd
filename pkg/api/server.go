@@ -18,6 +18,7 @@ package api
 
 import (
 	"context"
+	"crypto/rsa"
 	"fmt"
 	"net/http"
 	"os"
@@ -48,9 +49,13 @@ func init() {
 
 // Options configures the API server.
 type Options struct {
-	ListenAddr     string
-	CallbackSecret string
-	Namespace      string
+	ListenAddr           string
+	CallbackSecret       string
+	Namespace            string
+	GithubAppID          int64
+	GithubInstallationID int64
+	GithubAPIURL         string
+	GithubPrivateKeyPath string
 }
 
 // contentTypeMiddleware validates Content-Type header on mutating requests.
@@ -89,10 +94,26 @@ func Run(opts Options) error {
 
 	cb := newCallbackSender(opts.CallbackSecret)
 
+	// Load GitHub App private key if configured
+	var githubKey *rsa.PrivateKey
+	if opts.GithubPrivateKeyPath != "" {
+		var err error
+		githubKey, err = readPrivateKey(opts.GithubPrivateKeyPath)
+		if err != nil {
+			return fmt.Errorf("reading GitHub private key: %w", err)
+		}
+		log.Info("GitHub App configured", "appID", opts.GithubAppID)
+	}
+
 	handler := &taskHandler{
-		client:    k8sClient,
-		namespace: opts.Namespace,
-		callback:  cb,
+		client:          k8sClient,
+		namespace:       opts.Namespace,
+		callback:        cb,
+		githubAppID:     opts.GithubAppID,
+		githubInstallID: opts.GithubInstallationID,
+		githubAPIURL:    opts.GithubAPIURL,
+		githubKey:       githubKey,
+		httpClient:      &http.Client{Timeout: 30 * time.Second},
 	}
 
 	// Health tracking for watcher and cache goroutines
@@ -168,6 +189,8 @@ func Run(opts Options) error {
 		r.Get("/tasks", handler.listTasks)
 		r.Get("/tasks/{taskID}", handler.getTask)
 		r.Post("/tasks/{taskID}/status", handler.updateTaskStatus)
+		r.Get("/tasks/{taskID}/data", handler.getTaskData)
+		r.Get("/tasks/{taskID}/token", handler.getTaskToken)
 	})
 
 	srv := &http.Server{

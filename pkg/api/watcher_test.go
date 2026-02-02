@@ -124,7 +124,7 @@ func TestWatcher_TerminalFailedTriggersCallback(t *testing.T) {
 			Type:    toolkitv1alpha1.ConditionSucceeded,
 			Status:  metav1.ConditionFalse,
 			Reason:  toolkitv1alpha1.ReasonFailed,
-			Message: "Job failed",
+			Message: "Task failed",
 		},
 	}, toolkitv1alpha1.TaskResult{Error: "compilation error"})
 
@@ -132,7 +132,7 @@ func TestWatcher_TerminalFailedTriggersCallback(t *testing.T) {
 	w.handleTerminalTransition(context.Background(), task)
 
 	assert.Equal(t, "failed", receivedPayload.Event)
-	assert.Equal(t, "Job failed", receivedPayload.Message)
+	assert.Equal(t, "Task failed", receivedPayload.Message)
 	assert.Equal(t, "compilation error", receivedPayload.Details["error"])
 
 	// Verify Notified condition was set

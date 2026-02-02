@@ -43,13 +43,16 @@ type RepoRequest struct {
 type TaskRequest struct {
 	Description string `json:"description"`
 	Context     string `json:"context,omitempty"`
-	ContextURL  string `json:"contextUrl,omitempty"`
+	SourceURL   string `json:"sourceURL,omitempty"`
+	SourceType  string `json:"sourceType,omitempty"`
+	SourceID    string `json:"sourceID,omitempty"`
 }
 
 // RunnerConfig specifies optional runner overrides.
 type RunnerConfig struct {
-	Timeout            string `json:"timeout,omitempty"`
-	ServiceAccountName string `json:"serviceAccountName,omitempty"`
+	SandboxTemplateName string `json:"sandboxTemplateName,omitempty"`
+	Timeout             string `json:"timeout,omitempty"`
+	ServiceAccountName  string `json:"serviceAccountName,omitempty"`
 }
 
 // TaskResponse is the JSON response for task endpoints.
@@ -66,11 +69,11 @@ type TaskResponse struct {
 
 // TaskStatusSummary summarizes the task's current status.
 type TaskStatusSummary struct {
-	Phase   string `json:"phase"`
-	Message string `json:"message"`
-	JobName string `json:"jobName,omitempty"`
-	PRUrl   string `json:"prUrl,omitempty"`
-	Error   string `json:"error,omitempty"`
+	Phase            string `json:"phase"`
+	Message          string `json:"message"`
+	SandboxClaimName string `json:"sandboxClaimName,omitempty"`
+	PRUrl            string `json:"prUrl,omitempty"`
+	Error            string `json:"error,omitempty"`
 }
 
 // StatusUpdateRequest is the JSON body from the runner for POST /api/v1/tasks/{taskID}/status.
@@ -86,6 +89,20 @@ type CallbackPayload struct {
 	Event   string         `json:"event"` // started, progress, completed, failed
 	Message string         `json:"message"`
 	Details map[string]any `json:"details,omitempty"`
+}
+
+// TaskDataResponse is the JSON response for GET /api/v1/tasks/{taskID}/data.
+type TaskDataResponse struct {
+	Description string      `json:"description"`
+	Context     string      `json:"context"`
+	SourceURL   string      `json:"sourceURL,omitempty"`
+	Repo        RepoRequest `json:"repo"`
+}
+
+// TokenResponse is the JSON response for GET /api/v1/tasks/{taskID}/token.
+type TokenResponse struct {
+	Token     string `json:"token"`
+	ExpiresAt string `json:"expiresAt"`
 }
 
 // ErrorResponse is the standard error response.

@@ -17,11 +17,13 @@ limitations under the License.
 package api
 
 import (
+	"crypto/rsa"
 	"encoding/json"
 	"fmt"
 	"maps"
 	"net/http"
 	"net/url"
+	"regexp"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -35,11 +37,33 @@ import (
 	toolkitv1alpha1 "github.com/NissesSenap/shepherd/api/v1alpha1"
 )
 
+const maxCompressedContextSize = 1_400_000 // ~1.4MB, etcd limit minus overhead
+
+// Kubernetes label value regex: must be ≤63 characters and match [a-z0-9A-Z]([a-z0-9A-Z-_.]*[a-z0-9A-Z])? (or empty)
+var labelValueRegex = regexp.MustCompile(`^$|^[a-z0-9A-Z]([a-z0-9A-Z-_.]*[a-z0-9A-Z])?$`)
+
+// validateLabelValue checks if a string is a valid Kubernetes label value.
+// Returns an error if the value exceeds 63 characters or doesn't match the required pattern.
+func validateLabelValue(value string) error {
+	if len(value) > 63 {
+		return fmt.Errorf("label value exceeds 63 characters (got %d)", len(value))
+	}
+	if !labelValueRegex.MatchString(value) {
+		return fmt.Errorf("label value contains invalid characters or format")
+	}
+	return nil
+}
+
 // taskHandler holds dependencies for task endpoints.
 type taskHandler struct {
-	client    client.Client
-	namespace string
-	callback  *callbackSender
+	client          client.Client
+	namespace       string
+	callback        *callbackSender
+	githubAppID     int64
+	githubInstallID int64
+	githubAPIURL    string
+	githubKey       *rsa.PrivateKey // Loaded once at startup
+	httpClient      *http.Client    // For GitHub API calls; defaults to http.DefaultClient
 }
 
 // createTask handles POST /api/v1/tasks.
@@ -63,10 +87,6 @@ func (h *taskHandler) createTask(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Task.Description == "" {
 		writeError(w, http.StatusBadRequest, "task.description is required", "")
-		return
-	}
-	if req.Task.Context == "" {
-		writeError(w, http.StatusBadRequest, "task.context is required", "")
 		return
 	}
 	if req.Callback == "" {
@@ -104,12 +124,28 @@ func (h *taskHandler) createTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Compress context
-	compressedCtx, encoding, err := compressContext(req.Task.Context)
-	if err != nil {
-		log.Error(err, "failed to compress context")
-		writeError(w, http.StatusInternalServerError, "failed to compress context", "")
+	// Validate runner config
+	if req.Runner == nil || req.Runner.SandboxTemplateName == "" {
+		writeError(w, http.StatusBadRequest, "runner.sandboxTemplateName is required", "")
 		return
+	}
+
+	// Compress context (if provided)
+	var compressedCtx, encoding string
+	if req.Task.Context != "" {
+		var err error
+		compressedCtx, encoding, err = compressContext(req.Task.Context)
+		if err != nil {
+			log.Error(err, "failed to compress context")
+			writeError(w, http.StatusInternalServerError, "failed to compress context", "")
+			return
+		}
+		if len(compressedCtx) > maxCompressedContextSize {
+			writeError(w, http.StatusRequestEntityTooLarge,
+				"compressed context exceeds size limit",
+				fmt.Sprintf("compressed size %d exceeds %d byte limit", len(compressedCtx), maxCompressedContextSize))
+			return
+		}
 	}
 
 	// Generate task name
@@ -118,6 +154,7 @@ func (h *taskHandler) createTask(w http.ResponseWriter, r *http.Request) {
 	// Build runner spec
 	runnerSpec := toolkitv1alpha1.RunnerSpec{}
 	if req.Runner != nil {
+		runnerSpec.SandboxTemplateName = req.Runner.SandboxTemplateName
 		if req.Runner.Timeout != "" {
 			d, err := time.ParseDuration(req.Runner.Timeout)
 			if err != nil {
@@ -129,9 +166,29 @@ func (h *taskHandler) createTask(w http.ResponseWriter, r *http.Request) {
 		runnerSpec.ServiceAccountName = req.Runner.ServiceAccountName
 	}
 
+	// Validate SourceType and SourceID as Kubernetes label values
+	if req.Task.SourceType != "" {
+		if err := validateLabelValue(req.Task.SourceType); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid task.sourceType for Kubernetes label", err.Error())
+			return
+		}
+	}
+	if req.Task.SourceID != "" {
+		if err := validateLabelValue(req.Task.SourceID); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid task.sourceID for Kubernetes label", err.Error())
+			return
+		}
+	}
+
 	// Build labels — pass through adapter-provided labels
 	labels := make(map[string]string)
 	maps.Copy(labels, req.Labels)
+	if req.Task.SourceType != "" {
+		labels["shepherd.io/source-type"] = req.Task.SourceType
+	}
+	if req.Task.SourceID != "" {
+		labels["shepherd.io/source-id"] = req.Task.SourceID
+	}
 
 	// Create AgentTask CRD
 	task := &toolkitv1alpha1.AgentTask{
@@ -149,7 +206,9 @@ func (h *taskHandler) createTask(w http.ResponseWriter, r *http.Request) {
 				Description:     req.Task.Description,
 				Context:         compressedCtx,
 				ContextEncoding: encoding,
-				ContextURL:      req.Task.ContextURL,
+				SourceURL:       req.Task.SourceURL,
+				SourceType:      req.Task.SourceType,
+				SourceID:        req.Task.SourceID,
 			},
 			Callback: toolkitv1alpha1.CallbackSpec{
 				URL: req.Callback,
@@ -161,6 +220,10 @@ func (h *taskHandler) createTask(w http.ResponseWriter, r *http.Request) {
 	if err := h.client.Create(r.Context(), task); err != nil {
 		if errors.IsAlreadyExists(err) {
 			writeError(w, http.StatusConflict, "task already exists", err.Error())
+			return
+		}
+		if errors.IsInvalid(err) {
+			writeError(w, http.StatusBadRequest, "invalid task specification", err.Error())
 			return
 		}
 		log.Error(err, "failed to create task")
@@ -192,6 +255,9 @@ func (h *taskHandler) listTasks(w http.ResponseWriter, r *http.Request) {
 	}
 	if issue := r.URL.Query().Get("issue"); issue != "" {
 		labelSelector["shepherd.io/issue"] = issue
+	}
+	if fleet := r.URL.Query().Get("fleet"); fleet != "" {
+		labelSelector["shepherd.io/fleet"] = fleet
 	}
 	if len(labelSelector) > 0 {
 		listOpts = append(listOpts, client.MatchingLabels(labelSelector))
@@ -265,7 +331,9 @@ func taskToResponse(task *toolkitv1alpha1.AgentTask) TaskResponse {
 		},
 		Task: TaskRequest{
 			Description: task.Spec.Task.Description,
-			ContextURL:  task.Spec.Task.ContextURL,
+			SourceURL:   task.Spec.Task.SourceURL,
+			SourceType:  task.Spec.Task.SourceType,
+			SourceID:    task.Spec.Task.SourceID,
 		},
 		CallbackURL: task.Spec.Callback.URL,
 		Status:      extractStatus(task),
@@ -287,10 +355,10 @@ func extractStatus(task *toolkitv1alpha1.AgentTask) TaskStatusSummary {
 		message = cond.Message
 	}
 	return TaskStatusSummary{
-		Phase:   phase,
-		Message: message,
-		JobName: task.Status.JobName,
-		PRUrl:   task.Status.Result.PRUrl,
-		Error:   task.Status.Result.Error,
+		Phase:            phase,
+		Message:          message,
+		SandboxClaimName: task.Status.SandboxClaimName,
+		PRUrl:            task.Status.Result.PRUrl,
+		Error:            task.Status.Result.Error,
 	}
 }

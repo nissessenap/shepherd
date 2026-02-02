@@ -28,6 +28,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const testContextString = "Issue #42: login page throws NPE on empty password"
+
 func TestCompressContext_Empty(t *testing.T) {
 	compressed, encoding, err := compressContext("")
 	require.NoError(t, err)
@@ -36,7 +38,7 @@ func TestCompressContext_Empty(t *testing.T) {
 }
 
 func TestCompressContext_NonEmpty(t *testing.T) {
-	input := "Issue #42: login page throws NPE on empty password"
+	input := testContextString
 	compressed, encoding, err := compressContext(input)
 	require.NoError(t, err)
 	assert.NotEmpty(t, compressed)
@@ -49,7 +51,7 @@ func TestCompressContext_NonEmpty(t *testing.T) {
 }
 
 func TestCompressContext_Roundtrip(t *testing.T) {
-	input := "Issue #42: login page throws NPE on empty password"
+	input := testContextString
 	compressed, _, err := compressContext(input)
 	require.NoError(t, err)
 

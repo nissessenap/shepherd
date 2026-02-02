@@ -19,13 +19,13 @@ package api
 import (
 	"bytes"
 	"context"
+	cryptorand "crypto/rand"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"fmt"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
@@ -66,6 +66,8 @@ func testRouter(h *taskHandler) *chi.Mux {
 		r.Get("/tasks", h.listTasks)
 		r.Get("/tasks/{taskID}", h.getTask)
 		r.Post("/tasks/{taskID}/status", h.updateTaskStatus)
+		r.Get("/tasks/{taskID}/data", h.getTaskData)
+		r.Get("/tasks/{taskID}/token", h.getTaskToken)
 	})
 	return r
 }
@@ -78,6 +80,7 @@ func validCreateRequest() CreateTaskRequest {
 			Context:     "Issue #42: login page throws NPE on empty password",
 		},
 		Callback: "https://example.com/callback",
+		Runner:   &RunnerConfig{SandboxTemplateName: "default-template"},
 	}
 }
 
@@ -188,7 +191,7 @@ func TestCreateTask_MissingDescription(t *testing.T) {
 	assert.Equal(t, "task.description is required", errResp.Error)
 }
 
-func TestCreateTask_MissingContext(t *testing.T) {
+func TestCreateTask_EmptyContextIsAllowed(t *testing.T) {
 	h := newTestHandler()
 	router := testRouter(h)
 
@@ -196,10 +199,20 @@ func TestCreateTask_MissingContext(t *testing.T) {
 	req.Task.Context = ""
 	w := postCreateTask(t, router, req)
 
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	var errResp ErrorResponse
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &errResp))
-	assert.Equal(t, "task.context is required", errResp.Error)
+	assert.Equal(t, http.StatusCreated, w.Code)
+
+	var resp TaskResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	// Verify the CRD has no context
+	var task toolkitv1alpha1.AgentTask
+	err := h.client.Get(context.Background(), client.ObjectKey{
+		Namespace: "default",
+		Name:      resp.ID,
+	}, &task)
+	require.NoError(t, err)
+	assert.Empty(t, task.Spec.Task.Context)
+	assert.Empty(t, task.Spec.Task.ContextEncoding)
 }
 
 func TestCreateTask_MissingCallbackURL(t *testing.T) {
@@ -214,6 +227,34 @@ func TestCreateTask_MissingCallbackURL(t *testing.T) {
 	var errResp ErrorResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &errResp))
 	assert.Equal(t, "callbackUrl is required", errResp.Error)
+}
+
+func TestCreateTask_MissingSandboxTemplateName(t *testing.T) {
+	h := newTestHandler()
+	router := testRouter(h)
+
+	req := validCreateRequest()
+	req.Runner = nil
+	w := postCreateTask(t, router, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	var errResp ErrorResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &errResp))
+	assert.Equal(t, "runner.sandboxTemplateName is required", errResp.Error)
+}
+
+func TestCreateTask_EmptySandboxTemplateName(t *testing.T) {
+	h := newTestHandler()
+	router := testRouter(h)
+
+	req := validCreateRequest()
+	req.Runner = &RunnerConfig{SandboxTemplateName: ""}
+	w := postCreateTask(t, router, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	var errResp ErrorResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &errResp))
+	assert.Equal(t, "runner.sandboxTemplateName is required", errResp.Error)
 }
 
 func TestCreateTask_InvalidBody(t *testing.T) {
@@ -236,7 +277,7 @@ func TestCreateTask_RunnerTimeout(t *testing.T) {
 	router := testRouter(h)
 
 	req := validCreateRequest()
-	req.Runner = &RunnerConfig{Timeout: "30m"}
+	req.Runner = &RunnerConfig{SandboxTemplateName: "default-template", Timeout: "30m"}
 	w := postCreateTask(t, router, req)
 
 	require.Equal(t, http.StatusCreated, w.Code)
@@ -259,7 +300,7 @@ func TestCreateTask_InvalidRunnerTimeout(t *testing.T) {
 	router := testRouter(h)
 
 	req := validCreateRequest()
-	req.Runner = &RunnerConfig{Timeout: "invalid"}
+	req.Runner = &RunnerConfig{SandboxTemplateName: "default-template", Timeout: "invalid"}
 	w := postCreateTask(t, router, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -326,7 +367,7 @@ func TestCreateTask_ResponseStatus(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, "Pending", resp.Status.Phase)
 	assert.Empty(t, resp.Status.Message)
-	assert.Empty(t, resp.Status.JobName)
+	assert.Empty(t, resp.Status.SandboxClaimName)
 }
 
 func TestCreateTask_BodyTooLarge(t *testing.T) {
@@ -341,6 +382,29 @@ func TestCreateTask_BodyTooLarge(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestCreateTask_OversizedCompressedContext(t *testing.T) {
+	h := newTestHandler()
+	router := testRouter(h)
+
+	// Use crypto/rand to generate truly incompressible data.
+	// 1.5MB of random bytes expressed as hex gives ~3MB of text that
+	// gzip cannot compress, producing base64 output well over 1.4MB.
+	buf := make([]byte, 1_500_000)
+	_, err := cryptorand.Read(buf)
+	require.NoError(t, err)
+	largeCtx := fmt.Sprintf("%x", buf) // hex-encode to make it valid UTF-8 string
+
+	req := validCreateRequest()
+	req.Task.Context = largeCtx
+
+	w := postCreateTask(t, router, req)
+
+	assert.Equal(t, http.StatusRequestEntityTooLarge, w.Code)
+	var errResp ErrorResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &errResp))
+	assert.Equal(t, "compressed context exceeds size limit", errResp.Error)
 }
 
 func TestCreateTask_K8sClientError(t *testing.T) {
@@ -387,16 +451,16 @@ func TestExtractStatus_WithCondition(t *testing.T) {
 					Type:    toolkitv1alpha1.ConditionSucceeded,
 					Status:  metav1.ConditionUnknown,
 					Reason:  toolkitv1alpha1.ReasonRunning,
-					Message: "Job is running",
+					Message: "Task is running",
 				},
 			},
-			JobName: "task-abc-1-job",
+			SandboxClaimName: "task-abc-1",
 		},
 	}
 	status := extractStatus(task)
 	assert.Equal(t, "Running", status.Phase)
-	assert.Equal(t, "Job is running", status.Message)
-	assert.Equal(t, "task-abc-1-job", status.JobName)
+	assert.Equal(t, "Task is running", status.Message)
+	assert.Equal(t, "task-abc-1", status.SandboxClaimName)
 }
 
 func TestExtractStatus_Terminal(t *testing.T) {
@@ -589,6 +653,23 @@ func TestListTasks_ActiveFilterExcludesTerminal(t *testing.T) {
 	assert.Contains(t, ids, "task-pending")
 }
 
+func TestListTasks_FilterByFleetLabel(t *testing.T) {
+	task1 := newTask("task-aaa", map[string]string{"shepherd.io/fleet": "frontend"}, nil)
+	task2 := newTask("task-bbb", map[string]string{"shepherd.io/fleet": "backend"}, nil)
+
+	h := newTestHandler(task1, task2)
+	router := testRouter(h)
+
+	w := doGet(t, router, "/api/v1/tasks?fleet=frontend")
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var tasks []TaskResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &tasks))
+	assert.Len(t, tasks, 1)
+	assert.Equal(t, "task-aaa", tasks[0].ID)
+}
+
 func TestListTasks_CombinedFilters(t *testing.T) {
 	// active + repo + issue
 	matchActive := newTask("task-match", map[string]string{
@@ -635,7 +716,7 @@ func TestGetTask_ReturnsTaskDetails(t *testing.T) {
 			Type:    toolkitv1alpha1.ConditionSucceeded,
 			Status:  metav1.ConditionUnknown,
 			Reason:  toolkitv1alpha1.ReasonRunning,
-			Message: "Job is running",
+			Message: "Task is running",
 		},
 	})
 
@@ -652,7 +733,7 @@ func TestGetTask_ReturnsTaskDetails(t *testing.T) {
 	assert.Equal(t, "default", resp.Namespace)
 	assert.Equal(t, "https://github.com/test/repo", resp.Repo.URL)
 	assert.Equal(t, "Running", resp.Status.Phase)
-	assert.Equal(t, "Job is running", resp.Status.Message)
+	assert.Equal(t, "Task is running", resp.Status.Message)
 }
 
 func TestGetTask_NotFound(t *testing.T) {
