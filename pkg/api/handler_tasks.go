@@ -118,6 +118,7 @@ func (h *taskHandler) createTask(w http.ResponseWriter, r *http.Request) {
 	// Build runner spec
 	runnerSpec := toolkitv1alpha1.RunnerSpec{}
 	if req.Runner != nil {
+		runnerSpec.SandboxTemplateName = req.Runner.SandboxTemplateName
 		if req.Runner.Timeout != "" {
 			d, err := time.ParseDuration(req.Runner.Timeout)
 			if err != nil {

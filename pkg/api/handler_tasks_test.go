@@ -400,13 +400,13 @@ func TestExtractStatus_WithCondition(t *testing.T) {
 					Message: "Task is running",
 				},
 			},
-			SandboxClaimName: "task-abc-1-job",
+			SandboxClaimName: "task-abc-1",
 		},
 	}
 	status := extractStatus(task)
 	assert.Equal(t, "Running", status.Phase)
 	assert.Equal(t, "Task is running", status.Message)
-	assert.Equal(t, "task-abc-1-job", status.SandboxClaimName)
+	assert.Equal(t, "task-abc-1", status.SandboxClaimName)
 }
 
 func TestExtractStatus_Terminal(t *testing.T) {

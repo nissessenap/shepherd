@@ -473,49 +473,49 @@ Per-task bearer token authentication is deferred to [#22](https://github.com/nis
 Add `assignTask()` method:
 
 ```go
-const (
-	taskAssignmentMaxRetries = 5
-	taskAssignmentRetryDelay = 2 * time.Second
-)
-
 type TaskAssignment struct {
 	TaskID string `json:"taskID"`
 	APIURL string `json:"apiURL"`
 }
 
+// assignTask POSTs a task assignment to the runner's HTTP endpoint.
+// Returns nil on success (200 OK or 409 Conflict), error otherwise.
+// The caller (reconcile loop) handles retries via controller-runtime's RequeueAfter.
 func (r *AgentTaskReconciler) assignTask(ctx context.Context, sandboxFQDN string, assignment TaskAssignment) error {
-	var lastErr error
-	for attempt := range taskAssignmentMaxRetries {
-		if attempt > 0 {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(taskAssignmentRetryDelay):
-			}
-		}
-
-		body, _ := json.Marshal(assignment)
-		url := fmt.Sprintf("http://%s:8888/task", sandboxFQDN)
-		resp, err := r.HTTPClient.Post(url, "application/json", bytes.NewReader(body))
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		resp.Body.Close()
-
-		switch resp.StatusCode {
-		case http.StatusOK:
-			return nil
-		case http.StatusConflict:
-			// Runner already has this task (idempotent retry after crash)
-			return nil
-		default:
-			lastErr = fmt.Errorf("runner returned %d", resp.StatusCode)
-		}
+	body, err := json.Marshal(assignment)
+	if err != nil {
+		return fmt.Errorf("marshaling assignment: %w", err)
 	}
-	return fmt.Errorf("task assignment failed after %d attempts: %w", taskAssignmentMaxRetries, lastErr)
+
+	url := fmt.Sprintf("http://%s:8888/task", sandboxFQDN)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("building request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := r.HTTPClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("posting to runner: %w", err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return nil
+	case http.StatusConflict:
+		// Runner already has this task (idempotent retry after crash)
+		return nil
+	default:
+		return fmt.Errorf("runner returned %d", resp.StatusCode)
+	}
 }
 ```
+
+**Note**: This implementation uses single-attempt with controller-runtime's exponential backoff
+requeue instead of an in-method retry loop. This is simpler and consistent with Kubernetes
+controller patterns where transient errors are handled by requeueing the entire reconcile.
 
 #### 2. Update reconcile loop
 

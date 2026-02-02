@@ -342,6 +342,7 @@ var _ = Describe("AgentTask Controller", func() {
 			cond := meta.FindStatusCondition(task.Status.Conditions, toolkitv1alpha1.ConditionSucceeded)
 			Expect(cond).NotTo(BeNil())
 			Expect(cond.Reason).To(Equal(toolkitv1alpha1.ReasonRunning))
+			Expect(task.Status.StartTime).NotTo(BeNil(), "StartTime should be set when task becomes Running")
 		}
 
 		It("should create a SandboxClaim on second reconcile", func() {
@@ -373,7 +374,7 @@ var _ = Describe("AgentTask Controller", func() {
 			var task toolkitv1alpha1.AgentTask
 			Expect(k8sClient.Get(ctx, taskNN, &task)).To(Succeed())
 			Expect(task.Status.SandboxClaimName).To(Equal(claimName))
-			Expect(task.Status.StartTime).NotTo(BeNil())
+			Expect(task.Status.StartTime).To(BeNil(), "StartTime should not be set until task is Running")
 		})
 
 		It("should not re-create SandboxClaim if it already exists", func() {
@@ -651,7 +652,10 @@ type rewriteTransport struct {
 
 func (t *rewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	// Rewrite the URL to point to the test server
-	parsed, _ := url.Parse(t.targetURL)
+	parsed, err := url.Parse(t.targetURL)
+	if err != nil {
+		return nil, fmt.Errorf("parsing target URL: %w", err)
+	}
 	req.URL.Scheme = parsed.Scheme
 	req.URL.Host = parsed.Host
 	return t.base.RoundTrip(req)

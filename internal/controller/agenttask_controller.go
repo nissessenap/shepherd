@@ -95,6 +95,7 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		if err := r.Status().Update(ctx, &task); err != nil {
 			return ctrl.Result{}, fmt.Errorf("updating initial status: %w", err)
 		}
+		// events.EventRecorder uses (regarding, related, type, reason, action, note) signature
 		r.Recorder.Eventf(&task, nil, "Normal", "Pending", "Reconcile", "Task accepted, waiting for sandbox creation")
 		log.Info("initialized task status", "task", req.NamespacedName)
 		// Use RequeueAfter instead of deprecated Requeue: true (controller-runtime v0.23+ PR #3107)
@@ -124,8 +125,6 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 
 		task.Status.SandboxClaimName = newClaim.Name
-		now := metav1.Now()
-		task.Status.StartTime = &now
 
 		if statusErr := r.Status().Update(ctx, &task); statusErr != nil {
 			return ctrl.Result{}, fmt.Errorf("updating status after sandbox claim creation: %w", statusErr)
@@ -176,7 +175,9 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 		}
 
-		// Assignment succeeded — set Running (this IS the idempotency marker)
+		// Assignment succeeded — set Running (this IS the idempotency marker) and record StartTime
+		now := metav1.Now()
+		task.Status.StartTime = &now
 		setCondition(&task, metav1.Condition{
 			Type:               toolkitv1alpha1.ConditionSucceeded,
 			Status:             metav1.ConditionUnknown,
@@ -220,7 +221,13 @@ func (r *AgentTaskReconciler) assignTask(ctx context.Context, sandboxFQDN string
 	}
 
 	url := fmt.Sprintf("http://%s:8888/task", sandboxFQDN)
-	resp, err := httpClient.Post(url, "application/json", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("building request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("posting to runner: %w", err)
 	}

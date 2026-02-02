@@ -50,8 +50,9 @@ type TaskRequest struct {
 
 // RunnerConfig specifies optional runner overrides.
 type RunnerConfig struct {
-	Timeout            string `json:"timeout,omitempty"`
-	ServiceAccountName string `json:"serviceAccountName,omitempty"`
+	SandboxTemplateName string `json:"sandboxTemplateName,omitempty"`
+	Timeout             string `json:"timeout,omitempty"`
+	ServiceAccountName  string `json:"serviceAccountName,omitempty"`
 }
 
 // TaskResponse is the JSON response for task endpoints.
