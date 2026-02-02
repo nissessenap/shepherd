@@ -8,10 +8,10 @@ Add defense-in-depth authentication for runner-facing API endpoints. When a sand
 
 **Operator** (`internal/controller/agenttask_controller.go`): Reconciles AgentTask → creates SandboxClaim → waits for Ready → POSTs `TaskAssignment{TaskID, APIURL}` to runner at `:8888/task`. No token generation or Secret management.
 
-**API server** (`pkg/api/`): Three runner-facing endpoints exist with `TODO: Authenticate via per-task bearer token (see #22)` comments:
+**API server** (`pkg/api/`): Three runner-facing endpoints will be protected. The `TODO: Authenticate via per-task bearer token (see #22)` comment appears in `handler_data.go:33` and `handler_token.go:33`. The `handler_status.go` endpoint does NOT have the TODO comment (it wasn't mentioned in the original issue), but per user decision, it will also be protected:
 - `GET /api/v1/tasks/{taskID}/data` (`handler_data.go:33`)
 - `GET /api/v1/tasks/{taskID}/token` (`handler_token.go:33`)
-- `POST /api/v1/tasks/{taskID}/status` (`handler_status.go:35`)
+- `POST /api/v1/tasks/{taskID}/status` (`handler_status.go` — no TODO, but will be protected)
 
 **RBAC**: Operator has no Secret permissions (`config/rbac/role.yaml`). API server has no Secret permissions (`config/api-rbac/role.yaml`).
 
@@ -100,12 +100,6 @@ func generateToken() (plaintext string, hash string, err error) {
 	return plaintext, hash, nil
 }
 
-// hashToken computes the SHA-256 hex digest of a plaintext token.
-func hashToken(plaintext string) string {
-	h := sha256.Sum256([]byte(plaintext))
-	return hex.EncodeToString(h[:])
-}
-
 // tokenSecretName returns the deterministic Secret name for a task's bearer token.
 func tokenSecretName(taskName string) string {
 	// Task names are validated to be ≤57 chars, so this is always ≤63 chars.
@@ -150,6 +144,8 @@ func (r *AgentTaskReconciler) ensureTokenSecret(
 	if err := r.Get(ctx, key, &existing); err == nil {
 		// Secret exists — delete it (we'll create a new one with fresh token)
 		log.Info("token Secret already exists, deleting for fresh token", "secret", secretName)
+		// Safe under controller-runtime's default single-worker reconcile model.
+		// If MaxConcurrentReconciles > 1, handle AlreadyExists on Create.
 		if err := r.Delete(ctx, &existing); err != nil && !errors.IsNotFound(err) {
 			return "", fmt.Errorf("deleting existing token secret: %w", err)
 		}
@@ -279,6 +275,7 @@ Update existing test for name length validation:
 - Change 63-char limit test to 57-char limit
 - Add test: name exactly 57 chars should succeed
 - Add test: name 58 chars should fail with message about `-token` suffix
+- **Note**: Update the test assertion string from `"exceeds 63-character limit"` to match the new error message: `"exceeds 57-character limit (must leave room for -token Secret suffix)"`
 
 ### Success Criteria:
 
@@ -377,6 +374,7 @@ Add token validation at the start of `getTaskData()`, after extracting taskID:
 // Validate bearer token
 if err := validateTaskToken(r.Context(), h.client, h.namespace, taskID, r); err != nil {
     log.V(1).Info("token validation failed", "taskID", taskID, "error", err)
+    // TODO: Add Prometheus counter for auth failures per taskID for monitoring
     writeError(w, http.StatusUnauthorized, "unauthorized", "")
     return
 }
@@ -417,6 +415,29 @@ Unit tests using a fake K8s client:
 - Missing Secret returns error
 - Secret without `token-hash` key returns error
 - Timing-safe comparison (verify `subtle.ConstantTimeCompare` is used — structural test)
+- **Token for task-A returns 401 on task-B endpoint** (verify per-task token isolation)
+
+**Test Helper**: Create a `createTokenSecret` helper function for test setup:
+
+```go
+func createTokenSecret(t *testing.T, c client.Client, namespace, taskName, plaintext string) {
+    t.Helper()
+    h := sha256.Sum256([]byte(plaintext))
+    hash := hex.EncodeToString(h[:])
+    secret := &corev1.Secret{
+        ObjectMeta: metav1.ObjectMeta{
+            Name:      taskName + "-token",
+            Namespace: namespace,
+        },
+        Data: map[string][]byte{
+            "token-hash": []byte(hash),
+        },
+    }
+    require.NoError(t, c.Create(context.Background(), secret))
+}
+```
+
+**Important**: Ensure `corev1.AddToScheme(s)` is added to the test scheme setup for handler tests.
 
 **File**: `pkg/api/handler_data_test.go`
 
@@ -490,6 +511,8 @@ mux.HandleFunc("POST /task", func(w http.ResponseWriter, r *http.Request) {
     }
 })
 ```
+
+**Note**: Add `"strings"` to the import block in `cmd/shepherd-runner/main.go`.
 
 #### 2. Update runner stub tests
 **File**: `cmd/shepherd-runner/main_test.go`
