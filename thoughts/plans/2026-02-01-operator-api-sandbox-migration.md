@@ -756,11 +756,11 @@ Verify generated `config/rbac/role.yaml` no longer references `batch` group and 
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `make manifests` regenerates RBAC — no `batch` group in role.yaml
-- [ ] `make build` compiles
-- [ ] `make test` passes
-- [ ] `make lint` passes
-- [ ] `make build-smoke` passes (kustomize renders correctly)
+- [x] `make manifests` regenerates RBAC — no `batch` group in role.yaml
+- [x] `make build` compiles
+- [x] `make test` passes
+- [x] `make lint` passes
+- [x] `make build-smoke` passes (kustomize renders correctly)
 
 ---
 
