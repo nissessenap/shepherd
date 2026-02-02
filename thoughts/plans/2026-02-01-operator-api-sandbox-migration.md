@@ -555,9 +555,9 @@ Add tests:
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `make build` compiles
-- [ ] `make test` passes — assignment tests verify HTTP POST and Running transition
-- [ ] `make lint` passes
+- [x] `make build` compiles
+- [x] `make test` passes — assignment tests verify HTTP POST and Running transition
+- [x] `make lint` passes
 
 ---
 

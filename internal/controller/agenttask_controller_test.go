@@ -17,10 +17,16 @@ limitations under the License.
 package controller
 
 import (
+	"encoding/json"
 	"fmt"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -43,6 +49,7 @@ var _ = Describe("AgentTask Controller", func() {
 			Client:   k8sClient,
 			Scheme:   k8sClient.Scheme(),
 			Recorder: events.NewFakeRecorder(10),
+			APIURL:   "http://shepherd-api.shepherd.svc.cluster.local:8080",
 		}
 	})
 
@@ -84,6 +91,14 @@ var _ = Describe("AgentTask Controller", func() {
 		claim := &sandboxextv1alpha1.SandboxClaim{}
 		if err := k8sClient.Get(ctx, nn, claim); err == nil {
 			_ = k8sClient.Delete(ctx, claim)
+		}
+	}
+
+	cleanupSandbox := func(name, namespace string) {
+		nn := client.ObjectKey{Name: name, Namespace: namespace}
+		sb := &sandboxv1alpha1.Sandbox{}
+		if err := k8sClient.Get(ctx, nn, sb); err == nil {
+			_ = k8sClient.Delete(ctx, sb)
 		}
 	}
 
@@ -191,6 +206,7 @@ var _ = Describe("AgentTask Controller", func() {
 		})
 
 		AfterEach(func() {
+			cleanupSandbox(taskName+"-sandbox", resourceNamespace)
 			cleanupClaim(taskName, resourceNamespace)
 			cleanupTask(taskName, resourceNamespace)
 		})
@@ -212,6 +228,57 @@ var _ = Describe("AgentTask Controller", func() {
 			return task.Status.SandboxClaimName
 		}
 
+		// createSandboxForClaim creates a Sandbox resource to simulate the
+		// agent-sandbox controller. Returns the sandbox name.
+		createSandboxForClaim := func(claimName string) string {
+			const serviceFQDN = "test-sandbox.default.svc.cluster.local"
+			sandboxName := claimName + "-sandbox"
+
+			sandbox := &sandboxv1alpha1.Sandbox{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      sandboxName,
+					Namespace: resourceNamespace,
+				},
+				Spec: sandboxv1alpha1.SandboxSpec{
+					PodTemplate: sandboxv1alpha1.PodTemplate{
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{
+								{Name: "runner", Image: "test-runner:latest"},
+							},
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, sandbox)).To(Succeed())
+
+			// Set ServiceFQDN on the Sandbox status
+			sandbox.Status.ServiceFQDN = serviceFQDN
+			meta.SetStatusCondition(&sandbox.Status.Conditions, metav1.Condition{
+				Type:   string(sandboxv1alpha1.SandboxConditionReady),
+				Status: metav1.ConditionTrue,
+				Reason: "Ready",
+			})
+			Expect(k8sClient.Status().Update(ctx, sandbox)).To(Succeed())
+
+			return sandboxName
+		}
+
+		setClaimReadyWithSandbox := func(claimName, sandboxName string) {
+			var claim sandboxextv1alpha1.SandboxClaim
+			Expect(k8sClient.Get(ctx, client.ObjectKey{
+				Namespace: resourceNamespace,
+				Name:      claimName,
+			}, &claim)).To(Succeed())
+
+			meta.SetStatusCondition(&claim.Status.Conditions, metav1.Condition{
+				Type:   string(sandboxv1alpha1.SandboxConditionReady),
+				Status: metav1.ConditionTrue,
+				Reason: "TestSetup",
+			})
+			claim.Status.SandboxStatus.Name = sandboxName
+			Expect(k8sClient.Status().Update(ctx, &claim)).To(Succeed())
+		}
+
 		setClaimReady := func(claimName string, ready bool) {
 			var claim sandboxextv1alpha1.SandboxClaim
 			Expect(k8sClient.Get(ctx, client.ObjectKey{
@@ -229,6 +296,52 @@ var _ = Describe("AgentTask Controller", func() {
 				Reason: "TestSetup",
 			})
 			Expect(k8sClient.Status().Update(ctx, &claim)).To(Succeed())
+		}
+
+		// setupRunnerMock creates an httptest server on a specific port and configures
+		// the reconciler to use it. Returns the server (caller must close) and the handler func
+		// that was registered.
+		setupRunnerMock := func(handler http.HandlerFunc) (*httptest.Server, string) {
+			server := httptest.NewServer(handler)
+			// Extract host:port from test server to use as the "FQDN"
+			host, port, err := net.SplitHostPort(server.Listener.Addr().String())
+			Expect(err).NotTo(HaveOccurred())
+			_ = port
+
+			reconciler.HTTPClient = server.Client()
+			// We need to override the URL construction in assignTask.
+			// Since assignTask builds "http://<fqdn>:8888/task", we need the mock
+			// on port 8888. Instead, we'll use a custom transport to redirect.
+			transport := &rewriteTransport{
+				base:      server.Client().Transport,
+				targetURL: server.URL,
+			}
+			reconciler.HTTPClient = &http.Client{Transport: transport}
+
+			return server, host
+		}
+
+		// reconcileToRunning takes the task through Pending → Claimed → Running
+		// using a runner mock that accepts assignments.
+		reconcileToRunning := func(claimName string) {
+			sandboxName := createSandboxForClaim(claimName)
+			setClaimReadyWithSandbox(claimName, sandboxName)
+
+			server, _ := setupRunnerMock(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"status":"accepted"}`))
+			})
+			defer server.Close()
+
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: taskNN})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(BeZero())
+
+			var task toolkitv1alpha1.AgentTask
+			Expect(k8sClient.Get(ctx, taskNN, &task)).To(Succeed())
+			cond := meta.FindStatusCondition(task.Status.Conditions, toolkitv1alpha1.ConditionSucceeded)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(toolkitv1alpha1.ReasonRunning))
 		}
 
 		It("should create a SandboxClaim on second reconcile", func() {
@@ -282,13 +395,58 @@ var _ = Describe("AgentTask Controller", func() {
 			Expect(claimList.Items[0].Name).To(Equal(claimName))
 		})
 
-		It("should set Running when SandboxClaim Ready=True", func() {
+		It("should POST assignment to runner when SandboxClaim Ready=True", func() {
 			createAgentTask(taskName, resourceNamespace)
 			reconcileToPending()
 			claimName := reconcileToClaimed()
 
-			By("Simulating SandboxClaim Ready=True")
-			setClaimReady(claimName, true)
+			sandboxName := createSandboxForClaim(claimName)
+			setClaimReadyWithSandbox(claimName, sandboxName)
+
+			By("Setting up runner mock to capture the assignment POST")
+			var receivedAssignment TaskAssignment
+			var receivedContentType string
+			server, _ := setupRunnerMock(func(w http.ResponseWriter, r *http.Request) {
+				receivedContentType = r.Header.Get("Content-Type")
+				_ = json.NewDecoder(r.Body).Decode(&receivedAssignment)
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"status":"accepted"}`))
+			})
+			defer server.Close()
+
+			By("Reconciling — should POST assignment and transition to Running")
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: taskNN})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(BeZero())
+
+			By("Verifying POST body contains taskID and apiURL")
+			// Fetch the task to get its UID
+			var task toolkitv1alpha1.AgentTask
+			Expect(k8sClient.Get(ctx, taskNN, &task)).To(Succeed())
+			Expect(receivedAssignment.TaskID).To(Equal(string(task.UID)))
+			Expect(receivedAssignment.APIURL).To(Equal("http://shepherd-api.shepherd.svc.cluster.local:8080"))
+			Expect(receivedContentType).To(Equal("application/json"))
+
+			By("Verifying Running condition")
+			cond := meta.FindStatusCondition(task.Status.Conditions, toolkitv1alpha1.ConditionSucceeded)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Status).To(Equal(metav1.ConditionUnknown))
+			Expect(cond.Reason).To(Equal(toolkitv1alpha1.ReasonRunning))
+			Expect(cond.Message).To(Equal("Sandbox is ready, task assigned to runner"))
+		})
+
+		It("should set Running after successful assignment", func() {
+			createAgentTask(taskName, resourceNamespace)
+			reconcileToPending()
+			claimName := reconcileToClaimed()
+
+			sandboxName := createSandboxForClaim(claimName)
+			setClaimReadyWithSandbox(claimName, sandboxName)
+
+			server, _ := setupRunnerMock(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			})
+			defer server.Close()
 
 			By("Reconciling — should transition to Running")
 			result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: taskNN})
@@ -302,7 +460,89 @@ var _ = Describe("AgentTask Controller", func() {
 			Expect(cond).NotTo(BeNil())
 			Expect(cond.Status).To(Equal(metav1.ConditionUnknown))
 			Expect(cond.Reason).To(Equal(toolkitv1alpha1.ReasonRunning))
-			Expect(cond.Message).To(Equal("Sandbox is ready, task is running"))
+		})
+
+		It("should not re-assign if already Running", func() {
+			createAgentTask(taskName, resourceNamespace)
+			reconcileToPending()
+			claimName := reconcileToClaimed()
+
+			reconcileToRunning(claimName)
+
+			By("Setting up runner mock that tracks calls")
+			var callCount atomic.Int32
+			server, _ := setupRunnerMock(func(w http.ResponseWriter, r *http.Request) {
+				callCount.Add(1)
+				w.WriteHeader(http.StatusOK)
+			})
+			defer server.Close()
+
+			By("Reconciling again — already Running, should not POST")
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: taskNN})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(BeZero())
+			Expect(callCount.Load()).To(Equal(int32(0)), "should not POST to runner when already Running")
+
+			By("Verifying condition is still Running")
+			var task toolkitv1alpha1.AgentTask
+			Expect(k8sClient.Get(ctx, taskNN, &task)).To(Succeed())
+			cond := meta.FindStatusCondition(task.Status.Conditions, toolkitv1alpha1.ConditionSucceeded)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(toolkitv1alpha1.ReasonRunning))
+		})
+
+		It("should treat 409 from runner as success", func() {
+			createAgentTask(taskName, resourceNamespace)
+			reconcileToPending()
+			claimName := reconcileToClaimed()
+
+			sandboxName := createSandboxForClaim(claimName)
+			setClaimReadyWithSandbox(claimName, sandboxName)
+
+			By("Setting up runner mock that returns 409 Conflict")
+			server, _ := setupRunnerMock(func(w http.ResponseWriter, r *http.Request) {
+				http.Error(w, "task already assigned", http.StatusConflict)
+			})
+			defer server.Close()
+
+			By("Reconciling — should treat 409 as success and set Running")
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: taskNN})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(BeZero())
+
+			By("Verifying Running condition")
+			var task toolkitv1alpha1.AgentTask
+			Expect(k8sClient.Get(ctx, taskNN, &task)).To(Succeed())
+			cond := meta.FindStatusCondition(task.Status.Conditions, toolkitv1alpha1.ConditionSucceeded)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(toolkitv1alpha1.ReasonRunning))
+		})
+
+		It("should requeue on transient assignment failure", func() {
+			createAgentTask(taskName, resourceNamespace)
+			reconcileToPending()
+			claimName := reconcileToClaimed()
+
+			sandboxName := createSandboxForClaim(claimName)
+			setClaimReadyWithSandbox(claimName, sandboxName)
+
+			By("Setting up runner mock that always returns 500")
+			server, _ := setupRunnerMock(func(w http.ResponseWriter, r *http.Request) {
+				http.Error(w, "internal error", http.StatusInternalServerError)
+			})
+			defer server.Close()
+
+			By("Reconciling — should requeue after assignment failure")
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: taskNN})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(BeNumerically(">", 0), "should requeue on transient failure")
+
+			By("Verifying task is NOT Running (assignment failed)")
+			var task toolkitv1alpha1.AgentTask
+			Expect(k8sClient.Get(ctx, taskNN, &task)).To(Succeed())
+			cond := meta.FindStatusCondition(task.Status.Conditions, toolkitv1alpha1.ConditionSucceeded)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).NotTo(Equal(toolkitv1alpha1.ReasonRunning))
 		})
 
 		It("should requeue when SandboxClaim not yet ready", func() {
@@ -316,15 +556,27 @@ var _ = Describe("AgentTask Controller", func() {
 			Expect(result.RequeueAfter).To(BeNumerically(">", 0), "should requeue when claim not ready")
 		})
 
+		It("should requeue when SandboxClaim Ready but Sandbox name not populated", func() {
+			createAgentTask(taskName, resourceNamespace)
+			reconcileToPending()
+			claimName := reconcileToClaimed()
+
+			By("Setting SandboxClaim Ready=True but without SandboxStatus.Name")
+			setClaimReady(claimName, true)
+
+			By("Reconciling — should requeue waiting for sandbox name")
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: taskNN})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(BeNumerically(">", 0))
+		})
+
 		It("should mark Failed when SandboxClaim Ready=False and task was Running", func() {
 			createAgentTask(taskName, resourceNamespace)
 			reconcileToPending()
 			claimName := reconcileToClaimed()
 
-			By("Setting SandboxClaim Ready=True to trigger Running")
-			setClaimReady(claimName, true)
-			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: taskNN})
-			Expect(err).NotTo(HaveOccurred())
+			By("Transitioning to Running via successful assignment")
+			reconcileToRunning(claimName)
 
 			By("Simulating SandboxClaim Ready=False (sandbox terminated)")
 			var claim sandboxextv1alpha1.SandboxClaim
@@ -386,28 +638,20 @@ var _ = Describe("AgentTask Controller", func() {
 			Expect(err).To(HaveOccurred())
 			Expect(client.IgnoreNotFound(err)).To(Succeed(), "SandboxClaim should be deleted")
 		})
-
-		It("should not error when Running and SandboxClaim already Ready", func() {
-			createAgentTask(taskName, resourceNamespace)
-			reconcileToPending()
-			claimName := reconcileToClaimed()
-
-			By("Setting SandboxClaim Ready=True and transitioning to Running")
-			setClaimReady(claimName, true)
-			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: taskNN})
-			Expect(err).NotTo(HaveOccurred())
-
-			By("Reconciling again — already Running, should be a no-op")
-			result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: taskNN})
-			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RequeueAfter).To(BeZero())
-
-			By("Verifying condition is still Running")
-			var task toolkitv1alpha1.AgentTask
-			Expect(k8sClient.Get(ctx, taskNN, &task)).To(Succeed())
-			cond := meta.FindStatusCondition(task.Status.Conditions, toolkitv1alpha1.ConditionSucceeded)
-			Expect(cond).NotTo(BeNil())
-			Expect(cond.Reason).To(Equal(toolkitv1alpha1.ReasonRunning))
-		})
 	})
 })
+
+// rewriteTransport rewrites all requests to target a test server URL,
+// allowing assignTask() to build its normal "http://<fqdn>:8888/task" URL
+// while actually hitting the httptest server.
+type rewriteTransport struct {
+	base      http.RoundTripper
+	targetURL string
+}
+
+func (t *rewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	// Rewrite the URL to point to the test server
+	req.URL.Scheme = "http"
+	req.URL.Host = t.targetURL[len("http://"):]
+	return t.base.RoundTrip(req)
+}

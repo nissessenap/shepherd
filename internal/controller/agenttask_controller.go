@@ -17,8 +17,11 @@ limitations under the License.
 package controller
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -44,6 +47,17 @@ type AgentTaskReconciler struct {
 	Recorder   events.EventRecorder
 	APIURL     string       // Internal API URL for runner task assignment
 	HTTPClient *http.Client // Injectable for testing; defaults to http.DefaultClient
+}
+
+const (
+	taskAssignmentMaxRetries = 5
+	taskAssignmentRetryDelay = 2 * time.Second
+)
+
+// TaskAssignment is the payload POSTed to the runner's /task endpoint.
+type TaskAssignment struct {
+	TaskID string `json:"taskID"`
+	APIURL string `json:"apiURL"`
 }
 
 // +kubebuilder:rbac:groups=toolkit.shepherd.io,resources=agenttasks,verbs=get;list;watch;update;patch
@@ -132,27 +146,54 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	succeededCond := meta.FindStatusCondition(task.Status.Conditions, toolkitv1alpha1.ConditionSucceeded)
 	isRunning := succeededCond != nil && succeededCond.Reason == toolkitv1alpha1.ReasonRunning
 
-	// 6a. Ready=True → transition to Running (task assignment deferred to Phase 4)
+	// 6a. Ready=True → assign task to runner, then transition to Running
 	if readyCond != nil && readyCond.Status == metav1.ConditionTrue {
 		if isRunning {
-			// Already Running — nothing to do
+			// Already Running — assignment already succeeded
 			log.V(1).Info("sandbox ready and task already running", "claim", claim.Name)
 			return ctrl.Result{}, nil
 		}
 
-		// Transition to Running
+		// GET Sandbox by name to read ServiceFQDN
+		sandboxName := claim.Status.SandboxStatus.Name
+		if sandboxName == "" {
+			log.V(1).Info("SandboxClaim Ready but Sandbox name not yet populated, requeuing", "claim", claim.Name)
+			return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
+		}
+
+		var sandbox sandboxv1alpha1.Sandbox
+		if err := r.Get(ctx, client.ObjectKey{Namespace: task.Namespace, Name: sandboxName}, &sandbox); err != nil {
+			return ctrl.Result{}, fmt.Errorf("getting sandbox %s: %w", sandboxName, err)
+		}
+
+		if sandbox.Status.ServiceFQDN == "" {
+			log.V(1).Info("Sandbox ServiceFQDN not yet available, requeuing", "sandbox", sandboxName)
+			return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
+		}
+
+		// POST task assignment to the runner
+		assignment := TaskAssignment{
+			TaskID: string(task.UID),
+			APIURL: r.APIURL,
+		}
+		if err := r.assignTask(ctx, sandbox.Status.ServiceFQDN, assignment); err != nil {
+			log.Error(err, "task assignment failed", "sandbox", sandboxName)
+			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+		}
+
+		// Assignment succeeded — set Running (this IS the idempotency marker)
 		setCondition(&task, metav1.Condition{
 			Type:               toolkitv1alpha1.ConditionSucceeded,
 			Status:             metav1.ConditionUnknown,
 			Reason:             toolkitv1alpha1.ReasonRunning,
-			Message:            "Sandbox is ready, task is running",
+			Message:            "Sandbox is ready, task assigned to runner",
 			ObservedGeneration: task.Generation,
 		})
 		if statusErr := r.Status().Update(ctx, &task); statusErr != nil {
 			return ctrl.Result{}, fmt.Errorf("updating status to running: %w", statusErr)
 		}
-		r.Recorder.Eventf(&task, nil, "Normal", "Running", "Reconcile", "Sandbox %s is ready, task running", claim.Name)
-		log.Info("sandbox ready, task running", "claim", claim.Name)
+		r.Recorder.Eventf(&task, nil, "Normal", "Running", "Reconcile", "Task assigned to sandbox %s", sandboxName)
+		log.Info("task assigned and running", "sandbox", sandboxName, "claim", claim.Name)
 		return ctrl.Result{}, nil
 	}
 
@@ -166,6 +207,54 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// 6c. Ready condition nil, False, or Unknown AND task not yet Running → still starting
 	log.V(1).Info("sandbox claim not yet ready, requeuing", "claim", claim.Name)
 	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+}
+
+// assignTask POSTs a task assignment to the runner's HTTP endpoint with retries.
+func (r *AgentTaskReconciler) assignTask(ctx context.Context, sandboxFQDN string, assignment TaskAssignment) error {
+	log := logf.FromContext(ctx)
+	httpClient := r.HTTPClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+
+	var lastErr error
+	for attempt := range taskAssignmentMaxRetries {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(taskAssignmentRetryDelay):
+			}
+		}
+
+		body, err := json.Marshal(assignment)
+		if err != nil {
+			return fmt.Errorf("marshaling assignment: %w", err)
+		}
+
+		url := fmt.Sprintf("http://%s:8888/task", sandboxFQDN)
+		resp, err := httpClient.Post(url, "application/json", bytes.NewReader(body))
+		if err != nil {
+			lastErr = err
+			log.V(1).Info("task assignment attempt failed", "attempt", attempt+1, "error", err)
+			continue
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+
+		switch resp.StatusCode {
+		case http.StatusOK:
+			return nil
+		case http.StatusConflict:
+			// Runner already has this task (idempotent retry after crash)
+			log.V(1).Info("runner already has task (409), treating as success")
+			return nil
+		default:
+			lastErr = fmt.Errorf("runner returned %d", resp.StatusCode)
+			log.V(1).Info("task assignment attempt got unexpected status", "attempt", attempt+1, "status", resp.StatusCode)
+		}
+	}
+	return fmt.Errorf("task assignment failed after %d attempts: %w", taskAssignmentMaxRetries, lastErr)
 }
 
 // cleanupSandboxClaim deletes the SandboxClaim if it still exists for a terminal task.
