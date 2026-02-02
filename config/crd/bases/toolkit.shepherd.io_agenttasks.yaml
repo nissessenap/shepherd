@@ -18,7 +18,7 @@ spec:
     - jsonPath: .status.conditions[?(@.type=="Succeeded")].reason
       name: Status
       type: string
-    - jsonPath: .status.result.prUrl
+    - jsonPath: .status.result.prURL
       name: PR
       priority: 1
       type: string
@@ -272,7 +272,7 @@ spec:
                 properties:
                   error:
                     type: string
-                  prUrl:
+                  prURL:
                     type: string
                 type: object
               sandboxClaimName:

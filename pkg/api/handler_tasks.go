@@ -90,24 +90,24 @@ func (h *taskHandler) createTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Callback == "" {
-		writeError(w, http.StatusBadRequest, "callbackUrl is required", "")
+		writeError(w, http.StatusBadRequest, "callbackURL is required", "")
 		return
 	}
 
 	// Validate callback URL
 	parsedURL, err := url.Parse(req.Callback)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid callbackUrl", err.Error())
+		writeError(w, http.StatusBadRequest, "invalid callbackURL", err.Error())
 		return
 	}
 	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
-		writeError(w, http.StatusBadRequest, "invalid callbackUrl scheme", "must be http or https")
+		writeError(w, http.StatusBadRequest, "invalid callbackURL scheme", "must be http or https")
 		return
 	}
 	// Validate hostname is non-empty
 	hostname := parsedURL.Hostname()
 	if hostname == "" {
-		writeError(w, http.StatusBadRequest, "invalid callbackUrl host", "hostname is empty")
+		writeError(w, http.StatusBadRequest, "invalid callbackURL host", "hostname is empty")
 		return
 	}
 	// Block well-known metadata IPs and localhost
@@ -120,7 +120,7 @@ func (h *taskHandler) createTask(w http.ResponseWriter, r *http.Request) {
 		"0.0.0.0":         true,
 	}
 	if blockedHosts[hostname] {
-		writeError(w, http.StatusBadRequest, "invalid callbackUrl host", "blocked host")
+		writeError(w, http.StatusBadRequest, "invalid callbackURL host", "blocked host")
 		return
 	}
 
@@ -358,7 +358,7 @@ func extractStatus(task *toolkitv1alpha1.AgentTask) TaskStatusSummary {
 		Phase:            phase,
 		Message:          message,
 		SandboxClaimName: task.Status.SandboxClaimName,
-		PRUrl:            task.Status.Result.PRUrl,
+		PRURL:            task.Status.Result.PRURL,
 		Error:            task.Status.Result.Error,
 	}
 }

@@ -286,7 +286,7 @@ func TestWatcher_PRUrlIncludedInCallbackDetails(t *testing.T) {
 			Status: metav1.ConditionTrue,
 			Reason: toolkitv1alpha1.ReasonSucceeded,
 		},
-	}, toolkitv1alpha1.TaskResult{PRUrl: "https://github.com/org/repo/pull/42"})
+	}, toolkitv1alpha1.TaskResult{PRURL: "https://github.com/org/repo/pull/42"})
 
 	w, _ := newTestWatcher(task)
 	w.handleTerminalTransition(context.Background(), task)

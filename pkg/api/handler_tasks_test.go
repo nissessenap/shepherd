@@ -226,7 +226,7 @@ func TestCreateTask_MissingCallbackURL(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	var errResp ErrorResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &errResp))
-	assert.Equal(t, "callbackUrl is required", errResp.Error)
+	assert.Equal(t, "callbackURL is required", errResp.Error)
 }
 
 func TestCreateTask_MissingSandboxTemplateName(t *testing.T) {
@@ -475,14 +475,14 @@ func TestExtractStatus_Terminal(t *testing.T) {
 				},
 			},
 			Result: toolkitv1alpha1.TaskResult{
-				PRUrl: "https://github.com/org/repo/pull/1",
+				PRURL: "https://github.com/org/repo/pull/1",
 			},
 		},
 	}
 	status := extractStatus(task)
 	assert.Equal(t, "Succeeded", status.Phase)
 	assert.Equal(t, "Task completed successfully", status.Message)
-	assert.Equal(t, "https://github.com/org/repo/pull/1", status.PRUrl)
+	assert.Equal(t, "https://github.com/org/repo/pull/1", status.PRURL)
 }
 
 func TestTaskToResponse_CompletionTime(t *testing.T) {

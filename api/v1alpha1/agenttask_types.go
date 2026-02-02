@@ -25,7 +25,7 @@ import (
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Status",type=string,JSONPath=`.status.conditions[?(@.type=="Succeeded")].reason`
-// +kubebuilder:printcolumn:name="PR",type=string,JSONPath=`.status.result.prUrl`,priority=1
+// +kubebuilder:printcolumn:name="PR",type=string,JSONPath=`.status.result.prURL`,priority=1
 // +kubebuilder:printcolumn:name="Claim",type=string,JSONPath=`.status.sandboxClaimName`
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
@@ -123,7 +123,7 @@ type AgentTaskStatus struct {
 }
 
 type TaskResult struct {
-	PRUrl string `json:"prUrl,omitempty"`
+	PRURL string `json:"prURL,omitempty"`
 	Error string `json:"error,omitempty"`
 }
 
