@@ -52,7 +52,7 @@ type Options struct {
 	MetricsAddr    string
 	HealthAddr     string
 	LeaderElection bool
-	APIURL         string // Internal API URL (e.g., http://shepherd-api.shepherd.svc.cluster.local:8080)
+	APIURL         string // Internal API URL (e.g., http://shepherd-api.shepherd.svc.cluster.local:8081)
 }
 
 // Run starts the operator with the given options.

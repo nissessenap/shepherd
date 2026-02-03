@@ -23,7 +23,8 @@ import (
 )
 
 type APICmd struct {
-	ListenAddr           string `help:"API listen address" default:":8080" env:"SHEPHERD_API_ADDR"`
+	ListenAddr           string `help:"Public API listen address" default:":8080" env:"SHEPHERD_API_ADDR"`
+	InternalListenAddr   string `help:"Internal (runner) API listen address" default:":8081" env:"SHEPHERD_INTERNAL_API_ADDR"`
 	CallbackSecret       string `help:"HMAC secret for adapter callbacks" env:"SHEPHERD_CALLBACK_SECRET"`
 	Namespace            string `help:"Namespace for task creation" default:"shepherd" env:"SHEPHERD_NAMESPACE"`
 	GithubAppID          int64  `help:"GitHub Runner App ID" env:"SHEPHERD_GITHUB_APP_ID"`
@@ -42,6 +43,7 @@ func (c *APICmd) Run(_ *CLI) error {
 
 	return api.Run(api.Options{
 		ListenAddr:           c.ListenAddr,
+		InternalListenAddr:   c.InternalListenAddr,
 		CallbackSecret:       c.CallbackSecret,
 		Namespace:            c.Namespace,
 		GithubAppID:          c.GithubAppID,

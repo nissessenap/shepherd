@@ -50,6 +50,7 @@ func init() {
 // Options configures the API server.
 type Options struct {
 	ListenAddr           string
+	InternalListenAddr   string // Runner-only API port
 	CallbackSecret       string
 	Namespace            string
 	GithubAppID          int64
@@ -161,18 +162,12 @@ func Run(opts Options) error {
 		}
 	}()
 
-	// Build router
-	r := chi.NewRouter()
-	r.Use(middleware.RequestID)
-	r.Use(middleware.RealIP)
-	r.Use(middleware.Recoverer)
-
-	// Health endpoints
-	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+	// Health check handlers (shared between both routers)
+	healthzHandler := func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
-	})
-	r.Get("/readyz", func(w http.ResponseWriter, _ *http.Request) {
+	}
+	readyzHandler := func(w http.ResponseWriter, _ *http.Request) {
 		if !watcherHealthy.Load() || !cacheHealthy.Load() {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			_, _ = w.Write([]byte("watcher or cache unhealthy"))
@@ -180,44 +175,87 @@ func Run(opts Options) error {
 		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
-	})
+	}
 
-	// API routes
-	r.Route("/api/v1", func(r chi.Router) {
+	// Public router (port 8080) - external API for adapters/UI
+	publicRouter := chi.NewRouter()
+	publicRouter.Use(middleware.RequestID)
+	publicRouter.Use(middleware.RealIP)
+	publicRouter.Use(middleware.Recoverer)
+	publicRouter.Get("/healthz", healthzHandler)
+	publicRouter.Get("/readyz", readyzHandler)
+	publicRouter.Route("/api/v1", func(r chi.Router) {
 		r.Use(contentTypeMiddleware)
 		r.Post("/tasks", handler.createTask)
 		r.Get("/tasks", handler.listTasks)
 		r.Get("/tasks/{taskID}", handler.getTask)
+	})
+
+	// Internal router (port 8081) - runner-only API (NetworkPolicy protected)
+	internalRouter := chi.NewRouter()
+	internalRouter.Use(middleware.RequestID)
+	internalRouter.Use(middleware.RealIP)
+	internalRouter.Use(middleware.Recoverer)
+	internalRouter.Get("/healthz", healthzHandler)
+	internalRouter.Get("/readyz", readyzHandler)
+	internalRouter.Route("/api/v1", func(r chi.Router) {
+		r.Use(contentTypeMiddleware)
 		r.Post("/tasks/{taskID}/status", handler.updateTaskStatus)
 		r.Get("/tasks/{taskID}/data", handler.getTaskData)
 		r.Get("/tasks/{taskID}/token", handler.getTaskToken)
 	})
 
-	srv := &http.Server{
+	// Start public server
+	publicSrv := &http.Server{
 		Addr:         opts.ListenAddr,
-		Handler:      r,
+		Handler:      publicRouter,
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 60 * time.Second,
 		IdleTimeout:  120 * time.Second,
 	}
 
-	// Start server in goroutine
-	errCh := make(chan error, 1)
+	// Start internal server
+	internalSrv := &http.Server{
+		Addr:         opts.InternalListenAddr,
+		Handler:      internalRouter,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 60 * time.Second,
+		IdleTimeout:  120 * time.Second,
+	}
+
+	errCh := make(chan error, 2)
 	go func() {
-		log.Info("starting API server", "addr", opts.ListenAddr)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			errCh <- err
+		log.Info("starting public API server", "addr", opts.ListenAddr)
+		if err := publicSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			errCh <- fmt.Errorf("public server: %w", err)
+		}
+	}()
+	go func() {
+		log.Info("starting internal API server", "addr", opts.InternalListenAddr)
+		if err := internalSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			errCh <- fmt.Errorf("internal server: %w", err)
 		}
 	}()
 
 	// Wait for shutdown signal or error
 	select {
 	case <-ctx.Done():
-		log.Info("shutting down API server")
+		log.Info("shutting down API servers")
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer shutdownCancel()
-		return srv.Shutdown(shutdownCtx)
+		// Shutdown both servers
+		var errs []error
+		if err := publicSrv.Shutdown(shutdownCtx); err != nil {
+			errs = append(errs, fmt.Errorf("public shutdown: %w", err))
+		}
+		if err := internalSrv.Shutdown(shutdownCtx); err != nil {
+			errs = append(errs, fmt.Errorf("internal shutdown: %w", err))
+		}
+		if len(errs) > 0 {
+			return fmt.Errorf("shutdown errors: %v", errs)
+		}
+		return nil
 	case err := <-errCh:
-		return fmt.Errorf("server error: %w", err)
+		return err
 	}
 }
