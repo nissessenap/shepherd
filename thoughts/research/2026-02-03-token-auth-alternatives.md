@@ -282,7 +282,9 @@ spec:
 1. Task ID is unguessable (UUID)
 2. Task ID only shared with assigned runner
 3. Network layer blocks non-runner access to sensitive endpoints
-4. Terminal task check prevents replay after completion
+4. `TokenIssued` flag prevents replay within same execution
+5. Terminal task check prevents replay after completion
+6. Retrigger resets `TokenIssued`, allowing new sandbox to fetch token
 
 ---
 
@@ -319,6 +321,117 @@ These are real costs for modest security gains when NetworkPolicy + unguessable 
 
 ---
 
+## Security Review Notes (2026-02-03)
+
+### Retrigger / Sandbox Recovery Considerations
+
+A common concern: "What if a sandbox crashes and we need to retry?"
+
+**Answer**: This is a non-issue because of the architecture:
+
+1. **AgentTask → SandboxClaim** is 1:1 (deterministic naming: `claim.Name = task.Name`)
+2. If a sandbox crashes mid-execution → task is marked `Failed` (via grace period)
+3. Retry = create a **new AgentTask** with a new UUID
+4. New task = fresh identity = fresh SandboxClaim
+
+There's no "retrigger existing task" path—failed tasks stay failed. This is intentional: it provides a clean audit trail and prevents state confusion.
+
+### One-Time Token Fetch (Compatible with Retrigger)
+
+Add a `TokenIssued` flag to AgentTask status, scoped to the current execution:
+
+```go
+// AgentTaskStatus addition
+type AgentTaskStatus struct {
+    // ... existing fields ...
+
+    // TokenIssued is set true when a GitHub token is issued for this execution.
+    // Reset to false when task is retriggered (new SandboxClaim).
+    TokenIssued bool `json:"tokenIssued,omitempty"`
+}
+```
+
+**API handler enforcement:**
+
+```go
+func (h *taskHandler) getTaskToken(w http.ResponseWriter, r *http.Request) {
+    // ... fetch task ...
+
+    // Only allow token fetch if task is Running
+    cond := meta.FindStatusCondition(task.Status.Conditions, ConditionSucceeded)
+    if cond == nil || cond.Reason != ReasonRunning {
+        writeError(w, http.StatusPreconditionFailed, "task not running", "")
+        return
+    }
+
+    // One-time fetch: block replay within same execution
+    if task.Status.TokenIssued {
+        writeError(w, http.StatusConflict, "token already issued for this execution", "")
+        return
+    }
+
+    // ... generate and return token ...
+
+    // Mark as issued
+    task.Status.TokenIssued = true
+    h.client.Status().Update(ctx, &task)
+}
+```
+
+**Retrigger support (controller):**
+
+When retriggering a task (e.g., node eviction before sandbox Ready), reset the execution state:
+
+```go
+func (r *Reconciler) retriggerTask(ctx context.Context, task *AgentTask) error {
+    // Reset execution state for new SandboxClaim
+    task.Status.TokenIssued = false
+    task.Status.StartTime = nil
+    task.Status.SandboxClaimName = ""
+    setCondition(task, metav1.Condition{
+        Type:   ConditionSucceeded,
+        Status: metav1.ConditionUnknown,
+        Reason: ReasonPending,
+        Message: "Retriggered after sandbox failure",
+    })
+    return r.Status().Update(ctx, task)
+}
+```
+
+**Why this works:**
+
+| Scenario | TokenIssued | Result |
+| -------- | ----------- | ------ |
+| First sandbox, first token fetch | false → true | Allowed |
+| First sandbox, second fetch attempt | true | Blocked (409) |
+| Node eviction, retrigger, new sandbox | reset to false | Allowed |
+| Attacker replays taskID mid-execution | true | Blocked (409) |
+
+**Key insight**: The `TokenIssued` flag is scoped to an *execution* (Pending→Running→Terminal), not the AgentTask lifetime. Retrigger resets the execution.
+
+### Defense-in-Depth Stack (Recommended)
+
+| Layer | Control | Blocks |
+| ----- | ------- | ------ |
+| Network | NetworkPolicy on port 8081 | External attackers, wrong-namespace pods |
+| Application | Task ID unguessability | Brute force enumeration |
+| State | `TokenIssued` one-time fetch | Replay attacks within execution |
+| Lifecycle | `IsTerminal()` check | Post-completion token access |
+| Scope | GitHub token repo-scoped | Lateral movement to other repos |
+
+### When to Upgrade Security
+
+Move from MVP (dual-port + NetworkPolicy) to JWT auth when you have:
+
+- **Multi-tenant workloads** requiring tenant isolation
+- **Compliance requirements** (SOC2, etc.) requiring explicit authentication logs
+- **Audit trail needs** proving which pod accessed which resource
+- **Zero-trust network** where NetworkPolicy isn't sufficient
+
+---
+
 ## Conclusion
 
 Start with **dual-port + NetworkPolicy** as the MVP. If you later need per-task identity (multi-tenant, audit requirements), add **operator-signed JWTs**. Consider closing Issue #22 as "won't implement" with a rationale that NetworkPolicy provides sufficient isolation for the current threat model.
+
+**Key insight**: Complexity is the enemy of security. A simple system you fully understand is more secure than a complex one with subtle bugs.
