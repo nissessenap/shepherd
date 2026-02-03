@@ -434,12 +434,28 @@ func (c *APICmd) Run(_ *CLI) error {
 ```
 
 #### 4. Update Operator API URL
-**File**: `pkg/operator/operator.go`
+**Files**: `pkg/operator/operator.go`, `cmd/shepherd/operator.go`
 **Changes**: Ensure operator uses internal port for runner communication
 
 The operator POSTs task assignments to runners, which then call back to the API. The `APIURL` passed to runners should use the internal port (8081) since runners need access to `/tasks/{taskID}/status`, `/tasks/{taskID}/data`, and `/tasks/{taskID}/token`.
 
-Check and update the default API URL in operator configuration if needed. The runner's callback URL should be `http://shepherd-api.shepherd.svc.cluster.local:8081`.
+**Discovery**: Search for API URL configuration:
+```bash
+grep -r "8080\|APIURL\|ApiURL\|api.*url" pkg/operator/ cmd/shepherd/
+```
+
+**Locations to update**:
+- `pkg/operator/operator.go:55` - `Options.APIURL` field passed to operator
+- `cmd/shepherd/operator.go` - CLI flag/env var default value
+- `internal/controller/agenttask_controller_test.go` - test fixtures use `http://shepherd-api.shepherd.svc.cluster.local:8080`
+
+**Example change**:
+```
+Before: http://shepherd-api.shepherd.svc.cluster.local:8080
+After:  http://shepherd-api.shepherd.svc.cluster.local:8081
+```
+
+**Note**: The CLI default and documentation should reference port 8081. Existing deployments will need to update their `SHEPHERD_API_URL` environment variable.
 
 #### 5. Server Tests
 **File**: `pkg/api/server_test.go` (new file or add to existing)
@@ -575,3 +591,39 @@ resources:
 - Issue #22: Original token auth proposal (superseded by this approach)
 - Current API server: `pkg/api/server.go`
 - AgentTask types: `api/v1alpha1/agenttask_types.go`
+
+## Code Review Notes (2026-02-03)
+
+Plan reviewed by code-reviewer and golang-pro agents. Key decisions:
+
+### Accepted Feedback
+
+- **Phase 2.4 specificity**: Added grep commands and specific file locations for operator API URL updates.
+
+### Rejected Feedback (with rationale)
+
+1. **Add `Running` state check before token issuance**: REJECTED
+   - Creates race condition in happy path: runner receives task assignment before operator commits `Running` status to Kubernetes
+   - Timeline: Operator POSTs to runner → Runner requests token → Operator updates status (commits later)
+   - Both `Pending` and `Running` states have `Succeeded.Status=Unknown`, so `IsTerminal()` correctly allows both
+   - `TokenIssued` flag provides the actual replay protection, not the `Running` state
+
+2. **Add concurrent request test**: REJECTED
+   - Controller-runtime fake client doesn't simulate real etcd conflicts
+   - Better approach: mock client returning `IsConflict` to test retry logic
+   - True concurrency testing requires integration tests with envtest
+
+3. **Add `TokenIssuedAt` timestamp**: REJECTED
+   - Scope creep for MVP; plan already lists audit logging as Future Consideration
+   - Kubernetes resource metadata already tracks update times if needed
+
+4. **Document NetworkPolicy in plan**: REJECTED
+   - Plan explicitly scopes this out ("What We're NOT Doing")
+   - Belongs in deployment documentation, not implementation plan
+
+### Concurrency Pattern Confirmed Safe
+
+The check-then-update pattern with retry loop is correct:
+- Matches existing pattern in `handler_status.go:149-178`
+- Kubernetes optimistic concurrency via resourceVersion handles TOCTOU
+- If concurrent requests race: first to update wins, others retry and see `TokenIssued=true`
