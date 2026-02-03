@@ -543,8 +543,8 @@ resources:
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Kustomize build succeeds: `kustomize build config/default`
-- [ ] Service manifest is valid YAML
+- [x] Kustomize build succeeds: `kustomize build config/default`
+- [x] Service manifest is valid YAML
 
 #### Manual Verification:
 - [ ] Service created in cluster with both ports

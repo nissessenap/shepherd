@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: shepherd-api
+  labels:
+    app.kubernetes.io/name: shepherd-api
+    app.kubernetes.io/component: api
+spec:
+  selector:
+    app.kubernetes.io/name: shepherd-api
+  ports:
+  - name: api
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+  - name: internal
+    port: 8081
+    targetPort: 8081
+    protocol: TCP
