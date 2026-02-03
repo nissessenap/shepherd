@@ -36,6 +36,9 @@ func (h *taskHandler) getTaskToken(w http.ResponseWriter, r *http.Request) {
 
 	const maxRetries = 3
 	for attempt := range maxRetries {
+		if r.Context().Err() != nil {
+			return
+		}
 		var task toolkitv1alpha1.AgentTask
 		key := client.ObjectKey{Namespace: h.namespace, Name: taskID}
 		if err := h.client.Get(r.Context(), key, &task); err != nil {

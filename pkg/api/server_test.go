@@ -28,6 +28,9 @@ import (
 
 // buildTestRouters creates public and internal routers matching the production
 // configuration for testing route separation.
+// Note: Route definitions are intentionally duplicated (not shared with server.go)
+// to ensure test isolation - tests verify routing behavior without depending on
+// production implementation details.
 func buildTestRouters(h *taskHandler) (publicRouter, internalRouter *chi.Mux) {
 	healthzHandler := func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
