@@ -280,6 +280,12 @@ spec:
               startTime:
                 format: date-time
                 type: string
+              tokenIssued:
+                description: |-
+                  TokenIssued is set true when a GitHub token has been issued for this execution.
+                  Prevents replay attacks by blocking subsequent token requests.
+                  Should be reset if task retrigger functionality is implemented in the future.
+                type: boolean
             type: object
         required:
         - metadata

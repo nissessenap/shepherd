@@ -17,6 +17,7 @@ limitations under the License.
 package api
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/json"
@@ -30,6 +31,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	toolkitv1alpha1 "github.com/NissesSenap/shepherd/api/v1alpha1"
@@ -238,6 +240,61 @@ func TestGetTaskToken_GitHubAPIError(t *testing.T) {
 	var errResp ErrorResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &errResp))
 	assert.Equal(t, "failed to generate GitHub token", errResp.Error)
+}
+
+func TestGetTaskToken_SetsTokenIssued(t *testing.T) {
+	task := &toolkitv1alpha1.AgentTask{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "task-issued-1",
+			Namespace: "default",
+		},
+		Spec: toolkitv1alpha1.AgentTaskSpec{
+			Repo:     toolkitv1alpha1.RepoSpec{URL: "https://github.com/org/repo"},
+			Task:     toolkitv1alpha1.TaskSpec{Description: "A task"},
+			Callback: toolkitv1alpha1.CallbackSpec{URL: "https://example.com/cb"},
+		},
+	}
+
+	h := newTokenTestHandler(t, task)
+	r := chi.NewRouter()
+	r.Get("/api/v1/tasks/{taskID}/token", h.getTaskToken)
+
+	w := doGet(t, r, "/api/v1/tasks/task-issued-1/token")
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	// Verify TokenIssued was set
+	var updatedTask toolkitv1alpha1.AgentTask
+	err := h.client.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "task-issued-1"}, &updatedTask)
+	require.NoError(t, err)
+	assert.True(t, updatedTask.Status.TokenIssued, "TokenIssued should be true after token fetch")
+}
+
+func TestGetTaskToken_RejectsSecondFetch(t *testing.T) {
+	task := &toolkitv1alpha1.AgentTask{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "task-issued-2",
+			Namespace: "default",
+		},
+		Spec: toolkitv1alpha1.AgentTaskSpec{
+			Repo:     toolkitv1alpha1.RepoSpec{URL: "https://github.com/org/repo"},
+			Task:     toolkitv1alpha1.TaskSpec{Description: "A task"},
+			Callback: toolkitv1alpha1.CallbackSpec{URL: "https://example.com/cb"},
+		},
+		Status: toolkitv1alpha1.AgentTaskStatus{
+			TokenIssued: true, // Already issued
+		},
+	}
+
+	h := newTokenTestHandler(t, task)
+	r := chi.NewRouter()
+	r.Get("/api/v1/tasks/{taskID}/token", h.getTaskToken)
+
+	w := doGet(t, r, "/api/v1/tasks/task-issued-2/token")
+
+	assert.Equal(t, http.StatusConflict, w.Code)
+	var errResp ErrorResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &errResp))
+	assert.Equal(t, "token already issued for this execution", errResp.Error)
 }
 
 func TestGetTaskToken_ScopesToRepo(t *testing.T) {

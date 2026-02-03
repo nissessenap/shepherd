@@ -256,10 +256,10 @@ func TestGetTaskToken_RejectsSecondFetch(t *testing.T) {
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] CRD manifests regenerate cleanly: `make manifests`
-- [ ] Unit tests pass: `make test`
-- [ ] Linting passes: `make lint`
-- [ ] New tests verify TokenIssued behavior
+- [x] CRD manifests regenerate cleanly: `make manifests`
+- [x] Unit tests pass: `make test`
+- [x] Linting passes: `make lint`
+- [x] New tests verify TokenIssued behavior
 
 #### Manual Verification:
 - [ ] First token fetch succeeds and sets `TokenIssued=true` in CRD status

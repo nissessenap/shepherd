@@ -120,6 +120,11 @@ type AgentTaskStatus struct {
 	// process success callbacks before marking the task as failed.
 	// +optional
 	GraceDeadline *metav1.Time `json:"graceDeadline,omitempty"`
+	// TokenIssued is set true when a GitHub token has been issued for this execution.
+	// Prevents replay attacks by blocking subsequent token requests.
+	// Should be reset if task retrigger functionality is implemented in the future.
+	// +optional
+	TokenIssued bool `json:"tokenIssued,omitempty"`
 }
 
 type TaskResult struct {

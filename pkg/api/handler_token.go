@@ -29,61 +29,89 @@ import (
 
 // getTaskToken handles GET /api/v1/tasks/{taskID}/token.
 // Generates a short-lived GitHub installation token scoped to the task's repo.
-// TODO: Authenticate via per-task bearer token (see #22)
+// Uses TokenIssued flag to prevent replay attacks - each task can only fetch a token once.
 func (h *taskHandler) getTaskToken(w http.ResponseWriter, r *http.Request) {
 	log := ctrl.Log.WithName("api")
 	taskID := chi.URLParam(r, "taskID")
 
-	var task toolkitv1alpha1.AgentTask
-	key := client.ObjectKey{Namespace: h.namespace, Name: taskID}
-	if err := h.client.Get(r.Context(), key, &task); err != nil {
-		if errors.IsNotFound(err) {
-			writeError(w, http.StatusNotFound, "task not found", "")
+	const maxRetries = 3
+	for attempt := range maxRetries {
+		var task toolkitv1alpha1.AgentTask
+		key := client.ObjectKey{Namespace: h.namespace, Name: taskID}
+		if err := h.client.Get(r.Context(), key, &task); err != nil {
+			if errors.IsNotFound(err) {
+				writeError(w, http.StatusNotFound, "task not found", "")
+				return
+			}
+			log.Error(err, "failed to get task", "taskID", taskID)
+			writeError(w, http.StatusInternalServerError, "failed to get task", "")
 			return
 		}
-		log.Error(err, "failed to get task", "taskID", taskID)
-		writeError(w, http.StatusInternalServerError, "failed to get task", "")
+
+		if task.IsTerminal() {
+			writeError(w, http.StatusGone, "task is terminal", "")
+			return
+		}
+
+		// One-time fetch: block replay within same execution
+		if task.Status.TokenIssued {
+			writeError(w, http.StatusConflict, "token already issued for this execution", "")
+			return
+		}
+
+		if h.githubKey == nil {
+			writeError(w, http.StatusServiceUnavailable, "GitHub App not configured", "")
+			return
+		}
+
+		// Mark TokenIssued BEFORE generating token (fail-safe: if token gen fails,
+		// the flag is set but no token was leaked)
+		task.Status.TokenIssued = true
+		if err := h.client.Status().Update(r.Context(), &task); err != nil {
+			if errors.IsConflict(err) {
+				log.V(1).Info("conflict updating TokenIssued, retrying", "taskID", taskID, "attempt", attempt+1)
+				continue // Retry with fresh task
+			}
+			log.Error(err, "failed to update TokenIssued", "taskID", taskID)
+			writeError(w, http.StatusInternalServerError, "failed to update task status", "")
+			return
+		}
+
+		// Generate and return token
+		jwtToken, err := createJWT(h.githubAppID, h.githubKey)
+		if err != nil {
+			log.Error(err, "failed to create JWT", "taskID", taskID)
+			writeError(w, http.StatusInternalServerError, "failed to generate token", "")
+			return
+		}
+
+		repoName, err := parseRepoName(task.Spec.Repo.URL)
+		if err != nil {
+			log.Error(err, "failed to parse repo URL", "taskID", taskID, "url", task.Spec.Repo.URL)
+			writeError(w, http.StatusInternalServerError, "failed to parse repo URL", "")
+			return
+		}
+
+		httpClient := h.httpClient
+		if httpClient == nil {
+			httpClient = http.DefaultClient
+		}
+
+		token, expiresAt, err := exchangeToken(r.Context(), httpClient, h.githubAPIURL, h.githubInstallID, jwtToken, repoName)
+		if err != nil {
+			log.Error(err, "failed to exchange token", "taskID", taskID)
+			writeError(w, http.StatusBadGateway, "failed to generate GitHub token", "")
+			return
+		}
+
+		writeJSON(w, http.StatusOK, TokenResponse{
+			Token:     token,
+			ExpiresAt: expiresAt,
+		})
 		return
 	}
 
-	if task.IsTerminal() {
-		writeError(w, http.StatusGone, "task is terminal", "")
-		return
-	}
-
-	if h.githubKey == nil {
-		writeError(w, http.StatusServiceUnavailable, "GitHub App not configured", "")
-		return
-	}
-
-	jwtToken, err := createJWT(h.githubAppID, h.githubKey)
-	if err != nil {
-		log.Error(err, "failed to create JWT", "taskID", taskID)
-		writeError(w, http.StatusInternalServerError, "failed to generate token", "")
-		return
-	}
-
-	repoName, err := parseRepoName(task.Spec.Repo.URL)
-	if err != nil {
-		log.Error(err, "failed to parse repo URL", "taskID", taskID, "url", task.Spec.Repo.URL)
-		writeError(w, http.StatusInternalServerError, "failed to parse repo URL", "")
-		return
-	}
-
-	httpClient := h.httpClient
-	if httpClient == nil {
-		httpClient = http.DefaultClient
-	}
-
-	token, expiresAt, err := exchangeToken(r.Context(), httpClient, h.githubAPIURL, h.githubInstallID, jwtToken, repoName)
-	if err != nil {
-		log.Error(err, "failed to exchange token", "taskID", taskID)
-		writeError(w, http.StatusBadGateway, "failed to generate GitHub token", "")
-		return
-	}
-
-	writeJSON(w, http.StatusOK, TokenResponse{
-		Token:     token,
-		ExpiresAt: expiresAt,
-	})
+	// Exhausted retries
+	log.Error(nil, "exhausted retries updating TokenIssued", "taskID", taskID)
+	writeError(w, http.StatusConflict, "concurrent update conflict", "")
 }
