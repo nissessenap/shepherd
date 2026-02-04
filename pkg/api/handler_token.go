@@ -67,8 +67,11 @@ func (h *taskHandler) getTaskToken(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Mark TokenIssued BEFORE generating token (fail-safe: if token gen fails,
-		// the flag is set but no token was leaked)
+		// Mark TokenIssued BEFORE generating token to prevent double issuance.
+		// Security vs. Availability Tradeoff:
+		// - Security: Prevents token replay if crash occurs after generation but before flag update
+		// - Availability: Transient GitHub API failures permanently block the task
+		// This is a conscious security-first design decision
 		task.Status.TokenIssued = true
 		if err := h.client.Status().Update(r.Context(), &task); err != nil {
 			if errors.IsConflict(err) {
