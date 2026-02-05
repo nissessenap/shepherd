@@ -52,7 +52,7 @@ var _ = Describe("AgentTask Controller", func() {
 			Client:   k8sClient,
 			Scheme:   k8sClient.Scheme(),
 			Recorder: events.NewFakeRecorder(10),
-			APIURL:   "http://shepherd-api.shepherd.svc.cluster.local:8080",
+			APIURL:   "http://shepherd-api.shepherd.svc.cluster.local:8081",
 		}
 	})
 
@@ -426,7 +426,7 @@ var _ = Describe("AgentTask Controller", func() {
 			var task toolkitv1alpha1.AgentTask
 			Expect(k8sClient.Get(ctx, taskNN, &task)).To(Succeed())
 			Expect(receivedAssignment.TaskID).To(Equal(task.Name))
-			Expect(receivedAssignment.APIURL).To(Equal("http://shepherd-api.shepherd.svc.cluster.local:8080"))
+			Expect(receivedAssignment.APIURL).To(Equal("http://shepherd-api.shepherd.svc.cluster.local:8081"))
 			Expect(receivedContentType).To(Equal("application/json"))
 
 			By("Verifying Running condition")

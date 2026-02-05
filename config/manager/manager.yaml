@@ -63,7 +63,7 @@ spec:
         args:
           - operator
           - --leader-election
-          - --health-addr=:8081
+          - --health-addr=:8082
           - --metrics-addr=:9090
           - --allowed-runner-image=$(SHEPHERD_RUNNER_IMAGE)
         env:
@@ -81,13 +81,13 @@ spec:
         livenessProbe:
           httpGet:
             path: /healthz
-            port: 8081
+            port: 8082
           initialDelaySeconds: 15
           periodSeconds: 20
         readinessProbe:
           httpGet:
             path: /readyz
-            port: 8081
+            port: 8082
           initialDelaySeconds: 5
           periodSeconds: 10
         # TODO(user): Configure the resources accordingly based on the project requirements.

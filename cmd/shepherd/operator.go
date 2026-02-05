@@ -25,7 +25,7 @@ import (
 
 type OperatorCmd struct {
 	MetricsAddr    string `help:"Metrics address" default:":9090" env:"SHEPHERD_METRICS_ADDR"`
-	HealthAddr     string `help:"Health probe address" default:":8081" env:"SHEPHERD_HEALTH_ADDR"`
+	HealthAddr     string `help:"Health probe address" default:":8082" env:"SHEPHERD_HEALTH_ADDR"`
 	LeaderElection bool   `help:"Enable leader election" default:"false" env:"SHEPHERD_LEADER_ELECTION"`
 	APIURL         string `help:"Internal API server URL" required:"" env:"SHEPHERD_API_URL"`
 }
