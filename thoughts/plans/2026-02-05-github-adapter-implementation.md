@@ -58,7 +58,6 @@ A working GitHub adapter that:
 - PR review triggers (issue_comment only for MVP)
 - Multiple GitHub App installations (static installation ID)
 - Retry logic for GitHub API failures (rely on API's retry)
-- Rate limiting (future enhancement)
 - GitLab adapter (future, but package structure supports it)
 - Authentication on callback endpoint (HMAC signature is sufficient)
 - **Interface abstraction for adapters** - MVP implements GitHub directly; interfaces can emerge later when we have a second adapter (GitLab) to learn from
@@ -109,6 +108,7 @@ Add go-github and ghinstallation dependencies, create the `pkg/adapters/github/`
 ```bash
 go get github.com/google/go-github/v68
 go get github.com/bradleyfalzon/ghinstallation/v2
+go get github.com/go-chi/httprate
 ```
 
 Note: Use latest go-github version at implementation time.
@@ -128,12 +128,14 @@ import (
     "net/http"
     "os"
     "os/signal"
+    "strings"
     "sync/atomic"
     "syscall"
     "time"
 
     "github.com/go-chi/chi/v5"
     "github.com/go-chi/chi/v5/middleware"
+    "github.com/go-chi/httprate"
     ctrl "sigs.k8s.io/controller-runtime"
 )
 
@@ -147,6 +149,20 @@ type Options struct {
     APIURL         string // Shepherd API URL (e.g., "http://shepherd-api:8080")
     CallbackSecret string // Shared secret for callback HMAC verification
     CallbackURL    string // URL for API to call back (e.g., "http://github-adapter:8082/callback")
+}
+
+// requireJSON validates Content-Type on POST/PUT/PATCH requests.
+func requireJSON(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        if r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodPatch {
+            ct := r.Header.Get("Content-Type")
+            if !strings.HasPrefix(ct, "application/json") {
+                http.Error(w, "Content-Type must be application/json", http.StatusUnsupportedMediaType)
+                return
+            }
+        }
+        next.ServeHTTP(w, r)
+    })
 }
 
 // Run starts the GitHub adapter server.
@@ -184,8 +200,14 @@ func Run(opts Options) error {
         _, _ = w.Write([]byte("ok"))
     })
 
-    // TODO: Phase 3 - Webhook endpoint
-    // TODO: Phase 5 - Callback endpoint
+    // TODO: Phase 3 - Webhook endpoint (rate-limited, with requireJSON)
+    // r.Route("/webhook", func(r chi.Router) {
+    //     r.Use(httprate.LimitByIP(100, time.Minute))
+    //     r.Use(requireJSON)
+    //     r.Post("/", webhookHandler.ServeHTTP)
+    // })
+    // TODO: Phase 5 - Callback endpoint (with requireJSON)
+    // r.With(requireJSON).Post("/callback", callbackHandler.ServeHTTP)
 
     srv := &http.Server{
         Addr:         opts.ListenAddr,
@@ -219,18 +241,23 @@ func Run(opts Options) error {
 
 **File**: `cmd/shepherd/main.go`
 
-Update GitHubCmd struct to add new required fields:
+Replace the existing `GitHubCmd` struct entirely. Use consistent naming with `APICmd`:
+- `--github-app-id`, `--github-installation-id`, `--github-private-key-path` match the API's pattern
+- Adapter-specific flags: `--webhook-secret`, `--api-url`, `--callback-secret`, `--callback-url`
+- Env vars use the same names as APICmd where concepts overlap (they run in separate processes)
+
+**Breaking change**: `SHEPHERD_GITHUB_PRIVATE_KEY` becomes `SHEPHERD_GITHUB_PRIVATE_KEY_PATH` for consistency.
 
 ```go
 type GitHubCmd struct {
-    ListenAddr     string `help:"GitHub adapter listen address" default:":8082" env:"SHEPHERD_GITHUB_ADDR"`
-    WebhookSecret  string `help:"GitHub webhook secret" env:"SHEPHERD_GITHUB_WEBHOOK_SECRET"`
-    AppID          int64  `help:"GitHub App ID" env:"SHEPHERD_GITHUB_APP_ID"`
-    InstallationID int64  `help:"GitHub Installation ID" env:"SHEPHERD_GITHUB_INSTALLATION_ID"`
-    PrivateKey     string `help:"Path to GitHub App private key" env:"SHEPHERD_GITHUB_PRIVATE_KEY"`
-    APIURL         string `help:"Shepherd API URL" required:"" env:"SHEPHERD_API_URL"`
-    CallbackSecret string `help:"Shared secret for callback verification" env:"SHEPHERD_CALLBACK_SECRET"`
-    CallbackURL    string `help:"Callback URL for API to call back" env:"SHEPHERD_CALLBACK_URL"`
+    ListenAddr           string `help:"GitHub adapter listen address" default:":8082" env:"SHEPHERD_GITHUB_ADDR"`
+    WebhookSecret        string `help:"GitHub webhook secret" env:"SHEPHERD_GITHUB_WEBHOOK_SECRET"`
+    GithubAppID          int64  `help:"GitHub App ID" env:"SHEPHERD_GITHUB_APP_ID"`
+    GithubInstallationID int64  `help:"GitHub Installation ID" env:"SHEPHERD_GITHUB_INSTALLATION_ID"`
+    GithubPrivateKeyPath string `help:"Path to GitHub App private key" env:"SHEPHERD_GITHUB_PRIVATE_KEY_PATH"`
+    APIURL               string `help:"Shepherd API URL" required:"" env:"SHEPHERD_API_URL"`
+    CallbackSecret       string `help:"Shared secret for callback verification" env:"SHEPHERD_CALLBACK_SECRET"`
+    CallbackURL          string `help:"Callback URL for API to call back" env:"SHEPHERD_CALLBACK_URL"`
 }
 
 func (c *GitHubCmd) Run(_ *CLI) error {
@@ -238,22 +265,22 @@ func (c *GitHubCmd) Run(_ *CLI) error {
     if c.WebhookSecret == "" {
         return fmt.Errorf("webhook-secret is required")
     }
-    if c.AppID == 0 {
-        return fmt.Errorf("app-id is required")
+    if c.GithubAppID == 0 {
+        return fmt.Errorf("github-app-id is required")
     }
-    if c.InstallationID == 0 {
-        return fmt.Errorf("installation-id is required")
+    if c.GithubInstallationID == 0 {
+        return fmt.Errorf("github-installation-id is required")
     }
-    if c.PrivateKey == "" {
-        return fmt.Errorf("private-key is required")
+    if c.GithubPrivateKeyPath == "" {
+        return fmt.Errorf("github-private-key-path is required")
     }
 
     return github.Run(github.Options{
         ListenAddr:     c.ListenAddr,
         WebhookSecret:  c.WebhookSecret,
-        AppID:          c.AppID,
-        InstallationID: c.InstallationID,
-        PrivateKeyPath: c.PrivateKey,
+        AppID:          c.GithubAppID,
+        InstallationID: c.GithubInstallationID,
+        PrivateKeyPath: c.GithubPrivateKeyPath,
         APIURL:         c.APIURL,
         CallbackSecret: c.CallbackSecret,
         CallbackURL:    c.CallbackURL,
@@ -539,23 +566,30 @@ import (
     gh "github.com/google/go-github/v68/github"
 )
 
-var shepherdMentionRegex = regexp.MustCompile(`(?i)@shepherd\b`)
+// Matches @shepherd mentions but not email-style patterns (e.g., user@shepherd.io).
+// Requires start-of-string or whitespace before the @.
+var shepherdMentionRegex = regexp.MustCompile(`(?i)(?:^|\s)@shepherd\b`)
 
 // WebhookHandler handles incoming GitHub webhooks.
 type WebhookHandler struct {
-    secret    string
-    ghClient  *Client
-    apiClient *APIClient // Added in Phase 4
-    log       logr.Logger
+    secret          string
+    ghClient        *Client
+    apiClient       *APIClient       // Added in Phase 4
+    callbackHandler *CallbackHandler // Added in Phase 4
+    callbackURL     string           // Added in Phase 4
+    log             logr.Logger
 }
 
 // NewWebhookHandler creates a new webhook handler.
-func NewWebhookHandler(secret string, ghClient *Client, apiClient *APIClient, log logr.Logger) *WebhookHandler {
+// apiClient, callbackHandler, and callbackURL are nil/"" in Phase 3 and wired in Phase 4.
+func NewWebhookHandler(secret string, ghClient *Client, apiClient *APIClient, callbackHandler *CallbackHandler, callbackURL string, log logr.Logger) *WebhookHandler {
     return &WebhookHandler{
-        secret:    secret,
-        ghClient:  ghClient,
-        apiClient: apiClient,
-        log:       log,
+        secret:          secret,
+        ghClient:        ghClient,
+        apiClient:       apiClient,
+        callbackHandler: callbackHandler,
+        callbackURL:     callbackURL,
+        log:             log,
     }
 }
 
@@ -690,11 +724,15 @@ if err != nil {
     return fmt.Errorf("creating github client: %w", err)
 }
 
-// Webhook handler (apiClient added in Phase 4)
-webhookHandler := NewWebhookHandler(opts.WebhookSecret, ghClient, nil, log)
+// Webhook handler (apiClient and callbackHandler added in Phase 4)
+webhookHandler := NewWebhookHandler(opts.WebhookSecret, ghClient, nil, nil, "", log)
 
-// Mount webhook endpoint
-r.Post("/webhook", webhookHandler.ServeHTTP)
+// Mount webhook endpoint with rate limiting + content-type validation
+r.Route("/webhook", func(r chi.Router) {
+    r.Use(httprate.LimitByIP(100, time.Minute))
+    r.Use(requireJSON)
+    r.Post("/", webhookHandler.ServeHTTP)
+})
 ```
 
 #### 3. Unit Tests
@@ -721,7 +759,7 @@ import (
 
 func TestWebhookHandler_SignatureVerification(t *testing.T) {
     secret := "test-secret"
-    handler := NewWebhookHandler(secret, nil, nil, ctrl.Log.WithName("test"))
+    handler := NewWebhookHandler(secret, nil, nil, nil, "", ctrl.Log.WithName("test"))
 
     t.Run("valid signature", func(t *testing.T) {
         body := []byte(`{"action":"created"}`)
@@ -743,14 +781,14 @@ func TestWebhookHandler_SignatureVerification(t *testing.T) {
     })
 
     t.Run("empty secret allows all", func(t *testing.T) {
-        h := NewWebhookHandler("", nil, nil, ctrl.Log.WithName("test"))
+        h := NewWebhookHandler("", nil, nil, nil, "", ctrl.Log.WithName("test"))
         assert.True(t, h.verifySignature([]byte(`{}`), ""))
     })
 }
 
 func TestWebhookHandler_ServeHTTP(t *testing.T) {
     secret := "test-secret"
-    handler := NewWebhookHandler(secret, nil, nil, ctrl.Log.WithName("test"))
+    handler := NewWebhookHandler(secret, nil, nil, nil, "", ctrl.Log.WithName("test"))
 
     t.Run("rejects GET requests", func(t *testing.T) {
         req := httptest.NewRequest(http.MethodGet, "/webhook", nil)
@@ -788,9 +826,12 @@ func TestShepherdMentionRegex(t *testing.T) {
         {"@Shepherd fix this bug", true},
         {"Hey @shepherd can you help?", true},
         {"@shepherd", true},
+        {"\n@shepherd fix it", true},
         {"@shepherding", false},
         {"no mention here", false},
         {"email@shepherd.io", false},
+        {"user@shepherd", false},
+        {"test@shepherd.com stuff", false},
     }
 
     for _, tc := range tests {
@@ -842,6 +883,11 @@ Create an HTTP client for the Shepherd API to check for active tasks (deduplicat
 
 **File**: `pkg/adapters/github/api_client.go`
 
+**Key design decision**: Import types directly from `pkg/api` instead of redeclaring them locally.
+Both packages are in the same Go module and there is no circular dependency risk
+(`pkg/api` does not import `pkg/adapters/*`). This eliminates type drift - any field
+changes in `pkg/api/types.go` are automatically picked up by the adapter.
+
 ```go
 package github
 
@@ -854,6 +900,8 @@ import (
     "net/http"
     "net/url"
     "time"
+
+    "github.com/NissesSenap/shepherd/pkg/api"
 )
 
 // APIClient communicates with the Shepherd API.
@@ -872,54 +920,8 @@ func NewAPIClient(baseURL string) *APIClient {
     }
 }
 
-// TaskResponse matches pkg/api/types.go TaskResponse
-type TaskResponse struct {
-    ID          string            `json:"id"`
-    Namespace   string            `json:"namespace"`
-    CallbackURL string            `json:"callbackURL"`
-    Status      TaskStatusSummary `json:"status"`
-}
-
-type TaskStatusSummary struct {
-    Phase   string `json:"phase"`
-    Message string `json:"message"`
-    PRURL   string `json:"prURL,omitempty"`
-    Error   string `json:"error,omitempty"`
-}
-
-// CreateTaskRequest matches pkg/api/types.go CreateTaskRequest
-type CreateTaskRequest struct {
-    Repo     RepoRequest       `json:"repo"`
-    Task     TaskRequest       `json:"task"`
-    Callback string            `json:"callbackURL"`
-    Runner   *RunnerConfig     `json:"runner,omitempty"`
-    Labels   map[string]string `json:"labels,omitempty"`
-}
-
-type RepoRequest struct {
-    URL string `json:"url"`
-    Ref string `json:"ref,omitempty"`
-}
-
-type TaskRequest struct {
-    Description string `json:"description"`
-    Context     string `json:"context,omitempty"`
-    SourceURL   string `json:"sourceURL,omitempty"`
-    SourceType  string `json:"sourceType,omitempty"`
-    SourceID    string `json:"sourceID,omitempty"`
-}
-
-type RunnerConfig struct {
-    SandboxTemplateName string `json:"sandboxTemplateName"`
-}
-
-type ErrorResponse struct {
-    Error   string `json:"error"`
-    Details string `json:"details,omitempty"`
-}
-
 // GetActiveTasks queries for active tasks matching the given labels.
-func (c *APIClient) GetActiveTasks(ctx context.Context, repoLabel, issueLabel string) ([]TaskResponse, error) {
+func (c *APIClient) GetActiveTasks(ctx context.Context, repoLabel, issueLabel string) ([]api.TaskResponse, error) {
     u, err := url.Parse(c.baseURL + "/api/v1/tasks")
     if err != nil {
         return nil, fmt.Errorf("parsing URL: %w", err)
@@ -948,12 +950,12 @@ func (c *APIClient) GetActiveTasks(ctx context.Context, repoLabel, issueLabel st
     }
 
     if resp.StatusCode != http.StatusOK {
-        var errResp ErrorResponse
+        var errResp api.ErrorResponse
         _ = json.Unmarshal(body, &errResp)
         return nil, fmt.Errorf("API error %d: %s", resp.StatusCode, errResp.Error)
     }
 
-    var tasks []TaskResponse
+    var tasks []api.TaskResponse
     if err := json.Unmarshal(body, &tasks); err != nil {
         return nil, fmt.Errorf("parsing response: %w", err)
     }
@@ -961,9 +963,43 @@ func (c *APIClient) GetActiveTasks(ctx context.Context, repoLabel, issueLabel st
     return tasks, nil
 }
 
+// GetTask fetches a single task by ID. Used by CallbackHandler to resolve
+// task metadata for callbacks received after a restart (stateless recovery).
+func (c *APIClient) GetTask(ctx context.Context, taskID string) (*api.TaskResponse, error) {
+    reqURL := c.baseURL + "/api/v1/tasks/" + taskID
+    req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+    if err != nil {
+        return nil, fmt.Errorf("creating request: %w", err)
+    }
+
+    resp, err := c.httpClient.Do(req)
+    if err != nil {
+        return nil, fmt.Errorf("executing request: %w", err)
+    }
+    defer resp.Body.Close()
+
+    body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+    if err != nil {
+        return nil, fmt.Errorf("reading response: %w", err)
+    }
+
+    if resp.StatusCode != http.StatusOK {
+        var errResp api.ErrorResponse
+        _ = json.Unmarshal(body, &errResp)
+        return nil, fmt.Errorf("API error %d: %s", resp.StatusCode, errResp.Error)
+    }
+
+    var task api.TaskResponse
+    if err := json.Unmarshal(body, &task); err != nil {
+        return nil, fmt.Errorf("parsing response: %w", err)
+    }
+
+    return &task, nil
+}
+
 // CreateTask creates a new task via the API.
-func (c *APIClient) CreateTask(ctx context.Context, req CreateTaskRequest) (*TaskResponse, error) {
-    body, err := json.Marshal(req)
+func (c *APIClient) CreateTask(ctx context.Context, createReq api.CreateTaskRequest) (*api.TaskResponse, error) {
+    body, err := json.Marshal(createReq)
     if err != nil {
         return nil, fmt.Errorf("marshaling request: %w", err)
     }
@@ -986,12 +1022,12 @@ func (c *APIClient) CreateTask(ctx context.Context, req CreateTaskRequest) (*Tas
     }
 
     if resp.StatusCode != http.StatusCreated {
-        var errResp ErrorResponse
+        var errResp api.ErrorResponse
         _ = json.Unmarshal(respBody, &errResp)
         return nil, fmt.Errorf("API error %d: %s", resp.StatusCode, errResp.Error)
     }
 
-    var taskResp TaskResponse
+    var taskResp api.TaskResponse
     if err := json.Unmarshal(respBody, &taskResp); err != nil {
         return nil, fmt.Errorf("parsing response: %w", err)
     }
@@ -1004,9 +1040,11 @@ func (c *APIClient) CreateTask(ctx context.Context, req CreateTaskRequest) (*Tas
 
 **File**: `pkg/adapters/github/webhook.go`
 
-Update processTask method:
+Update processTask to use `api.*` types (imported from `pkg/api`):
 
 ```go
+import "github.com/NissesSenap/shepherd/pkg/api"
+
 // processTask handles the task creation workflow.
 func (h *WebhookHandler) processTask(ctx context.Context, event *gh.IssueCommentEvent, description string) {
     owner := event.GetRepo().GetOwner().GetLogin()
@@ -1040,22 +1078,22 @@ func (h *WebhookHandler) processTask(ctx context.Context, event *gh.IssueComment
 
     // Build context from issue body and comments
     issueBody := event.GetIssue().GetBody()
-    context := h.buildContext(ctx, owner, repo, issueNumber, issueBody)
+    taskContext := h.buildContext(ctx, owner, repo, issueNumber, issueBody)
 
-    // Create task
-    createReq := CreateTaskRequest{
-        Repo: RepoRequest{
+    // Create task (uses api.* types from pkg/api)
+    createReq := api.CreateTaskRequest{
+        Repo: api.RepoRequest{
             URL: repoURL,
         },
-        Task: TaskRequest{
+        Task: api.TaskRequest{
             Description: description,
-            Context:     context,
+            Context:     taskContext,
             SourceURL:   issueURL,
             SourceType:  "issue",
             SourceID:    issueLabel,
         },
         Callback: h.callbackURL,
-        Runner: &RunnerConfig{
+        Runner: &api.RunnerConfig{
             SandboxTemplateName: "default", // TODO: Make configurable
         },
         Labels: map[string]string{
@@ -1076,6 +1114,13 @@ func (h *WebhookHandler) processTask(ctx context.Context, event *gh.IssueComment
 
     h.log.Info("created task", "taskID", taskResp.ID)
 
+    // Register task metadata for callback handling
+    h.callbackHandler.RegisterTask(taskResp.ID, TaskMetadata{
+        Owner:       owner,
+        Repo:        repo,
+        IssueNumber: issueNumber,
+    })
+
     // Post acknowledgment comment
     if err := h.ghClient.PostComment(ctx, owner, repo, issueNumber,
         formatAcknowledge(taskResp.ID)); err != nil {
@@ -1083,7 +1128,13 @@ func (h *WebhookHandler) processTask(ctx context.Context, event *gh.IssueComment
     }
 }
 
+// maxContextSize is the soft limit for context passed to the API.
+// The API's etcd limit is ~1.4MB compressed; 1MB uncompressed provides
+// safe headroom since gzip typically achieves 3-5x compression on text.
+const maxContextSize = 1_000_000 // 1MB
+
 // buildContext assembles the context string from issue body and comments.
+// Truncates if the total context exceeds maxContextSize.
 func (h *WebhookHandler) buildContext(ctx context.Context, owner, repo string, issueNumber int, issueBody string) string {
     var sb strings.Builder
     sb.WriteString("## Issue Description\n\n")
@@ -1100,9 +1151,13 @@ func (h *WebhookHandler) buildContext(ctx context.Context, owner, repo string, i
     if len(comments) > 0 {
         sb.WriteString("## Comments\n\n")
         for _, c := range comments {
-            sb.WriteString(fmt.Sprintf("**%s** wrote:\n\n", c.GetUser().GetLogin()))
-            sb.WriteString(c.GetBody())
-            sb.WriteString("\n\n---\n\n")
+            entry := fmt.Sprintf("**%s** wrote:\n\n%s\n\n---\n\n", c.GetUser().GetLogin(), c.GetBody())
+            if sb.Len()+len(entry) > maxContextSize {
+                sb.WriteString("\n\n--- Context truncated due to size limit ---\n")
+                h.log.Info("context truncated", "issue", issueNumber, "size", sb.Len())
+                break
+            }
+            sb.WriteString(entry)
         }
     }
 
@@ -1112,24 +1167,26 @@ func (h *WebhookHandler) buildContext(ctx context.Context, owner, repo string, i
 
 #### 3. Update WebhookHandler struct
 
-Add `callbackURL` field:
+Add `callbackURL` and `callbackHandler` fields:
 
 ```go
 type WebhookHandler struct {
-    secret      string
-    ghClient    *Client
-    apiClient   *APIClient
-    callbackURL string
-    log         logr.Logger
+    secret          string
+    ghClient        *Client
+    apiClient       *APIClient
+    callbackHandler *CallbackHandler
+    callbackURL     string
+    log             logr.Logger
 }
 
-func NewWebhookHandler(secret string, ghClient *Client, apiClient *APIClient, callbackURL string, log logr.Logger) *WebhookHandler {
+func NewWebhookHandler(secret string, ghClient *Client, apiClient *APIClient, callbackHandler *CallbackHandler, callbackURL string, log logr.Logger) *WebhookHandler {
     return &WebhookHandler{
-        secret:      secret,
-        ghClient:    ghClient,
-        apiClient:   apiClient,
-        callbackURL: callbackURL,
-        log:         log,
+        secret:          secret,
+        ghClient:        ghClient,
+        apiClient:       apiClient,
+        callbackHandler: callbackHandler,
+        callbackURL:     callbackURL,
+        log:             log,
     }
 }
 ```
@@ -1142,8 +1199,18 @@ func NewWebhookHandler(secret string, ghClient *Client, apiClient *APIClient, ca
 // Create API client
 apiClient := NewAPIClient(opts.APIURL)
 
+// Create callback handler (Phase 5 adds callback endpoint)
+callbackHandler := NewCallbackHandler(opts.CallbackSecret, ghClient, apiClient, log)
+
 // Webhook handler
-webhookHandler := NewWebhookHandler(opts.WebhookSecret, ghClient, apiClient, opts.CallbackURL, log)
+webhookHandler := NewWebhookHandler(opts.WebhookSecret, ghClient, apiClient, callbackHandler, opts.CallbackURL, log)
+
+// Mount webhook endpoint with rate limiting + content-type validation
+r.Route("/webhook", func(r chi.Router) {
+    r.Use(httprate.LimitByIP(100, time.Minute))
+    r.Use(requireJSON)
+    r.Post("/", webhookHandler.ServeHTTP)
+})
 ```
 
 #### 5. Unit Tests
@@ -1162,6 +1229,8 @@ import (
 
     "github.com/stretchr/testify/assert"
     "github.com/stretchr/testify/require"
+
+    "github.com/NissesSenap/shepherd/pkg/api"
 )
 
 func TestAPIClient_GetActiveTasks(t *testing.T) {
@@ -1201,9 +1270,40 @@ func TestAPIClient_GetActiveTasks(t *testing.T) {
     })
 }
 
+func TestAPIClient_GetTask(t *testing.T) {
+    t.Run("returns task", func(t *testing.T) {
+        srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+            assert.Equal(t, "/api/v1/tasks/task-abc", r.URL.Path)
+            w.Header().Set("Content-Type", "application/json")
+            w.WriteHeader(http.StatusOK)
+            _, _ = w.Write([]byte(`{"id":"task-abc","status":{"phase":"Running"},"task":{"sourceURL":"https://github.com/org/repo/issues/42"}}`))
+        }))
+        defer srv.Close()
+
+        client := NewAPIClient(srv.URL)
+        task, err := client.GetTask(context.Background(), "task-abc")
+        require.NoError(t, err)
+        assert.Equal(t, "task-abc", task.ID)
+    })
+
+    t.Run("handles 404", func(t *testing.T) {
+        srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+            w.Header().Set("Content-Type", "application/json")
+            w.WriteHeader(http.StatusNotFound)
+            _, _ = w.Write([]byte(`{"error":"task not found"}`))
+        }))
+        defer srv.Close()
+
+        client := NewAPIClient(srv.URL)
+        _, err := client.GetTask(context.Background(), "nonexistent")
+        require.Error(t, err)
+        assert.Contains(t, err.Error(), "task not found")
+    })
+}
+
 func TestAPIClient_CreateTask(t *testing.T) {
     t.Run("creates task successfully", func(t *testing.T) {
-        var receivedReq CreateTaskRequest
+        var receivedReq api.CreateTaskRequest
         srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
             assert.Equal(t, "/api/v1/tasks", r.URL.Path)
             assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
@@ -1217,9 +1317,9 @@ func TestAPIClient_CreateTask(t *testing.T) {
         defer srv.Close()
 
         client := NewAPIClient(srv.URL)
-        resp, err := client.CreateTask(context.Background(), CreateTaskRequest{
-            Repo:     RepoRequest{URL: "https://github.com/org/repo"},
-            Task:     TaskRequest{Description: "Fix bug"},
+        resp, err := client.CreateTask(context.Background(), api.CreateTaskRequest{
+            Repo:     api.RepoRequest{URL: "https://github.com/org/repo"},
+            Task:     api.TaskRequest{Description: "Fix bug"},
             Callback: "http://adapter/callback",
         })
         require.NoError(t, err)
@@ -1236,7 +1336,7 @@ func TestAPIClient_CreateTask(t *testing.T) {
         defer srv.Close()
 
         client := NewAPIClient(srv.URL)
-        _, err := client.CreateTask(context.Background(), CreateTaskRequest{})
+        _, err := client.CreateTask(context.Background(), api.CreateTaskRequest{})
         require.Error(t, err)
         assert.Contains(t, err.Error(), "repo.url is required")
     })
@@ -1271,6 +1371,13 @@ Implement the callback endpoint that receives notifications from the Shepherd AP
 
 **File**: `pkg/adapters/github/callback.go`
 
+**Key design decision**: The callback handler is **stateless-safe**. It maintains an
+in-memory cache for fast lookup, but if a callback arrives for an unknown task (e.g.,
+after a pod restart), it queries the Shepherd API to recover the task metadata from
+`sourceURL` and labels. This means no callbacks are silently dropped on restart.
+
+Uses `api.CallbackPayload` imported from `pkg/api` — no local type duplication.
+
 ```go
 package github
 
@@ -1283,19 +1390,15 @@ import (
     "fmt"
     "io"
     "net/http"
+    "net/url"
+    "strconv"
     "strings"
     "sync"
 
     "github.com/go-logr/logr"
-)
 
-// CallbackPayload matches pkg/api/types.go CallbackPayload
-type CallbackPayload struct {
-    TaskID  string         `json:"taskID"`
-    Event   string         `json:"event"`
-    Message string         `json:"message"`
-    Details map[string]any `json:"details,omitempty"`
-}
+    "github.com/NissesSenap/shepherd/pkg/api"
+)
 
 // TaskMetadata stores information about active tasks for callback handling.
 type TaskMetadata struct {
@@ -1306,22 +1409,24 @@ type TaskMetadata struct {
 
 // CallbackHandler handles callbacks from the Shepherd API.
 type CallbackHandler struct {
-    secret   string
-    ghClient *Client
-    log      logr.Logger
+    secret    string
+    ghClient  *Client
+    apiClient *APIClient
+    log       logr.Logger
 
-    // Task metadata cache (in production, use persistent storage)
+    // In-memory cache for fast lookup; API fallback handles restarts
     tasksMu sync.RWMutex
     tasks   map[string]TaskMetadata
 }
 
 // NewCallbackHandler creates a new callback handler.
-func NewCallbackHandler(secret string, ghClient *Client, log logr.Logger) *CallbackHandler {
+func NewCallbackHandler(secret string, ghClient *Client, apiClient *APIClient, log logr.Logger) *CallbackHandler {
     return &CallbackHandler{
-        secret:   secret,
-        ghClient: ghClient,
-        log:      log,
-        tasks:    make(map[string]TaskMetadata),
+        secret:    secret,
+        ghClient:  ghClient,
+        apiClient: apiClient,
+        log:       log,
+        tasks:     make(map[string]TaskMetadata),
     }
 }
 
@@ -1355,8 +1460,8 @@ func (h *CallbackHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    // Parse payload
-    var payload CallbackPayload
+    // Parse payload (uses api.CallbackPayload from pkg/api)
+    var payload api.CallbackPayload
     if err := json.Unmarshal(body, &payload); err != nil {
         h.log.Error(err, "failed to parse callback payload")
         http.Error(w, "invalid payload", http.StatusBadRequest)
@@ -1388,15 +1493,69 @@ func (h *CallbackHandler) verifySignature(body []byte, signature string) bool {
     return hmac.Equal([]byte(expected), []byte(signature))
 }
 
-// handleCallback processes the callback and posts appropriate GitHub comments.
-func (h *CallbackHandler) handleCallback(ctx context.Context, payload *CallbackPayload) {
-    // Look up task metadata
+// resolveTaskMetadata looks up task metadata from cache, falling back to
+// the Shepherd API if not found (e.g., after a restart).
+func (h *CallbackHandler) resolveTaskMetadata(ctx context.Context, taskID string) (TaskMetadata, bool) {
+    // Check in-memory cache first
     h.tasksMu.RLock()
-    meta, ok := h.tasks[payload.TaskID]
+    meta, ok := h.tasks[taskID]
     h.tasksMu.RUnlock()
+    if ok {
+        return meta, true
+    }
 
+    // Fallback: query the Shepherd API for task details
+    task, err := h.apiClient.GetTask(ctx, taskID)
+    if err != nil {
+        h.log.Error(err, "failed to fetch task from API for callback", "taskID", taskID)
+        return TaskMetadata{}, false
+    }
+
+    // Parse owner/repo/issue from sourceURL (e.g., "https://github.com/org/repo/issues/42")
+    meta, err = parseSourceURL(task.Task.SourceURL)
+    if err != nil {
+        h.log.Error(err, "failed to parse sourceURL from task", "taskID", taskID, "sourceURL", task.Task.SourceURL)
+        return TaskMetadata{}, false
+    }
+
+    // Cache for future callbacks on the same task
+    h.RegisterTask(taskID, meta)
+    h.log.Info("recovered task metadata from API", "taskID", taskID, "owner", meta.Owner, "repo", meta.Repo, "issue", meta.IssueNumber)
+    return meta, true
+}
+
+// parseSourceURL extracts owner, repo, and issue number from a GitHub issue URL.
+// Expected format: https://github.com/{owner}/{repo}/issues/{number}
+func parseSourceURL(sourceURL string) (TaskMetadata, error) {
+    if sourceURL == "" {
+        return TaskMetadata{}, fmt.Errorf("empty sourceURL")
+    }
+    u, err := url.Parse(sourceURL)
+    if err != nil {
+        return TaskMetadata{}, fmt.Errorf("invalid sourceURL: %w", err)
+    }
+    // Path: /owner/repo/issues/42
+    parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+    if len(parts) < 4 || parts[2] != "issues" {
+        return TaskMetadata{}, fmt.Errorf("unexpected sourceURL format: %s", sourceURL)
+    }
+    issueNumber, err := strconv.Atoi(parts[3])
+    if err != nil {
+        return TaskMetadata{}, fmt.Errorf("invalid issue number in sourceURL: %w", err)
+    }
+    return TaskMetadata{
+        Owner:       parts[0],
+        Repo:        parts[1],
+        IssueNumber: issueNumber,
+    }, nil
+}
+
+// handleCallback processes the callback and posts appropriate GitHub comments.
+func (h *CallbackHandler) handleCallback(ctx context.Context, payload *api.CallbackPayload) {
+    // Look up task metadata (cache + API fallback)
+    meta, ok := h.resolveTaskMetadata(ctx, payload.TaskID)
     if !ok {
-        h.log.Info("unknown task ID, cannot post comment", "taskID", payload.TaskID)
+        h.log.Info("unable to resolve task metadata, cannot post comment", "taskID", payload.TaskID)
         return
     }
 
@@ -1449,47 +1608,20 @@ func (h *CallbackHandler) handleCallback(ctx context.Context, payload *CallbackP
 }
 ```
 
-#### 2. Integrate CallbackHandler into Webhook Flow
-
-**File**: `pkg/adapters/github/webhook.go`
-
-Update WebhookHandler to register tasks with CallbackHandler:
-
-```go
-type WebhookHandler struct {
-    secret          string
-    ghClient        *Client
-    apiClient       *APIClient
-    callbackHandler *CallbackHandler // Add this
-    callbackURL     string
-    log             logr.Logger
-}
-
-// In processTask, after creating task:
-// Register task metadata for callback handling
-h.callbackHandler.RegisterTask(taskResp.ID, TaskMetadata{
-    Owner:       owner,
-    Repo:        repo,
-    IssueNumber: issueNumber,
-})
-```
-
-#### 3. Wire CallbackHandler in Server
+#### 2. Integrate CallbackHandler into Server
 
 **File**: `pkg/adapters/github/server.go`
 
+The WebhookHandler already has `callbackHandler` field (wired in Phase 4).
+The `processTask` method already calls `RegisterTask` (added in Phase 4).
+Phase 5 just adds the callback endpoint route:
+
 ```go
-// Create callback handler
-callbackHandler := NewCallbackHandler(opts.CallbackSecret, ghClient, log)
-
-// Update webhook handler creation
-webhookHandler := NewWebhookHandler(opts.WebhookSecret, ghClient, apiClient, callbackHandler, opts.CallbackURL, log)
-
-// Mount callback endpoint
-r.Post("/callback", callbackHandler.ServeHTTP)
+// Mount callback endpoint with content-type validation
+r.With(requireJSON).Post("/callback", callbackHandler.ServeHTTP)
 ```
 
-#### 4. Unit Tests
+#### 3. Unit Tests
 
 **File**: `pkg/adapters/github/callback_test.go`
 
@@ -1501,18 +1633,18 @@ import (
     "crypto/hmac"
     "crypto/sha256"
     "encoding/hex"
-    "encoding/json"
     "net/http"
     "net/http/httptest"
     "testing"
 
     "github.com/stretchr/testify/assert"
+    "github.com/stretchr/testify/require"
     ctrl "sigs.k8s.io/controller-runtime"
 )
 
 func TestCallbackHandler_SignatureVerification(t *testing.T) {
     secret := "callback-secret"
-    handler := NewCallbackHandler(secret, nil, ctrl.Log.WithName("test"))
+    handler := NewCallbackHandler(secret, nil, nil, ctrl.Log.WithName("test"))
 
     t.Run("valid signature", func(t *testing.T) {
         body := []byte(`{"taskID":"abc","event":"completed"}`)
@@ -1533,7 +1665,7 @@ func TestCallbackHandler_ServeHTTP(t *testing.T) {
     secret := "callback-secret"
 
     t.Run("rejects invalid signature", func(t *testing.T) {
-        handler := NewCallbackHandler(secret, nil, ctrl.Log.WithName("test"))
+        handler := NewCallbackHandler(secret, nil, nil, ctrl.Log.WithName("test"))
 
         body := []byte(`{"taskID":"abc","event":"completed"}`)
         req := httptest.NewRequest(http.MethodPost, "/callback", bytes.NewReader(body))
@@ -1546,7 +1678,7 @@ func TestCallbackHandler_ServeHTTP(t *testing.T) {
 }
 
 func TestCallbackHandler_TaskMetadata(t *testing.T) {
-    handler := NewCallbackHandler("", nil, ctrl.Log.WithName("test"))
+    handler := NewCallbackHandler("", nil, nil, ctrl.Log.WithName("test"))
 
     // Register a task
     handler.RegisterTask("task-123", TaskMetadata{
@@ -1564,6 +1696,31 @@ func TestCallbackHandler_TaskMetadata(t *testing.T) {
     assert.Equal(t, "test-org", meta.Owner)
     assert.Equal(t, "test-repo", meta.Repo)
     assert.Equal(t, 42, meta.IssueNumber)
+}
+
+func TestParseSourceURL(t *testing.T) {
+    t.Run("valid issue URL", func(t *testing.T) {
+        meta, err := parseSourceURL("https://github.com/myorg/myrepo/issues/42")
+        require.NoError(t, err)
+        assert.Equal(t, "myorg", meta.Owner)
+        assert.Equal(t, "myrepo", meta.Repo)
+        assert.Equal(t, 42, meta.IssueNumber)
+    })
+
+    t.Run("empty URL", func(t *testing.T) {
+        _, err := parseSourceURL("")
+        require.Error(t, err)
+    })
+
+    t.Run("non-issue URL", func(t *testing.T) {
+        _, err := parseSourceURL("https://github.com/myorg/myrepo/pull/42")
+        require.Error(t, err)
+    })
+
+    t.Run("invalid issue number", func(t *testing.T) {
+        _, err := parseSourceURL("https://github.com/myorg/myrepo/issues/abc")
+        require.Error(t, err)
+    })
 }
 ```
 
@@ -1592,6 +1749,18 @@ func TestCallbackHandler_TaskMetadata(t *testing.T) {
 Replace the custom GitHub token implementation in the API server with ghinstallation library. This code stays in `pkg/api/` because it serves the **Runner App** - the API generates tokens for runners to clone repos and create PRs, regardless of which adapter triggered the task.
 
 **Note**: This is separate from the Trigger App client in `pkg/adapters/github/` which handles webhooks and comments.
+
+**What ghinstallation replaces**: The current code in `pkg/api/github_token.go` has three
+functions that manually implement the GitHub App authentication flow:
+1. `readPrivateKey()` - reads and parses RSA PEM files (PKCS1/PKCS8)
+2. `createJWT()` - creates a GitHub App JWT using `golang-jwt/jwt/v5`
+3. `exchangeToken()` - POSTs the JWT to GitHub's API to get an installation access token
+
+The `ghinstallation` library does **all three** of these internally. You create a
+`ghinstallation.Transport` with the private key bytes, and its `Token(ctx)` /
+`TokenWithOptions(ctx, opts)` methods handle JWT creation, exchange, and token caching
+transparently. This means all three functions are deleted and `golang-jwt/jwt/v5`
+becomes unused.
 
 ### Changes Required
 
@@ -1731,11 +1900,22 @@ handler := &taskHandler{
 #### 4. Remove Old Functions
 
 Remove from `pkg/api/github_token.go`:
-- `readPrivateKey()` - replaced by ghinstallation
-- `createJWT()` - replaced by ghinstallation
-- `exchangeToken()` - replaced by ghinstallation
+- `readPrivateKey()` - replaced by `os.ReadFile()` + passing bytes to ghinstallation
+- `createJWT()` - replaced by ghinstallation's internal JWT creation
+- `exchangeToken()` - replaced by `transport.Token()` / `transport.TokenWithOptions()`
 
-#### 5. Update Tests
+Keep `parseRepoName()` — still needed to extract repo name for token scoping.
+
+#### 5. Clean Up Dependencies
+
+```bash
+go mod tidy
+```
+
+This removes `github.com/golang-jwt/jwt/v5` from `go.mod` since it is no longer
+directly used (ghinstallation handles JWT internally).
+
+#### 6. Update Tests
 
 Update `pkg/api/handler_token_test.go` to use the new client pattern.
 
@@ -1797,7 +1977,9 @@ From `pkg/api/` tests:
 - HTTP client timeouts (30s for API, 10s for GitHub)
 - Connection pooling via http.DefaultTransport
 - Pagination for comment fetching
-- No persistent storage for task metadata (in-memory map with mutex)
+- In-memory task metadata cache with API fallback for stateless recovery
+- Context truncation at 1MB to stay within API's compressed context limit
+- IP-based rate limiting (100 req/min) on webhook endpoint via httprate
 
 ## Security Considerations
 
@@ -1806,6 +1988,9 @@ From `pkg/api/` tests:
 - Constant-time comparison for HMAC (hmac.Equal)
 - Private key loaded from file, not environment variable
 - No secrets logged
+- Content-Type validation on POST endpoints (requireJSON middleware)
+- IP-based rate limiting on public webhook endpoint to mitigate DoS
+- @shepherd regex excludes email-style patterns to prevent false triggers
 
 ## References
 
