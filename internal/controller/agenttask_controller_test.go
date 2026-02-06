@@ -701,11 +701,6 @@ var _ = Describe("AgentTask Controller", func() {
 			Expect(cond.Reason).To(Equal(toolkitv1alpha1.ReasonSucceeded))
 		})
 
-		// Note: The test "should mark TimedOut when timeout exceeded" was removed
-		// because timeout enforcement is now delegated to agent-sandbox via
-		// SandboxClaim.Lifecycle.ShutdownTime. The timeout behavior is tested
-		// via the ClaimExpired and SandboxExpired tests below.
-
 		It("should mark TimedOut when SandboxExpired reason on SandboxClaim", func() {
 			createAgentTask(taskName, resourceNamespace)
 			reconcileToPending()

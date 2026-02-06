@@ -159,7 +159,7 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			// When the claim expires, agent-sandbox sets Ready=False with reason=ClaimExpired,
 			// which triggers handleSandboxTermination() and classifyClaimTermination().
 			log.V(1).Info("sandbox ready and task already running", "claim", claim.Name)
-			return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
+			return ctrl.Result{RequeueAfter: requeueInterval}, nil
 		}
 
 		// GET Sandbox by name to read ServiceFQDN
@@ -206,7 +206,7 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		log.Info("task assigned and running", "sandbox", sandboxName, "claim", claim.Name)
 		// Timeout is enforced by agent-sandbox via SandboxClaim.Lifecycle.ShutdownTime.
 		// Requeue periodically to detect status changes.
-		return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
+		return ctrl.Result{RequeueAfter: requeueInterval}, nil
 	}
 
 	// 6b. Ready=False and task was previously Running → sandbox terminated
@@ -424,6 +424,10 @@ func classifyClaimTermination(claim *sandboxextv1alpha1.SandboxClaim) (string, s
 // defaultTimeout is the default task timeout if not specified.
 // Used by buildSandboxClaim to set SandboxClaim.Lifecycle.ShutdownTime.
 const defaultTimeout = 30 * time.Minute
+
+// requeueInterval is the periodic requeue interval for Running tasks.
+// Used to detect status changes when timeout is delegated to agent-sandbox.
+const requeueInterval = 5 * time.Minute
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *AgentTaskReconciler) SetupWithManager(mgr ctrl.Manager) error {
