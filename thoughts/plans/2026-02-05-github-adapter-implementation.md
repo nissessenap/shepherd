@@ -61,6 +61,29 @@ A working GitHub adapter that:
 - Rate limiting (future enhancement)
 - GitLab adapter (future, but package structure supports it)
 - Authentication on callback endpoint (HMAC signature is sufficient)
+- **Interface abstraction for adapters** - MVP implements GitHub directly; interfaces can emerge later when we have a second adapter (GitLab) to learn from
+
+## Architecture: Two GitHub Apps
+
+The system uses two separate GitHub Apps with different responsibilities:
+
+| GitHub App | Location | Purpose |
+|------------|----------|---------|
+| **Trigger App** | `pkg/adapters/github/` | Receives webhooks, reads issues/PRs, posts comments |
+| **Runner App** | `pkg/api/github_token.go` | API generates tokens for runners to clone repos, push branches, create PRs |
+
+**Why separate locations?**
+
+- The **Trigger App** is adapter-specific - only the GitHub adapter needs it
+- The **Runner App** token generation is API server responsibility - runners call the API to get tokens regardless of which adapter triggered the task
+- Phase 6 refactors `pkg/api/github_token.go` to use ghinstallation (same library as adapter) but keeps it in `pkg/api/` because it serves the API, not the adapter
+
+**Why no interface abstraction?**
+
+- Interfaces should emerge from real implementations, not be designed upfront
+- We don't know GitLab's webhook/API model well enough to abstract yet
+- The package structure (`pkg/adapters/github/`, future `pkg/adapters/gitlab/`) provides organizational separation
+- Adding a common interface later is a small refactor once we understand both implementations
 
 ## Implementation Approach
 
@@ -1562,11 +1585,13 @@ func TestCallbackHandler_TaskMetadata(t *testing.T) {
 
 ---
 
-## Phase 6: Refactor pkg/api/github_token.go
+## Phase 6: Refactor pkg/api/github_token.go (Runner App)
 
 ### Overview
 
-Replace the custom GitHub token implementation in the API server with ghinstallation library to match the adapter pattern.
+Replace the custom GitHub token implementation in the API server with ghinstallation library. This code stays in `pkg/api/` because it serves the **Runner App** - the API generates tokens for runners to clone repos and create PRs, regardless of which adapter triggered the task.
+
+**Note**: This is separate from the Trigger App client in `pkg/adapters/github/` which handles webhooks and comments.
 
 ### Changes Required
 
