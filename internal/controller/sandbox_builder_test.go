@@ -19,11 +19,13 @@ package controller
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	sandboxextv1alpha1 "sigs.k8s.io/agent-sandbox/extensions/api/v1alpha1"
 
 	toolkitv1alpha1 "github.com/NissesSenap/shepherd/api/v1alpha1"
 )
@@ -130,4 +132,52 @@ func TestBuildSandboxClaim_NameTooLong_ReturnsError(t *testing.T) {
 	_, err := buildSandboxClaim(task, baseSandboxCfg())
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "exceeds 63-character limit")
+}
+
+func TestBuildSandboxClaim_Lifecycle_DefaultTimeout(t *testing.T) {
+	task := baseTask()
+	// No timeout set, should use default 30m
+
+	beforeBuild := time.Now()
+	claim, err := buildSandboxClaim(task, baseSandboxCfg())
+	afterBuild := time.Now()
+	require.NoError(t, err)
+
+	require.NotNil(t, claim.Spec.Lifecycle, "Lifecycle should be set")
+	require.NotNil(t, claim.Spec.Lifecycle.ShutdownTime, "ShutdownTime should be set")
+
+	// ShutdownTime should be ~30 minutes from now
+	expectedMin := beforeBuild.Add(30 * time.Minute)
+	expectedMax := afterBuild.Add(30 * time.Minute)
+	shutdownTime := claim.Spec.Lifecycle.ShutdownTime.Time
+	assert.True(t, shutdownTime.After(expectedMin) || shutdownTime.Equal(expectedMin),
+		"ShutdownTime should be at least 30m from build start")
+	assert.True(t, shutdownTime.Before(expectedMax) || shutdownTime.Equal(expectedMax),
+		"ShutdownTime should be at most 30m from build end")
+
+	assert.Equal(t, sandboxextv1alpha1.ShutdownPolicyRetain, claim.Spec.Lifecycle.ShutdownPolicy)
+}
+
+func TestBuildSandboxClaim_Lifecycle_CustomTimeout(t *testing.T) {
+	task := baseTask()
+	task.Spec.Runner.Timeout = metav1.Duration{Duration: 15 * time.Minute}
+
+	beforeBuild := time.Now()
+	claim, err := buildSandboxClaim(task, baseSandboxCfg())
+	afterBuild := time.Now()
+	require.NoError(t, err)
+
+	require.NotNil(t, claim.Spec.Lifecycle)
+	require.NotNil(t, claim.Spec.Lifecycle.ShutdownTime)
+
+	// ShutdownTime should be ~15 minutes from now
+	expectedMin := beforeBuild.Add(15 * time.Minute)
+	expectedMax := afterBuild.Add(15 * time.Minute)
+	shutdownTime := claim.Spec.Lifecycle.ShutdownTime.Time
+	assert.True(t, shutdownTime.After(expectedMin) || shutdownTime.Equal(expectedMin),
+		"ShutdownTime should be at least 15m from build start")
+	assert.True(t, shutdownTime.Before(expectedMax) || shutdownTime.Equal(expectedMax),
+		"ShutdownTime should be at most 15m from build end")
+
+	assert.Equal(t, sandboxextv1alpha1.ShutdownPolicyRetain, claim.Spec.Lifecycle.ShutdownPolicy)
 }

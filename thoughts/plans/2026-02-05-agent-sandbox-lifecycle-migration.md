@@ -1,5 +1,7 @@
 # Agent-Sandbox v0.1.1 Lifecycle Migration Plan
 
+**Status**: Complete
+
 ## Overview
 
 Migrate from operator-managed timeout to agent-sandbox's built-in `Lifecycle.ShutdownTime` and `ShutdownPolicy` features, now available in v0.1.1.

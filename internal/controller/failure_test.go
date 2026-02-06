@@ -18,7 +18,6 @@ package controller
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -78,72 +77,6 @@ func TestClassifyClaimTermination(t *testing.T) {
 			reason, msg := classifyClaimTermination(tt.claim)
 			assert.Equal(t, tt.expectedReason, reason)
 			assert.Equal(t, tt.expectedMsg, msg)
-		})
-	}
-}
-
-func TestCheckTimeout(t *testing.T) {
-	tests := []struct {
-		name     string
-		task     *toolkitv1alpha1.AgentTask
-		expected bool
-	}{
-		{
-			name:     "nil StartTime returns false",
-			task:     &toolkitv1alpha1.AgentTask{},
-			expected: false,
-		},
-		{
-			name: "within timeout returns false",
-			task: &toolkitv1alpha1.AgentTask{
-				Spec: toolkitv1alpha1.AgentTaskSpec{
-					Runner: toolkitv1alpha1.RunnerSpec{
-						Timeout: metav1.Duration{Duration: 30 * time.Minute},
-					},
-				},
-				Status: toolkitv1alpha1.AgentTaskStatus{
-					StartTime: &metav1.Time{Time: time.Now().Add(-10 * time.Minute)},
-				},
-			},
-			expected: false,
-		},
-		{
-			name: "past timeout returns true",
-			task: &toolkitv1alpha1.AgentTask{
-				Spec: toolkitv1alpha1.AgentTaskSpec{
-					Runner: toolkitv1alpha1.RunnerSpec{
-						Timeout: metav1.Duration{Duration: 5 * time.Minute},
-					},
-				},
-				Status: toolkitv1alpha1.AgentTaskStatus{
-					StartTime: &metav1.Time{Time: time.Now().Add(-10 * time.Minute)},
-				},
-			},
-			expected: true,
-		},
-		{
-			name: "zero timeout uses 30m default and returns false for recent start",
-			task: &toolkitv1alpha1.AgentTask{
-				Status: toolkitv1alpha1.AgentTaskStatus{
-					StartTime: &metav1.Time{Time: time.Now().Add(-5 * time.Minute)},
-				},
-			},
-			expected: false,
-		},
-		{
-			name: "zero timeout uses 30m default and returns true for old start",
-			task: &toolkitv1alpha1.AgentTask{
-				Status: toolkitv1alpha1.AgentTaskStatus{
-					StartTime: &metav1.Time{Time: time.Now().Add(-31 * time.Minute)},
-				},
-			},
-			expected: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.expected, checkTimeout(tt.task))
 		})
 	}
 }

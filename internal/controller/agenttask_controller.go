@@ -154,21 +154,12 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// 6a. Ready=True → assign task to runner, then transition to Running
 	if readyCond != nil && readyCond.Status == metav1.ConditionTrue {
 		if isRunning {
-			// Already Running — assignment already succeeded; check timeout.
-			// (Also checked in section 7 for the edge case where Ready becomes nil/Unknown
-			// while the task is Running.)
-			if checkTimeout(&task) {
-				log.Info("task timed out", "task", req.NamespacedName, "timeout", task.Spec.Runner.Timeout.Duration)
-				if err := r.cleanupSandboxClaim(ctx, &task); err != nil {
-					return ctrl.Result{}, err
-				}
-				return r.markFailed(ctx, &task, toolkitv1alpha1.ReasonTimedOut,
-					fmt.Sprintf("Task exceeded timeout of %s", task.Spec.Runner.Timeout.Duration))
-			}
-			// Requeue at the timeout deadline so it fires even without external events.
-			remaining := max(time.Until(task.Status.StartTime.Add(taskTimeout(&task))), time.Second)
-			log.V(1).Info("sandbox ready and task already running", "claim", claim.Name, "requeueIn", remaining)
-			return ctrl.Result{RequeueAfter: remaining}, nil
+			// Already Running — assignment already succeeded.
+			// Timeout is now enforced by agent-sandbox via SandboxClaim.Lifecycle.ShutdownTime.
+			// When the claim expires, agent-sandbox sets Ready=False with reason=ClaimExpired,
+			// which triggers handleSandboxTermination() and classifyClaimTermination().
+			log.V(1).Info("sandbox ready and task already running", "claim", claim.Name)
+			return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
 		}
 
 		// GET Sandbox by name to read ServiceFQDN
@@ -213,25 +204,17 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 		r.Recorder.Eventf(&task, nil, "Normal", "Running", "Reconcile", "Task assigned to sandbox %s", sandboxName)
 		log.Info("task assigned and running", "sandbox", sandboxName, "claim", claim.Name)
-		// Schedule requeue at timeout deadline.
-		return ctrl.Result{RequeueAfter: taskTimeout(&task)}, nil
+		// Timeout is enforced by agent-sandbox via SandboxClaim.Lifecycle.ShutdownTime.
+		// Requeue periodically to detect status changes.
+		return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
 	}
 
 	// 6b. Ready=False and task was previously Running → sandbox terminated
+	// This includes timeout expiration: agent-sandbox sets Ready=False with reason=ClaimExpired
+	// when ShutdownTime is reached. classifyClaimTermination() maps this to ReasonTimedOut.
 	if readyCond != nil && readyCond.Status == metav1.ConditionFalse && isRunning {
 		log.Info("sandbox terminated while task was running", "claim", claim.Name, "reason", readyCond.Reason)
 		return r.handleSandboxTermination(ctx, req)
-	}
-
-	// 7. Timeout check — covers the edge case where the Ready condition is temporarily
-	// nil/Unknown while the task is Running (section 6a handles Ready=True).
-	if isRunning && checkTimeout(&task) {
-		log.Info("task timed out", "task", req.NamespacedName, "timeout", task.Spec.Runner.Timeout.Duration)
-		if err := r.cleanupSandboxClaim(ctx, &task); err != nil {
-			return ctrl.Result{}, err
-		}
-		return r.markFailed(ctx, &task, toolkitv1alpha1.ReasonTimedOut,
-			fmt.Sprintf("Task exceeded timeout of %s", task.Spec.Runner.Timeout.Duration))
 	}
 
 	// 6c. Ready condition nil, False, or Unknown AND task not yet Running → still starting
@@ -416,8 +399,8 @@ func (r *AgentTaskReconciler) handleSandboxTermination(
 	return ctrl.Result{RequeueAfter: graceDuration}, nil
 }
 
-// Condition reasons used by agent-sandbox controllers. These are string literals
-// in agent-sandbox v0.1.0; upstream defines them as constants in later versions.
+// Condition reasons used by agent-sandbox controllers.
+// ClaimExpired is set when SandboxClaim.Lifecycle.ShutdownTime is reached.
 const (
 	reasonSandboxExpired = "SandboxExpired"
 	reasonClaimExpired   = "ClaimExpired"
@@ -438,23 +421,9 @@ func classifyClaimTermination(claim *sandboxextv1alpha1.SandboxClaim) (string, s
 	return toolkitv1alpha1.ReasonFailed, fmt.Sprintf("Sandbox terminated: %s", readyCond.Message)
 }
 
+// defaultTimeout is the default task timeout if not specified.
+// Used by buildSandboxClaim to set SandboxClaim.Lifecycle.ShutdownTime.
 const defaultTimeout = 30 * time.Minute
-
-// taskTimeout returns the configured timeout or the default (30m).
-func taskTimeout(task *toolkitv1alpha1.AgentTask) time.Duration {
-	if d := task.Spec.Runner.Timeout.Duration; d > 0 {
-		return d
-	}
-	return defaultTimeout
-}
-
-// checkTimeout returns true if the task has exceeded its timeout duration.
-func checkTimeout(task *toolkitv1alpha1.AgentTask) bool {
-	if task.Status.StartTime == nil {
-		return false
-	}
-	return time.Now().After(task.Status.StartTime.Add(taskTimeout(task)))
-}
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *AgentTaskReconciler) SetupWithManager(mgr ctrl.Manager) error {

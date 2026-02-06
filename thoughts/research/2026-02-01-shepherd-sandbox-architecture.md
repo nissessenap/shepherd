@@ -46,7 +46,7 @@ Based on `thoughts/research/2026-01-31-poc-sandbox-learnings.md`:
 - Headless services work for in-cluster connectivity (use `Sandbox.Status.ServiceFQDN` + port)
 - `restartPolicy: Never` honored — no restart loops
 - Resources persist after pod exits — operator must explicitly delete SandboxClaim
-- agent-sandbox v0.1.0 has no `Lifecycle` field — operator manages timeout and cleanup. Note: `Lifecycle` with `ShutdownTime` support exists on unreleased main (v0.1.0+46 commits). When a release including Lifecycle ships, timeout management can be delegated to agent-sandbox.
+- agent-sandbox v0.1.1 includes `Lifecycle` with `ShutdownTime` and `ShutdownPolicy` — timeout enforcement is delegated to agent-sandbox. The operator sets `ShutdownTime` on SandboxClaim creation and reacts to `ClaimExpired` reason when the claim expires.
 - Multiple concurrent sandboxes work without port conflicts
 
 ## Goals
@@ -90,7 +90,7 @@ The architecture should be structured so that the operator's sandbox management 
 | HTTP Router | `github.com/go-chi/chi/v5` |
 | Logging | zap via `sigs.k8s.io/controller-runtime/pkg/log/zap` |
 | GitHub | `github.com/google/go-github`, `github.com/bradleyfalzon/ghinstallation/v2` |
-| Sandbox | `sigs.k8s.io/agent-sandbox` v0.1.0 |
+| Sandbox | `sigs.k8s.io/agent-sandbox` v0.1.1 |
 | Unit Testing | `github.com/stretchr/testify` |
 | Integration Testing | `github.com/onsi/gomega` (envtest) |
 | Metrics | `github.com/prometheus/client_golang` (via controller-runtime) |
@@ -343,10 +343,9 @@ type RunnerSpec struct {
     SandboxTemplateName string `json:"sandboxTemplateName"`
 
     // Timeout is the maximum duration for task execution.
-    // The operator enforces this via its own timer since agent-sandbox v0.1.0
-    // does not support Lifecycle/ShutdownTime. When a future agent-sandbox release
-    // includes Lifecycle support, this can be delegated to the SandboxClaim's
-    // ShutdownTime field instead.
+    // This is translated to SandboxClaim.Lifecycle.ShutdownTime when creating
+    // the sandbox. Agent-sandbox enforces the timeout by expiring the claim,
+    // which triggers Ready=False with reason=ClaimExpired.
     // +kubebuilder:default="30m"
     Timeout metav1.Duration `json:"timeout,omitempty"`
 
@@ -502,7 +501,7 @@ Implementation: `golang.org/x/time/rate` with in-memory limiters keyed by task I
    - Set ownerReference (AgentTask --> SandboxClaim)
    - Set sandboxTemplateRef from task.Spec.Runner.SandboxTemplateName
    - Record SandboxClaimName in AgentTask status
-   - Start timeout timer (operator-managed, not agent-sandbox Lifecycle)
+   - Set Lifecycle.ShutdownTime = now + task.Spec.Runner.Timeout (agent-sandbox enforces timeout)
 6. Get Sandbox resource (same name as claim):
    - Not found --> still creating, requeue
    - Found, check Ready condition:
@@ -577,13 +576,17 @@ func classifySandboxTermination(task *v1alpha1.AgentTask, sandbox *sandboxv1alph
 
 ### Timeout Management
 
-Since agent-sandbox v0.1.0 (the latest released version) does not support `Lifecycle.ShutdownTime`, the operator manages timeout:
+Timeout enforcement is delegated to agent-sandbox v0.1.1 via the `Lifecycle` field:
 
-1. Record `status.startTime` when SandboxClaim is created
-2. On each reconcile, check if `now > startTime + spec.runner.timeout`
-3. If timed out: delete SandboxClaim, mark AgentTask as `Succeeded=False`, reason `TimedOut`
+1. When creating a SandboxClaim, the operator sets `Lifecycle.ShutdownTime` = now + `spec.runner.timeout`
+2. The operator sets `Lifecycle.ShutdownPolicy` = `Retain` (so the claim status can be inspected)
+3. When `ShutdownTime` is reached, agent-sandbox sets `Ready=False` with reason `ClaimExpired`
+4. The operator detects `Ready=False` and classifies the termination via `classifyClaimTermination()`:
+   - `ClaimExpired` or `SandboxExpired` → `Succeeded=False`, reason `TimedOut`
+   - Other reasons → `Succeeded=False`, reason `Failed`
+5. The operator deletes the SandboxClaim after marking the task terminal
 
-**Future**: `Lifecycle` with `ShutdownTime` and `ShutdownPolicy` support exists on agent-sandbox's unreleased main branch (post-v0.1.0). When a release including Lifecycle ships, the operator can set `ShutdownTime` on the SandboxClaim and react to the `SandboxExpired` condition instead of managing its own timer. This would also give the sandbox time to gracefully shut down via `ShutdownPolicy`.
+This approach simplifies the operator by removing manual timeout tracking and requeue scheduling.
 
 ## Fleet Migrations (MVP Part 2)
 

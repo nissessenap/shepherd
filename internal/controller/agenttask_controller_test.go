@@ -701,44 +701,10 @@ var _ = Describe("AgentTask Controller", func() {
 			Expect(cond.Reason).To(Equal(toolkitv1alpha1.ReasonSucceeded))
 		})
 
-		It("should mark TimedOut when timeout exceeded", func() {
-			createAgentTask(taskName, resourceNamespace)
-			reconcileToPending()
-			claimName := reconcileToClaimed()
-
-			By("Transitioning to Running via successful assignment")
-			reconcileToRunning(claimName)
-
-			By("Setting StartTime to past the timeout")
-			var task toolkitv1alpha1.AgentTask
-			Expect(k8sClient.Get(ctx, taskNN, &task)).To(Succeed())
-			pastTime := metav1.NewTime(time.Now().Add(-31 * time.Minute))
-			task.Status.StartTime = &pastTime
-			Expect(k8sClient.Status().Update(ctx, &task)).To(Succeed())
-
-			By("Reconciling — should mark TimedOut")
-			result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: taskNN})
-			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RequeueAfter).To(BeZero())
-
-			By("Verifying TimedOut condition")
-			Expect(k8sClient.Get(ctx, taskNN, &task)).To(Succeed())
-			cond := meta.FindStatusCondition(task.Status.Conditions, toolkitv1alpha1.ConditionSucceeded)
-			Expect(cond).NotTo(BeNil())
-			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
-			Expect(cond.Reason).To(Equal(toolkitv1alpha1.ReasonTimedOut))
-			Expect(cond.Message).To(ContainSubstring("timeout"))
-			Expect(task.Status.CompletionTime).NotTo(BeNil())
-
-			By("Verifying SandboxClaim is deleted")
-			var claim sandboxextv1alpha1.SandboxClaim
-			err = k8sClient.Get(ctx, client.ObjectKey{
-				Namespace: resourceNamespace,
-				Name:      claimName,
-			}, &claim)
-			Expect(err).To(HaveOccurred())
-			Expect(client.IgnoreNotFound(err)).To(Succeed(), "SandboxClaim should be deleted after timeout")
-		})
+		// Note: The test "should mark TimedOut when timeout exceeded" was removed
+		// because timeout enforcement is now delegated to agent-sandbox via
+		// SandboxClaim.Lifecycle.ShutdownTime. The timeout behavior is tested
+		// via the ClaimExpired and SandboxExpired tests below.
 
 		It("should mark TimedOut when SandboxExpired reason on SandboxClaim", func() {
 			createAgentTask(taskName, resourceNamespace)
