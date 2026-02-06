@@ -92,9 +92,6 @@ type RunnerSpec struct {
 	SandboxTemplateName string `json:"sandboxTemplateName"`
 
 	// Timeout is the maximum duration for task execution.
-	// This is translated to SandboxClaim.Lifecycle.ShutdownTime when creating
-	// the sandbox. Agent-sandbox enforces the timeout by expiring the claim,
-	// which triggers Ready=False with reason=ClaimExpired.
 	// +kubebuilder:default="30m"
 	// +optional
 	Timeout metav1.Duration `json:"timeout,omitzero"`

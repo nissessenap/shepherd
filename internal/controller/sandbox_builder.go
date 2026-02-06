@@ -43,9 +43,6 @@ func buildSandboxClaim(task *toolkitv1alpha1.AgentTask, cfg sandboxConfig) (*san
 		return nil, fmt.Errorf("sandboxTemplateName is required")
 	}
 
-	// Calculate shutdown time from task timeout.
-	// Agent-sandbox will expire the claim when ShutdownTime is reached,
-	// setting Ready=False with reason=ClaimExpired.
 	timeout := task.Spec.Runner.Timeout.Duration
 	if timeout == 0 {
 		timeout = defaultTimeout

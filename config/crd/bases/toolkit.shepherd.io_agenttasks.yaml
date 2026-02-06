@@ -143,11 +143,7 @@ spec:
                     type: string
                   timeout:
                     default: 30m
-                    description: |-
-                      Timeout is the maximum duration for task execution.
-                      This is translated to SandboxClaim.Lifecycle.ShutdownTime when creating
-                      the sandbox. Agent-sandbox enforces the timeout by expiring the claim,
-                      which triggers Ready=False with reason=ClaimExpired.
+                    description: Timeout is the maximum duration for task execution.
                     type: string
                 required:
                 - sandboxTemplateName
