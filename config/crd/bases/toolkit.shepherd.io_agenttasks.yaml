@@ -143,10 +143,7 @@ spec:
                     type: string
                   timeout:
                     default: 30m
-                    description: |-
-                      Timeout is the maximum duration for task execution.
-                      The operator enforces this via its own timer since agent-sandbox v0.1.0
-                      does not support Lifecycle/ShutdownTime in released versions.
+                    description: Timeout is the maximum duration for task execution.
                     type: string
                 required:
                 - sandboxTemplateName

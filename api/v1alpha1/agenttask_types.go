@@ -92,8 +92,6 @@ type RunnerSpec struct {
 	SandboxTemplateName string `json:"sandboxTemplateName"`
 
 	// Timeout is the maximum duration for task execution.
-	// The operator enforces this via its own timer since agent-sandbox v0.1.0
-	// does not support Lifecycle/ShutdownTime in released versions.
 	// +kubebuilder:default="30m"
 	// +optional
 	Timeout metav1.Duration `json:"timeout,omitzero"`

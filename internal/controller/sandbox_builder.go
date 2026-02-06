@@ -18,6 +18,7 @@ package controller
 
 import (
 	"fmt"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -42,6 +43,13 @@ func buildSandboxClaim(task *toolkitv1alpha1.AgentTask, cfg sandboxConfig) (*san
 		return nil, fmt.Errorf("sandboxTemplateName is required")
 	}
 
+	timeout := task.Spec.Runner.Timeout.Duration
+	if timeout == 0 {
+		timeout = defaultTimeout
+	}
+	shutdownTime := metav1.NewTime(time.Now().Add(timeout))
+	shutdownPolicy := sandboxextv1alpha1.ShutdownPolicyRetain
+
 	claim := &sandboxextv1alpha1.SandboxClaim{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      claimName,
@@ -53,6 +61,10 @@ func buildSandboxClaim(task *toolkitv1alpha1.AgentTask, cfg sandboxConfig) (*san
 		Spec: sandboxextv1alpha1.SandboxClaimSpec{
 			TemplateRef: sandboxextv1alpha1.SandboxTemplateRef{
 				Name: task.Spec.Runner.SandboxTemplateName,
+			},
+			Lifecycle: &sandboxextv1alpha1.Lifecycle{
+				ShutdownTime:   &shutdownTime,
+				ShutdownPolicy: shutdownPolicy,
 			},
 		},
 	}
