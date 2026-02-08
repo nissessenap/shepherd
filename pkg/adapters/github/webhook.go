@@ -28,6 +28,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/NissesSenap/shepherd/pkg/api"
 	"github.com/go-logr/logr"
 	gh "github.com/google/go-github/v75/github"
 )
@@ -38,17 +39,33 @@ var shepherdMentionRegex = regexp.MustCompile(`(?i)(?:^|\s)@shepherd\b`)
 
 // WebhookHandler handles incoming GitHub webhooks.
 type WebhookHandler struct {
-	secret   string
-	ghClient *Client
-	log      logr.Logger
+	secret                 string
+	ghClient               *Client
+	apiClient              *APIClient
+	callbackHandler        *CallbackHandler
+	callbackURL            string
+	defaultSandboxTemplate string
+	log                    logr.Logger
 }
 
 // NewWebhookHandler creates a new webhook handler.
-func NewWebhookHandler(secret string, ghClient *Client, log logr.Logger) *WebhookHandler {
+func NewWebhookHandler(
+	secret string,
+	ghClient *Client,
+	apiClient *APIClient,
+	callbackHandler *CallbackHandler,
+	callbackURL string,
+	defaultSandboxTemplate string,
+	log logr.Logger,
+) *WebhookHandler {
 	return &WebhookHandler{
-		secret:   secret,
-		ghClient: ghClient,
-		log:      log,
+		secret:                 secret,
+		ghClient:               ghClient,
+		apiClient:              apiClient,
+		callbackHandler:        callbackHandler,
+		callbackURL:            callbackURL,
+		defaultSandboxTemplate: defaultSandboxTemplate,
+		log:                    log,
 	}
 }
 
@@ -142,22 +159,123 @@ func (h *WebhookHandler) handleIssueComment(ctx context.Context, body []byte) {
 	h.processTask(ctx, &event, description)
 }
 
-// processTask is a placeholder for the task creation workflow (Phase 4).
-func (h *WebhookHandler) processTask(_ context.Context, event *gh.IssueCommentEvent, description string) {
+// maxContextSize is the soft limit for context passed to the API.
+// The API's etcd limit is ~1.4MB compressed; 1MB uncompressed provides
+// safe headroom since gzip typically achieves 3-5x compression on text.
+const maxContextSize = 1_000_000 // 1MB
+
+// processTask handles the task creation workflow.
+func (h *WebhookHandler) processTask(ctx context.Context, event *gh.IssueCommentEvent, description string) {
 	owner := event.GetRepo().GetOwner().GetLogin()
 	repo := event.GetRepo().GetName()
 	issueNumber := event.GetIssue().GetNumber()
 	repoFullName := event.GetRepo().GetFullName()
+	issueURL := event.GetIssue().GetHTMLURL()
+	repoURL := event.GetRepo().GetCloneURL()
 
+	// Format label values
 	repoLabel := strings.ReplaceAll(repoFullName, "/", "-")
 	issueLabel := fmt.Sprintf("%d", issueNumber)
 
-	h.log.Info("would process task",
-		"owner", owner,
-		"repo", repo,
-		"issue", issueNumber,
-		"repoLabel", repoLabel,
-		"issueLabel", issueLabel,
-		"description", description,
-	)
+	// Check for active tasks (deduplication)
+	activeTasks, err := h.apiClient.GetActiveTasks(ctx, repoLabel, issueLabel)
+	if err != nil {
+		h.log.Error(err, "failed to check for active tasks")
+		// Continue anyway - better to potentially create duplicate than fail silently
+	}
+
+	if len(activeTasks) > 0 {
+		task := activeTasks[0]
+		h.log.Info("task already running", "taskID", task.ID, "status", task.Status.Phase)
+
+		if commentErr := h.ghClient.PostComment(ctx, owner, repo, issueNumber,
+			formatAlreadyRunning(task.ID, task.Status.Phase)); commentErr != nil {
+			h.log.Error(commentErr, "failed to post already-running comment")
+		}
+		return
+	}
+
+	// Build context from issue body and comments
+	issueBody := event.GetIssue().GetBody()
+	taskContext := h.buildContext(ctx, owner, repo, issueNumber, issueBody)
+
+	// Create task
+	createReq := api.CreateTaskRequest{
+		Repo: api.RepoRequest{
+			URL: repoURL,
+		},
+		Task: api.TaskRequest{
+			Description: description,
+			Context:     taskContext,
+			SourceURL:   issueURL,
+			SourceType:  "issue",
+			SourceID:    issueLabel,
+		},
+		Callback: h.callbackURL,
+		Runner: &api.RunnerConfig{
+			SandboxTemplateName: h.defaultSandboxTemplate,
+		},
+		Labels: map[string]string{
+			"shepherd.io/repo":  repoLabel,
+			"shepherd.io/issue": issueLabel,
+		},
+	}
+
+	taskResp, err := h.apiClient.CreateTask(ctx, createReq)
+	if err != nil {
+		h.log.Error(err, "failed to create task")
+		if commentErr := h.ghClient.PostComment(ctx, owner, repo, issueNumber,
+			formatFailed("Failed to create task: "+err.Error())); commentErr != nil {
+			h.log.Error(commentErr, "failed to post error comment")
+		}
+		return
+	}
+
+	h.log.Info("created task", "taskID", taskResp.ID)
+
+	// Register task metadata for callback handling
+	h.callbackHandler.RegisterTask(taskResp.ID, TaskMetadata{
+		Owner:       owner,
+		Repo:        repo,
+		IssueNumber: issueNumber,
+	})
+
+	// Post acknowledgment comment
+	if commentErr := h.ghClient.PostComment(ctx, owner, repo, issueNumber,
+		formatAcknowledge(taskResp.ID)); commentErr != nil {
+		h.log.Error(commentErr, "failed to post acknowledgment comment")
+	}
+}
+
+// buildContext assembles the context string from issue body and comments.
+// Truncates if the total context exceeds maxContextSize.
+func (h *WebhookHandler) buildContext(
+	ctx context.Context, owner, repo string, issueNumber int, issueBody string,
+) string {
+	var sb strings.Builder
+	sb.WriteString("## Issue Description\n\n")
+	sb.WriteString(issueBody)
+	sb.WriteString("\n\n")
+
+	// Fetch comments
+	comments, err := h.ghClient.ListIssueComments(ctx, owner, repo, issueNumber)
+	if err != nil {
+		h.log.Error(err, "failed to fetch issue comments")
+		return sb.String()
+	}
+
+	if len(comments) > 0 {
+		sb.WriteString("## Comments\n\n")
+		for _, c := range comments {
+			entry := fmt.Sprintf("**%s** wrote:\n\n%s\n\n---\n\n", c.GetUser().GetLogin(), c.GetBody())
+			if sb.Len()+len(entry) > maxContextSize {
+				sb.WriteString("\n\n--- Context truncated due to size limit ---\n")
+				h.log.Info("context truncated", "issue", issueNumber, "size", sb.Len())
+				break
+			}
+			sb.WriteString(entry)
+		}
+	}
+
+	return sb.String()
 }

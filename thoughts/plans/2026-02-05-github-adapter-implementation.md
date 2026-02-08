@@ -1346,10 +1346,10 @@ func TestAPIClient_CreateTask(t *testing.T) {
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `make test` passes all tests
-- [ ] `go vet ./...` clean
-- [ ] `make lint-fix` passes
-- [ ] API client tests pass
+- [x] `make test` passes all tests
+- [x] `go vet ./...` clean
+- [x] `make lint-fix` passes
+- [x] API client tests pass
 
 #### Manual Verification:
 - [ ] Adapter creates tasks via API

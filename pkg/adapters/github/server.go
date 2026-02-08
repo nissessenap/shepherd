@@ -35,14 +35,15 @@ import (
 
 // Options configures the GitHub adapter.
 type Options struct {
-	ListenAddr     string // ":8082"
-	WebhookSecret  string // GitHub webhook secret
-	AppID          int64  // GitHub App ID
-	InstallationID int64  // GitHub Installation ID
-	PrivateKeyPath string // Path to private key PEM file
-	APIURL         string // Shepherd API URL (e.g., "http://shepherd-api:8080")
-	CallbackSecret string // Shared secret for callback HMAC verification
-	CallbackURL    string // URL for API to call back (e.g., "http://github-adapter:8082/callback")
+	ListenAddr             string // ":8082"
+	WebhookSecret          string // GitHub webhook secret
+	AppID                  int64  // GitHub App ID
+	InstallationID         int64  // GitHub Installation ID
+	PrivateKeyPath         string // Path to private key PEM file
+	APIURL                 string // Shepherd API URL (e.g., "http://shepherd-api:8080")
+	CallbackSecret         string // Shared secret for callback HMAC verification
+	CallbackURL            string // URL for API to call back (e.g., "http://github-adapter:8082/callback")
+	DefaultSandboxTemplate string // Default sandbox template name
 }
 
 // requireJSON validates Content-Type on POST/PUT/PATCH requests.
@@ -74,7 +75,11 @@ func Run(opts Options) error {
 		return fmt.Errorf("creating github client: %w", err)
 	}
 
-	// TODO: Phase 4 - Create API client
+	// Create API client
+	apiClient := NewAPIClient(opts.APIURL)
+
+	// Create callback handler (Phase 5 adds callback endpoint)
+	callbackHandler := NewCallbackHandler(opts.CallbackSecret, ghClient, apiClient, log)
 
 	// Health tracking
 	var healthy atomic.Bool
@@ -102,7 +107,15 @@ func Run(opts Options) error {
 	})
 
 	// Webhook handler
-	webhookHandler := NewWebhookHandler(opts.WebhookSecret, ghClient, log)
+	webhookHandler := NewWebhookHandler(
+		opts.WebhookSecret,
+		ghClient,
+		apiClient,
+		callbackHandler,
+		opts.CallbackURL,
+		opts.DefaultSandboxTemplate,
+		log,
+	)
 
 	// Webhook endpoint with rate limiting and content-type validation
 	r.Route("/webhook", func(r chi.Router) {
