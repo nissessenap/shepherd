@@ -94,10 +94,10 @@ func (c *APIClient) GetActiveTasks(ctx context.Context, repoLabel, issueLabel st
 func (c *APIClient) GetTask(ctx context.Context, taskID string) (*api.TaskResponse, error) {
 	reqURL := c.baseURL + "/api/v1/tasks/" + url.PathEscape(taskID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
-	req.Header.Set("Accept", "application/json")
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
+	req.Header.Set("Accept", "application/json")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

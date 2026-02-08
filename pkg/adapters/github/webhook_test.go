@@ -359,8 +359,10 @@ func TestWebhookHandler_ProcessTask(t *testing.T) {
 		event := createTestIssueCommentEvent("org", "repo", 42, "@shepherd fix this")
 		handler.processTask(context.Background(), event, "fix this")
 
+		// Should show generic error message, not internal API error details (security fix)
 		assert.Contains(t, postedComment, "unable to complete")
-		assert.Contains(t, postedComment, "repo.url is required")
+		assert.Contains(t, postedComment, "Failed to create task")
+		assert.NotContains(t, postedComment, "repo.url")
 	})
 }
 

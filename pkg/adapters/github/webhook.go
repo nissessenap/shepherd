@@ -225,7 +225,7 @@ func (h *WebhookHandler) processTask(ctx context.Context, event *gh.IssueComment
 	if err != nil {
 		h.log.Error(err, "failed to create task")
 		if commentErr := h.ghClient.PostComment(ctx, owner, repo, issueNumber,
-			formatFailed("Failed to create task: "+err.Error())); commentErr != nil {
+			formatFailed("Failed to create task")); commentErr != nil {
 			h.log.Error(commentErr, "failed to post error comment")
 		}
 		return

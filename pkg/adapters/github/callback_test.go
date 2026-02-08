@@ -399,7 +399,7 @@ func TestCallbackHandler_HandleCallback(t *testing.T) {
 		assert.Contains(t, postedComment, "https://github.com/recovered-org/recovered-repo/pull/100")
 	})
 
-	t.Run("failed error from details takes precedence", func(t *testing.T) {
+	t.Run("failed uses message not details", func(t *testing.T) {
 		var postedComment string
 		ghServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method == http.MethodPost {
@@ -422,12 +422,13 @@ func TestCallbackHandler_HandleCallback(t *testing.T) {
 		handler.handleCallback(context.Background(), &api.CallbackPayload{
 			TaskID:  "task-6",
 			Event:   api.EventFailed,
-			Message: "generic error",
-			Details: map[string]any{"error": "specific error from details"},
+			Message: "user-facing error message",
+			Details: map[string]any{"error": "internal error details"},
 		})
 
-		assert.Contains(t, postedComment, "specific error from details")
-		assert.NotContains(t, postedComment, "generic error")
+		// Should use Message field, not Details["error"] (security fix)
+		assert.Contains(t, postedComment, "user-facing error message")
+		assert.NotContains(t, postedComment, "internal error details")
 	})
 
 	t.Run("API fallback with malformed sourceURL does not post comment", func(t *testing.T) {

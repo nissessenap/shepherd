@@ -216,9 +216,11 @@ func (h *CallbackHandler) handleCallback(ctx context.Context, payload *api.Callb
 		}
 
 	case api.EventFailed:
+		// Use payload.Message (set by runner for user communication)
+		// Fall back to generic message if empty
 		errorMsg := payload.Message
-		if v, ok := payload.Details["error"].(string); ok && v != "" {
-			errorMsg = v
+		if errorMsg == "" {
+			errorMsg = "Task failed"
 		}
 		comment = formatFailed(errorMsg)
 
