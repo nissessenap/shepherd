@@ -3,7 +3,7 @@ IMG ?= shepherd:latest
 RUNNER_IMG ?= shepherd-runner:latest
 
 # Kind cluster name used by kind-create / kind-delete / ko-build-kind
-KIND_CLUSTER_NAME ?= shepherd
+KIND_CLUSTER_NAME ?= kind
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -119,8 +119,10 @@ build-smoke: ko-build-local ko-build-runner-local manifests kustomize ## Verify 
 
 .PHONY: ko-build-kind
 ko-build-kind: ko-build-local ko-build-runner-local ## Build images and load them into the kind cluster.
-	kind load docker-image "$(IMG)" --name "$(KIND_CLUSTER_NAME)"
-	kind load docker-image "$(RUNNER_IMG)" --name "$(KIND_CLUSTER_NAME)"
+	docker tag "$(IMG)" shepherd:latest
+	docker tag "$(RUNNER_IMG)" shepherd-runner:latest
+	kind load docker-image shepherd:latest --name "$(KIND_CLUSTER_NAME)"
+	kind load docker-image shepherd-runner:latest --name "$(KIND_CLUSTER_NAME)"
 
 ##@ Kind
 

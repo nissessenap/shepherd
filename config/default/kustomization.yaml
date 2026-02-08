@@ -35,13 +35,6 @@ resources:
 # be able to communicate with the Webhook Server.
 #- ../network-policy
 
-# Uncomment the patches line if you enable Metrics
-# [METRICS] The following patch will enable the metrics endpoint using HTTPS and the port :8443.
-# More info: https://book.kubebuilder.io/reference/metrics
-patches:
-- path: manager_metrics_patch.yaml
-  target:
-    kind: Deployment
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 images:

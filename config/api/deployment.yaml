@@ -25,12 +25,11 @@ spec:
       - name: api
         image: controller:latest
         command:
-        - /shepherd
+        - /ko-app/shepherd
         args:
         - api
-        - --public-addr=:8080
-        - --internal-addr=:8081
-        - --health-addr=:8082
+        - --listen-addr=:8080
+        - --internal-listen-addr=:8081
         env:
         - name: SHEPHERD_NAMESPACE
           valueFrom:
@@ -41,7 +40,7 @@ spec:
             secretKeyRef:
               name: shepherd-github-app
               key: app-id
-        - name: SHEPHERD_GITHUB_INSTALL_ID
+        - name: SHEPHERD_GITHUB_INSTALLATION_ID
           valueFrom:
             secretKeyRef:
               name: shepherd-github-app
@@ -55,9 +54,6 @@ spec:
         - name: internal
           containerPort: 8081
           protocol: TCP
-        - name: health
-          containerPort: 8082
-          protocol: TCP
         securityContext:
           readOnlyRootFilesystem: true
           allowPrivilegeEscalation: false
@@ -67,13 +63,13 @@ spec:
         livenessProbe:
           httpGet:
             path: /healthz
-            port: 8082
+            port: 8080
           initialDelaySeconds: 15
           periodSeconds: 20
         readinessProbe:
           httpGet:
             path: /readyz
-            port: 8082
+            port: 8080
           initialDelaySeconds: 5
           periodSeconds: 10
         resources:
