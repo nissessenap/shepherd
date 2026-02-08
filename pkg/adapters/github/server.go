@@ -51,7 +51,9 @@ func requireJSON(next http.Handler) http.Handler {
 		if r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodPatch {
 			ct := r.Header.Get("Content-Type")
 			if !strings.HasPrefix(ct, "application/json") {
-				http.Error(w, "Content-Type must be application/json", http.StatusUnsupportedMediaType)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnsupportedMediaType)
+				_, _ = w.Write([]byte(`{"error":"Content-Type must be application/json"}`))
 				return
 			}
 		}

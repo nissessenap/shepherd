@@ -56,20 +56,6 @@ func TestClient_PostComment(t *testing.T) {
 	assert.Equal(t, "Hello from Shepherd", receivedBody["body"])
 }
 
-func TestClient_GetIssue(t *testing.T) {
-	client, srv := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/v3/repos/myorg/myrepo/issues/7", r.URL.Path)
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"number": 7, "title": "Test issue", "body": "Issue body"}`))
-	}))
-	defer srv.Close()
-
-	issue, err := client.GetIssue(context.Background(), "myorg", "myrepo", 7)
-	require.NoError(t, err)
-	assert.Equal(t, 7, issue.GetNumber())
-	assert.Equal(t, "Test issue", issue.GetTitle())
-}
-
 func TestClient_ListIssueComments(t *testing.T) {
 	t.Run("single page", func(t *testing.T) {
 		client, srv := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

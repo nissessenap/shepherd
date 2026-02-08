@@ -65,15 +65,6 @@ func (c *Client) PostComment(ctx context.Context, owner, repo string, number int
 	return nil
 }
 
-// GetIssue retrieves an issue or PR by number.
-func (c *Client) GetIssue(ctx context.Context, owner, repo string, number int) (*gh.Issue, error) {
-	issue, _, err := c.gh.Issues.Get(ctx, owner, repo, number)
-	if err != nil {
-		return nil, fmt.Errorf("getting issue: %w", err)
-	}
-	return issue, nil
-}
-
 // ListIssueComments retrieves all comments on an issue.
 func (c *Client) ListIssueComments(ctx context.Context, owner, repo string, number int) ([]*gh.IssueComment, error) {
 	var allComments []*gh.IssueComment
