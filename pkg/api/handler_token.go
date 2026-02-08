@@ -18,6 +18,7 @@ package api
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -62,7 +63,7 @@ func (h *taskHandler) getTaskToken(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if h.githubKey == nil {
+		if h.githubClient == nil {
 			writeError(w, http.StatusServiceUnavailable, "GitHub App not configured", "")
 			return
 		}
@@ -84,35 +85,16 @@ func (h *taskHandler) getTaskToken(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Generate and return token
-		jwtToken, err := createJWT(h.githubAppID, h.githubKey)
+		token, expiresAt, err := h.githubClient.GetToken(r.Context(), task.Spec.Repo.URL)
 		if err != nil {
-			log.Error(err, "failed to create JWT", "taskID", taskID)
-			writeError(w, http.StatusInternalServerError, "failed to generate token", "")
-			return
-		}
-
-		repoName, err := parseRepoName(task.Spec.Repo.URL)
-		if err != nil {
-			log.Error(err, "failed to parse repo URL", "taskID", taskID, "url", task.Spec.Repo.URL)
-			writeError(w, http.StatusInternalServerError, "failed to parse repo URL", "")
-			return
-		}
-
-		httpClient := h.httpClient
-		if httpClient == nil {
-			httpClient = http.DefaultClient
-		}
-
-		token, expiresAt, err := exchangeToken(r.Context(), httpClient, h.githubAPIURL, h.githubInstallID, jwtToken, repoName)
-		if err != nil {
-			log.Error(err, "failed to exchange token", "taskID", taskID)
+			log.Error(err, "failed to get GitHub token", "taskID", taskID)
 			writeError(w, http.StatusBadGateway, "failed to generate GitHub token", "")
 			return
 		}
 
 		writeJSON(w, http.StatusOK, TokenResponse{
 			Token:     token,
-			ExpiresAt: expiresAt,
+			ExpiresAt: expiresAt.Format(time.RFC3339),
 		})
 		return
 	}

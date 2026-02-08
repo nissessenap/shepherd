@@ -17,64 +17,71 @@ limitations under the License.
 package api
 
 import (
-	"bytes"
 	"context"
-	"crypto/rsa"
-	"crypto/x509"
-	"encoding/json"
-	"encoding/pem"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
-	"github.com/golang-jwt/jwt/v5"
+	"github.com/bradleyfalzon/ghinstallation/v2"
+	gh "github.com/google/go-github/v75/github"
 )
 
-// readPrivateKey reads and parses an RSA private key from a PEM file.
-// Supports both PKCS1 and PKCS8 formats.
-func readPrivateKey(path string) (*rsa.PrivateKey, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("reading key file: %w", err)
-	}
-
-	block, _ := pem.Decode(data)
-	if block == nil {
-		return nil, fmt.Errorf("no PEM block found in %s", path)
-	}
-
-	key, err := x509.ParsePKCS1PrivateKey(block.Bytes)
-	if err != nil {
-		// Try PKCS8 format as fallback
-		parsed, err2 := x509.ParsePKCS8PrivateKey(block.Bytes)
-		if err2 != nil {
-			return nil, fmt.Errorf("parsing private key (PKCS1: %v; PKCS8: %w)", err, err2)
-		}
-		rsaKey, ok := parsed.(*rsa.PrivateKey)
-		if !ok {
-			return nil, fmt.Errorf("private key is not RSA")
-		}
-		return rsaKey, nil
-	}
-	return key, nil
+// TokenProvider generates GitHub installation tokens.
+// Implemented by GitHubClient; test code can substitute a mock.
+type TokenProvider interface {
+	GetToken(ctx context.Context, repoURL string) (token string, expiresAt time.Time, err error)
 }
 
-// createJWT creates a GitHub App JWT signed with the given RSA private key.
-func createJWT(appID int64, key *rsa.PrivateKey) (string, error) {
-	now := time.Now()
-	claims := jwt.RegisteredClaims{
-		Issuer:    strconv.FormatInt(appID, 10),
-		IssuedAt:  jwt.NewNumericDate(now.Add(-60 * time.Second)), // Clock drift tolerance
-		ExpiresAt: jwt.NewNumericDate(now.Add(10 * time.Minute)),  // GitHub max: 10 min
+// GitHubClient wraps GitHub API operations using ghinstallation.
+type GitHubClient struct {
+	appsTransport  *ghinstallation.AppsTransport
+	installationID int64
+}
+
+// NewGitHubClient creates a new GitHub client from app credentials.
+func NewGitHubClient(appID, installationID int64, privateKeyPath string) (*GitHubClient, error) {
+	keyData, err := os.ReadFile(privateKeyPath)
+	if err != nil {
+		return nil, fmt.Errorf("reading private key: %w", err)
 	}
 
-	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
-	return token.SignedString(key)
+	atr, err := ghinstallation.NewAppsTransport(http.DefaultTransport, appID, keyData)
+	if err != nil {
+		return nil, fmt.Errorf("creating apps transport: %w", err)
+	}
+
+	return &GitHubClient{
+		appsTransport:  atr,
+		installationID: installationID,
+	}, nil
+}
+
+// GetToken returns a token for the installation, optionally scoped to a repository.
+func (c *GitHubClient) GetToken(ctx context.Context, repoURL string) (string, time.Time, error) {
+	// Create a fresh transport per call to support per-repo scoping.
+	// NewFromAppsTransport is cheap (no network call).
+	tr := ghinstallation.NewFromAppsTransport(c.appsTransport, c.installationID)
+
+	if repoURL != "" {
+		repoName, err := parseRepoName(repoURL)
+		if err != nil {
+			return "", time.Time{}, err
+		}
+		tr.InstallationTokenOptions = &gh.InstallationTokenOptions{
+			Repositories: []string{repoName},
+		}
+	}
+
+	token, err := tr.Token(ctx)
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("getting installation token: %w", err)
+	}
+
+	// ghinstallation tokens are valid for 1 hour
+	return token, time.Now().Add(time.Hour), nil
 }
 
 // parseRepoName extracts "repo" from "https://github.com/org/repo.git" or "https://github.com/org/repo".
@@ -92,66 +99,4 @@ func parseRepoName(repoURL string) (string, error) {
 	}
 	name := parts[1]
 	return strings.TrimSuffix(name, ".git"), nil
-}
-
-// exchangeToken calls GitHub API to exchange a JWT for an installation access token.
-// If repoName is non-empty, the token is scoped to that repository only.
-func exchangeToken(ctx context.Context, httpClient *http.Client, baseURL string, installationID int64, jwtToken, repoName string) (string, string, error) {
-	endpoint := fmt.Sprintf("%s/app/installations/%d/access_tokens", baseURL, installationID)
-
-	var bodyReader io.Reader
-	if repoName != "" {
-		body := map[string]any{
-			"repositories": []string{repoName},
-		}
-		bodyBytes, err := json.Marshal(body)
-		if err != nil {
-			return "", "", fmt.Errorf("marshaling request body: %w", err)
-		}
-		bodyReader = bytes.NewReader(bodyBytes)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, bodyReader)
-	if err != nil {
-		return "", "", fmt.Errorf("creating request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+jwtToken)
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("User-Agent", "shepherd-api")
-	if bodyReader != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return "", "", fmt.Errorf("POST %s: %w", endpoint, err)
-	}
-	defer resp.Body.Close() //nolint:errcheck // Best-effort close on read-only response body
-
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return "", "", fmt.Errorf("reading response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusCreated {
-		// Truncate error body to prevent excessive log sizes
-		errBody := string(respBody)
-		if len(errBody) > 200 {
-			errBody = errBody[:200] + "..."
-		}
-		return "", "", fmt.Errorf("GitHub API returned %d: %s", resp.StatusCode, errBody)
-	}
-
-	var result struct {
-		Token     string `json:"token"`
-		ExpiresAt string `json:"expires_at"`
-	}
-	if err := json.Unmarshal(respBody, &result); err != nil {
-		return "", "", fmt.Errorf("parsing response: %w", err)
-	}
-	if result.Token == "" {
-		return "", "", fmt.Errorf("empty token in response")
-	}
-
-	return result.Token, result.ExpiresAt, nil
 }

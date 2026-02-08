@@ -29,7 +29,6 @@ type APICmd struct {
 	Namespace            string `help:"Namespace for task creation" default:"shepherd" env:"SHEPHERD_NAMESPACE"`
 	GithubAppID          int64  `help:"GitHub Runner App ID" env:"SHEPHERD_GITHUB_APP_ID"`
 	GithubInstallationID int64  `help:"GitHub Installation ID" env:"SHEPHERD_GITHUB_INSTALLATION_ID"`
-	GithubAPIURL         string `help:"GitHub API URL" default:"https://api.github.com" env:"SHEPHERD_GITHUB_API_URL"`
 	GithubPrivateKeyPath string `help:"Path to Runner App private key" env:"SHEPHERD_GITHUB_PRIVATE_KEY_PATH"`
 }
 
@@ -48,7 +47,6 @@ func (c *APICmd) Run(_ *CLI) error {
 		Namespace:            c.Namespace,
 		GithubAppID:          c.GithubAppID,
 		GithubInstallationID: c.GithubInstallationID,
-		GithubAPIURL:         c.GithubAPIURL,
 		GithubPrivateKeyPath: c.GithubPrivateKeyPath,
 	})
 }

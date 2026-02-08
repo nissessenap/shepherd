@@ -18,14 +18,11 @@ package api
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/rsa"
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
-	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
@@ -39,44 +36,20 @@ import (
 	toolkitv1alpha1 "github.com/NissesSenap/shepherd/api/v1alpha1"
 )
 
-// testKey generates a throwaway RSA key for tests.
-func testKey(t *testing.T) *rsa.PrivateKey {
-	t.Helper()
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-	return key
+// mockTokenProvider implements TokenProvider for tests.
+type mockTokenProvider struct {
+	token     string
+	expiresAt time.Time
+	err       error
+	lastRepo  string // captures the repoURL passed to GetToken
 }
 
-// mockGitHubTokenServer creates a test server that mimics the GitHub installation token endpoint.
-func mockGitHubTokenServer(t *testing.T) *httptest.Server {
-	t.Helper()
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Verify it's the right endpoint pattern
-		if !strings.Contains(r.URL.Path, "/app/installations/") || !strings.HasSuffix(r.URL.Path, "/access_tokens") {
-			http.Error(w, "unexpected path", http.StatusNotFound)
-			return
-		}
-
-		// Verify auth header
-		authHeader := r.Header.Get("Authorization")
-		if !strings.HasPrefix(authHeader, "Bearer ") {
-			http.Error(w, "missing auth", http.StatusUnauthorized)
-			return
-		}
-
-		// Check if repo scoping was requested
-		var reqBody map[string]any
-		if r.Body != nil {
-			_ = json.NewDecoder(r.Body).Decode(&reqBody)
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"token":"ghs_test_token_123","expires_at":"2026-02-02T12:00:00Z"}`))
-	}))
+func (m *mockTokenProvider) GetToken(_ context.Context, repoURL string) (string, time.Time, error) {
+	m.lastRepo = repoURL
+	return m.token, m.expiresAt, m.err
 }
 
-func newTokenTestHandler(t *testing.T, objs ...metav1.Object) *taskHandler {
+func newTokenTestHandler(t *testing.T, objs ...metav1.Object) (*taskHandler, *mockTokenProvider) {
 	t.Helper()
 
 	s := testScheme()
@@ -86,19 +59,17 @@ func newTokenTestHandler(t *testing.T, objs ...metav1.Object) *taskHandler {
 	}
 	c := builder.Build()
 
-	ghServer := mockGitHubTokenServer(t)
-	t.Cleanup(ghServer.Close)
+	mock := &mockTokenProvider{
+		token:     "ghs_test_token_123",
+		expiresAt: time.Date(2026, 2, 2, 12, 0, 0, 0, time.UTC),
+	}
 
 	return &taskHandler{
-		client:          c,
-		namespace:       "default",
-		callback:        newCallbackSender(""),
-		githubAppID:     12345,
-		githubInstallID: 67890,
-		githubAPIURL:    ghServer.URL,
-		githubKey:       testKey(t),
-		httpClient:      ghServer.Client(),
-	}
+		client:       c,
+		namespace:    "default",
+		callback:     newCallbackSender(""),
+		githubClient: mock,
+	}, mock
 }
 
 func TestGetTaskToken_ReturnsToken(t *testing.T) {
@@ -114,7 +85,7 @@ func TestGetTaskToken_ReturnsToken(t *testing.T) {
 		},
 	}
 
-	h := newTokenTestHandler(t, task)
+	h, _ := newTokenTestHandler(t, task)
 	r := chi.NewRouter()
 	r.Get("/api/v1/tasks/{taskID}/token", h.getTaskToken)
 
@@ -129,7 +100,7 @@ func TestGetTaskToken_ReturnsToken(t *testing.T) {
 }
 
 func TestGetTaskToken_NotFound(t *testing.T) {
-	h := newTokenTestHandler(t)
+	h, _ := newTokenTestHandler(t)
 	r := chi.NewRouter()
 	r.Get("/api/v1/tasks/{taskID}/token", h.getTaskToken)
 
@@ -163,7 +134,7 @@ func TestGetTaskToken_TerminalTaskRejected(t *testing.T) {
 		},
 	}
 
-	h := newTokenTestHandler(t, task)
+	h, _ := newTokenTestHandler(t, task)
 	r := chi.NewRouter()
 	r.Get("/api/v1/tasks/{taskID}/token", h.getTaskToken)
 
@@ -201,13 +172,6 @@ func TestGetTaskToken_NoGitHubConfig(t *testing.T) {
 }
 
 func TestGetTaskToken_GitHubAPIError(t *testing.T) {
-	// Mock server that returns an error
-	failServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte(`{"message":"internal error"}`))
-	}))
-	defer failServer.Close()
-
 	task := &toolkitv1alpha1.AgentTask{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "task-ghfail",
@@ -224,14 +188,12 @@ func TestGetTaskToken_GitHubAPIError(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&toolkitv1alpha1.AgentTask{}).WithObjects(task).Build()
 
 	h := &taskHandler{
-		client:          c,
-		namespace:       "default",
-		callback:        newCallbackSender(""),
-		githubAppID:     12345,
-		githubInstallID: 67890,
-		githubAPIURL:    failServer.URL,
-		githubKey:       testKey(t),
-		httpClient:      failServer.Client(),
+		client:    c,
+		namespace: "default",
+		callback:  newCallbackSender(""),
+		githubClient: &mockTokenProvider{
+			err: fmt.Errorf("GitHub API returned 500"),
+		},
 	}
 	r := chi.NewRouter()
 	r.Get("/api/v1/tasks/{taskID}/token", h.getTaskToken)
@@ -257,7 +219,7 @@ func TestGetTaskToken_SetsTokenIssued(t *testing.T) {
 		},
 	}
 
-	h := newTokenTestHandler(t, task)
+	h, _ := newTokenTestHandler(t, task)
 	r := chi.NewRouter()
 	r.Get("/api/v1/tasks/{taskID}/token", h.getTaskToken)
 
@@ -287,7 +249,7 @@ func TestGetTaskToken_RejectsSecondFetch(t *testing.T) {
 		},
 	}
 
-	h := newTokenTestHandler(t, task)
+	h, _ := newTokenTestHandler(t, task)
 	r := chi.NewRouter()
 	r.Get("/api/v1/tasks/{taskID}/token", h.getTaskToken)
 
@@ -300,16 +262,6 @@ func TestGetTaskToken_RejectsSecondFetch(t *testing.T) {
 }
 
 func TestGetTaskToken_ScopesToRepo(t *testing.T) {
-	var receivedBody map[string]any
-
-	scopeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewDecoder(r.Body).Decode(&receivedBody)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"token":"ghs_scoped","expires_at":"2026-02-02T12:00:00Z"}`))
-	}))
-	defer scopeServer.Close()
-
 	task := &toolkitv1alpha1.AgentTask{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "task-scope",
@@ -322,19 +274,7 @@ func TestGetTaskToken_ScopesToRepo(t *testing.T) {
 		},
 	}
 
-	s := testScheme()
-	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&toolkitv1alpha1.AgentTask{}).WithObjects(task).Build()
-
-	h := &taskHandler{
-		client:          c,
-		namespace:       "default",
-		callback:        newCallbackSender(""),
-		githubAppID:     12345,
-		githubInstallID: 67890,
-		githubAPIURL:    scopeServer.URL,
-		githubKey:       testKey(t),
-		httpClient:      scopeServer.Client(),
-	}
+	h, mock := newTokenTestHandler(t, task)
 	r := chi.NewRouter()
 	r.Get("/api/v1/tasks/{taskID}/token", h.getTaskToken)
 
@@ -342,11 +282,8 @@ func TestGetTaskToken_ScopesToRepo(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code)
 
-	// Verify the request scoped to the repo (stripped .git suffix)
-	repos, ok := receivedBody["repositories"].([]any)
-	require.True(t, ok, "expected repositories array in request body")
-	require.Len(t, repos, 1)
-	assert.Equal(t, "myrepo", fmt.Sprintf("%v", repos[0]))
+	// Verify the repo URL was passed to the mock
+	assert.Equal(t, "https://github.com/myorg/myrepo.git", mock.lastRepo)
 }
 
 func TestGetTaskToken_RetriesOnConflict(t *testing.T) {
@@ -363,8 +300,6 @@ func TestGetTaskToken_RetriesOnConflict(t *testing.T) {
 	}
 
 	s := testScheme()
-	ghServer := mockGitHubTokenServer(t)
-	defer ghServer.Close()
 
 	// Track number of Status().Update() attempts
 	updateAttempts := 0
@@ -390,15 +325,16 @@ func TestGetTaskToken_RetriesOnConflict(t *testing.T) {
 		}).
 		Build()
 
+	mock := &mockTokenProvider{
+		token:     "ghs_test_token_123",
+		expiresAt: time.Date(2026, 2, 2, 12, 0, 0, 0, time.UTC),
+	}
+
 	h := &taskHandler{
-		client:          c,
-		namespace:       "default",
-		callback:        newCallbackSender(""),
-		githubAppID:     12345,
-		githubInstallID: 67890,
-		githubAPIURL:    ghServer.URL,
-		githubKey:       testKey(t),
-		httpClient:      ghServer.Client(),
+		client:       c,
+		namespace:    "default",
+		callback:     newCallbackSender(""),
+		githubClient: mock,
 	}
 	r := chi.NewRouter()
 	r.Get("/api/v1/tasks/{taskID}/token", h.getTaskToken)
@@ -428,8 +364,6 @@ func TestGetTaskToken_ExhaustsRetriesOnPersistentConflict(t *testing.T) {
 	}
 
 	s := testScheme()
-	ghServer := mockGitHubTokenServer(t)
-	defer ghServer.Close()
 
 	// Track number of Status().Update() attempts
 	updateAttempts := 0
@@ -451,15 +385,16 @@ func TestGetTaskToken_ExhaustsRetriesOnPersistentConflict(t *testing.T) {
 		}).
 		Build()
 
+	mock := &mockTokenProvider{
+		token:     "ghs_test_token_123",
+		expiresAt: time.Date(2026, 2, 2, 12, 0, 0, 0, time.UTC),
+	}
+
 	h := &taskHandler{
-		client:          c,
-		namespace:       "default",
-		callback:        newCallbackSender(""),
-		githubAppID:     12345,
-		githubInstallID: 67890,
-		githubAPIURL:    ghServer.URL,
-		githubKey:       testKey(t),
-		httpClient:      ghServer.Client(),
+		client:       c,
+		namespace:    "default",
+		callback:     newCallbackSender(""),
+		githubClient: mock,
 	}
 	r := chi.NewRouter()
 	r.Get("/api/v1/tasks/{taskID}/token", h.getTaskToken)
