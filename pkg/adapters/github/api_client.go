@@ -29,6 +29,8 @@ import (
 	"github.com/NissesSenap/shepherd/pkg/api"
 )
 
+const unknownErrorMessage = "unknown error"
+
 // APIClient communicates with the Shepherd API.
 type APIClient struct {
 	baseURL    string
@@ -77,7 +79,16 @@ func (c *APIClient) GetActiveTasks(ctx context.Context, repoLabel, issueLabel st
 
 	if resp.StatusCode != http.StatusOK {
 		var errResp api.ErrorResponse
-		_ = json.Unmarshal(body, &errResp)
+		if err := json.Unmarshal(body, &errResp); err != nil || errResp.Error == "" {
+			msg := string(bytes.TrimSpace(body))
+			if len(msg) > 1024 {
+				msg = msg[:1024]
+			}
+			if msg == "" {
+				msg = unknownErrorMessage
+			}
+			return nil, fmt.Errorf("API error %d: %s", resp.StatusCode, msg)
+		}
 		return nil, fmt.Errorf("API error %d: %s", resp.StatusCode, errResp.Error)
 	}
 
@@ -112,7 +123,16 @@ func (c *APIClient) GetTask(ctx context.Context, taskID string) (*api.TaskRespon
 
 	if resp.StatusCode != http.StatusOK {
 		var errResp api.ErrorResponse
-		_ = json.Unmarshal(body, &errResp)
+		if err := json.Unmarshal(body, &errResp); err != nil || errResp.Error == "" {
+			msg := string(bytes.TrimSpace(body))
+			if len(msg) > 1024 {
+				msg = msg[:1024]
+			}
+			if msg == "" {
+				msg = unknownErrorMessage
+			}
+			return nil, fmt.Errorf("API error %d: %s", resp.StatusCode, msg)
+		}
 		return nil, fmt.Errorf("API error %d: %s", resp.StatusCode, errResp.Error)
 	}
 
@@ -150,7 +170,16 @@ func (c *APIClient) CreateTask(ctx context.Context, createReq api.CreateTaskRequ
 
 	if resp.StatusCode != http.StatusCreated {
 		var errResp api.ErrorResponse
-		_ = json.Unmarshal(respBody, &errResp)
+		if err := json.Unmarshal(respBody, &errResp); err != nil || errResp.Error == "" {
+			msg := string(bytes.TrimSpace(respBody))
+			if len(msg) > 1024 {
+				msg = msg[:1024]
+			}
+			if msg == "" {
+				msg = unknownErrorMessage
+			}
+			return nil, fmt.Errorf("API error %d: %s", resp.StatusCode, msg)
+		}
 		return nil, fmt.Errorf("API error %d: %s", resp.StatusCode, errResp.Error)
 	}
 

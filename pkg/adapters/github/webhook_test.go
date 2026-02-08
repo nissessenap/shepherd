@@ -163,7 +163,7 @@ func TestWebhookHandler_BuildContext(t *testing.T) {
 
 	t.Run("truncates at maxContextSize", func(t *testing.T) {
 		// Create many large comments that will exceed maxContextSize
-		var comments []string
+		comments := make([]string, 0, 10)
 		for i := range 10 {
 			largeBody := make([]byte, 200000)
 			for j := range largeBody {

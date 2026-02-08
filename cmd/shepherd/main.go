@@ -62,6 +62,9 @@ func (c *GitHubCmd) Run(_ *CLI) error {
 	if c.GithubPrivateKeyPath == "" {
 		return fmt.Errorf("github-private-key-path is required")
 	}
+	if c.CallbackURL == "" {
+		return fmt.Errorf("callback-url is required")
+	}
 
 	return github.Run(github.Options{
 		ListenAddr:             c.ListenAddr,
