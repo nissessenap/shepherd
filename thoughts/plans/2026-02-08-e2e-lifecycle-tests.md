@@ -39,8 +39,9 @@ After this plan:
 2. `make test-e2e-interactive` does the same but keeps the cluster alive
 3. Tests validate: AgentTask creation -> SandboxClaim -> Sandbox Ready -> runner assignment -> data fetch -> status report -> Succeeded condition -> Notified condition -> SandboxClaim cleanup
 4. Runner stub exercises the full internal API (data + status endpoints)
+5. GitHub Actions runs e2e tests on every PR and push to main via `.github/workflows/e2e.yml`
 
-**Verification:** `make test-e2e` passes end-to-end with no manual intervention.
+**Verification:** `make test-e2e` passes end-to-end with no manual intervention, both locally and in CI.
 
 ## What We're NOT Doing
 
@@ -53,7 +54,7 @@ After this plan:
 
 ## Implementation Approach
 
-Fix broken infrastructure first, then add agent-sandbox support, extend the runner stub, and finally add the lifecycle test. Each phase produces independently testable changes.
+Fix broken infrastructure first, then add agent-sandbox support, extend the runner stub, add the lifecycle test, and wire it all into CI via GitHub Actions. Each phase produces independently testable changes.
 
 ---
 
@@ -687,7 +688,85 @@ if err == nil {
 - [ ] Verify task shows `Succeeded` in STATUS column
 - [ ] Verify no orphaned SandboxClaims remain
 
-**Implementation Note**: After completing this phase and all automated verification passes, pause here for manual confirmation that the full lifecycle works correctly before marking the plan as complete.
+**Implementation Note**: After completing this phase and all automated verification passes, pause here for manual confirmation that the full lifecycle works correctly before proceeding to Phase 5.
+
+---
+
+## Phase 5: GitHub Actions E2E Workflow
+
+### Overview
+Add a GHA workflow that runs e2e tests on PRs and pushes to main. Currently only unit tests (`test.yml`) and linting (`lint.yml`) run in CI — there is no CI coverage for e2e at all.
+
+### Current State:
+- `.github/workflows/test.yml` — runs `make test` (unit tests) on PRs
+- `.github/workflows/lint.yml` — runs golangci-lint on PRs
+- No e2e workflow exists
+
+### Changes Required:
+
+#### 1. Create e2e workflow
+**File**: `.github/workflows/e2e.yml` (new file)
+**Changes**: New workflow that installs Kind, sets up Go, and runs `make test-e2e`.
+
+Key design decisions:
+- **Separate workflow file** rather than adding a job to `test.yml` — e2e is fundamentally different (needs Kind, takes ~10 min vs ~1 min for unit tests)
+- **Trigger on PRs and push to main** — catch regressions on merge too
+- **Install Kind explicitly** — not pre-installed on `ubuntu-latest` runners
+- **kubectl is pre-installed** on GHA `ubuntu-latest` runners
+- **Ko + kustomize + controller-gen** are installed by the Makefile via `go install`, no extra GHA steps needed
+- **cert-manager** is installed by the test suite's `BeforeSuite` (existing behavior)
+
+```yaml
+name: E2E Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  e2e:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Install Kind
+        run: |
+          KIND_VERSION=v0.28.0
+          curl -Lo ./kind "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+
+      - name: Run E2E Tests
+        run: make test-e2e
+```
+
+Notes:
+- `timeout-minutes: 20` gives headroom beyond the `make test-e2e` internal 10m go test timeout — accounts for Kind creation, image builds, agent-sandbox install, cert-manager install
+- Kind version pinned to `v0.28.0` — update as needed
+- `make test-e2e` handles the full lifecycle: `kind-create -> ko-build-kind -> install-agent-sandbox -> install -> deploy-test -> deploy-e2e-fixtures -> go test -> kind-delete` (as updated in Phase 2)
+- Go module cache is handled by `actions/setup-go` automatically (caches based on `go.sum`)
+
+### Success Criteria:
+
+#### Automated Verification:
+- [ ] Push a PR branch and verify the `E2E Tests` workflow triggers and appears in the checks list
+- [ ] Workflow completes successfully (green check)
+- [ ] Workflow also triggers on push to main
+
+#### Manual Verification:
+- [ ] Verify the workflow log shows all lifecycle stages: Kind creation, image build/load, agent-sandbox install, cert-manager install, shepherd deploy, test execution, Kind deletion
+- [ ] Verify workflow fails correctly when e2e tests fail (push a deliberately broken change and confirm red check)
+
+**Implementation Note**: This phase can be implemented in parallel with other phases since it only depends on the Makefile targets being correct. However, the workflow will only pass once Phases 1-4 are also complete on the same branch.
 
 ---
 
@@ -700,6 +779,10 @@ if err == nil {
 ### E2E Tests:
 - **Existing**: Controller startup, metrics endpoint (unchanged)
 - **New**: Full AgentTask lifecycle (create -> SandboxClaim -> Running -> Succeeded -> Notified -> cleanup)
+
+### CI:
+- **New**: `.github/workflows/e2e.yml` runs `make test-e2e` on PRs and pushes to main (Phase 5)
+- **Existing**: `.github/workflows/test.yml` runs unit tests, `.github/workflows/lint.yml` runs linting (unchanged)
 
 ### Manual Testing Steps:
 1. `make test-e2e-interactive` — full automated flow
@@ -729,3 +812,4 @@ if err == nil {
 - Runner stub: `cmd/shepherd-runner/main.go`
 - Test overlay: `config/test/kustomization.yaml`
 - Controller RBAC: `config/rbac/role.yaml`
+- Existing CI workflows: `.github/workflows/test.yml`, `.github/workflows/lint.yml`
