@@ -17,7 +17,6 @@ limitations under the License.
 package api
 
 import (
-	"crypto/rsa"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -56,14 +55,10 @@ func validateLabelValue(value string) error {
 
 // taskHandler holds dependencies for task endpoints.
 type taskHandler struct {
-	client          client.Client
-	namespace       string
-	callback        *callbackSender
-	githubAppID     int64
-	githubInstallID int64
-	githubAPIURL    string
-	githubKey       *rsa.PrivateKey // Loaded once at startup
-	httpClient      *http.Client    // For GitHub API calls; defaults to http.DefaultClient
+	client       client.Client
+	namespace    string
+	callback     *callbackSender
+	githubClient TokenProvider // nil if GitHub App not configured
 }
 
 // createTask handles POST /api/v1/tasks.

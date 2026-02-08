@@ -18,7 +18,6 @@ package api
 
 import (
 	"context"
-	"crypto/rsa"
 	"fmt"
 	"net/http"
 	"os"
@@ -55,7 +54,6 @@ type Options struct {
 	Namespace            string
 	GithubAppID          int64
 	GithubInstallationID int64
-	GithubAPIURL         string
 	GithubPrivateKeyPath string
 }
 
@@ -95,26 +93,22 @@ func Run(opts Options) error {
 
 	cb := newCallbackSender(opts.CallbackSecret)
 
-	// Load GitHub App private key if configured
-	var githubKey *rsa.PrivateKey
+	// Create GitHub client if configured
+	var githubClient *GitHubClient
 	if opts.GithubPrivateKeyPath != "" {
 		var err error
-		githubKey, err = readPrivateKey(opts.GithubPrivateKeyPath)
+		githubClient, err = NewGitHubClient(opts.GithubAppID, opts.GithubInstallationID, opts.GithubPrivateKeyPath)
 		if err != nil {
-			return fmt.Errorf("reading GitHub private key: %w", err)
+			return fmt.Errorf("creating github client: %w", err)
 		}
 		log.Info("GitHub App configured", "appID", opts.GithubAppID)
 	}
 
 	handler := &taskHandler{
-		client:          k8sClient,
-		namespace:       opts.Namespace,
-		callback:        cb,
-		githubAppID:     opts.GithubAppID,
-		githubInstallID: opts.GithubInstallationID,
-		githubAPIURL:    opts.GithubAPIURL,
-		githubKey:       githubKey,
-		httpClient:      &http.Client{Timeout: 30 * time.Second},
+		client:       k8sClient,
+		namespace:    opts.Namespace,
+		callback:     cb,
+		githubClient: githubClient,
 	}
 
 	// Health tracking for watcher and cache goroutines

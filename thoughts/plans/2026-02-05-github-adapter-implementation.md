@@ -1922,9 +1922,9 @@ Update `pkg/api/handler_token_test.go` to use the new client pattern.
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `make test` passes all tests (including updated token tests)
-- [ ] `go vet ./...` clean
-- [ ] `make lint-fix` passes
+- [x] `make test` passes all tests (including updated token tests)
+- [x] `go vet ./...` clean
+- [x] `make lint-fix` passes
 
 #### Manual Verification:
 - [ ] Token endpoint still works with real GitHub App
