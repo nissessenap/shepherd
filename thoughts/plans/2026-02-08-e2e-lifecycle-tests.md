@@ -118,7 +118,7 @@ if v, ok := os.LookupEnv("KIND_CLUSTER_NAME"); ok {
 
 #### Automated Verification
 
-- [ ] `go vet ./test/...` passes
+- [x] `go vet ./test/...` passes
 - [ ] `make test-e2e-interactive` runs the two existing tests (controller startup + metrics) successfully
 
 #### Manual Verification
