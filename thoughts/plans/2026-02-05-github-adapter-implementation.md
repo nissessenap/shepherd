@@ -524,9 +524,9 @@ func TestCommentTemplates(t *testing.T) {
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `make test` passes (new tests in pkg/adapters/github/)
-- [ ] `go vet ./...` clean
-- [ ] `make lint-fix` passes
+- [x] `make test` passes (new tests in pkg/adapters/github/)
+- [x] `go vet ./...` clean
+- [x] `make lint-fix` passes
 
 #### Manual Verification:
 - [ ] Client can authenticate with a real GitHub App (integration test)
