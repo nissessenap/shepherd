@@ -293,11 +293,11 @@ Add import for the github package at top of file.
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `go get` adds dependencies to go.mod/go.sum
-- [ ] `make build` compiles successfully
-- [ ] `go vet ./...` clean
-- [ ] `make lint-fix` passes
-- [ ] `shepherd github --help` shows all flags
+- [x] `go get` adds dependencies to go.mod/go.sum
+- [x] `make build` compiles successfully
+- [x] `go vet ./...` clean
+- [x] `make lint-fix` passes
+- [x] `shepherd github --help` shows all flags
 
 #### Manual Verification:
 - [ ] `shepherd github` with required flags starts and responds to `/healthz`

@@ -24,6 +24,8 @@ import (
 	zapraw "go.uber.org/zap/zapcore"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+
+	github "github.com/NissesSenap/shepherd/pkg/adapters/github"
 )
 
 type CLI struct {
@@ -36,14 +38,40 @@ type CLI struct {
 }
 
 type GitHubCmd struct {
-	ListenAddr    string `help:"GitHub adapter listen address" default:":8082" env:"SHEPHERD_GITHUB_ADDR"`
-	WebhookSecret string `help:"GitHub webhook secret" env:"SHEPHERD_GITHUB_WEBHOOK_SECRET"`
-	AppID         int64  `help:"GitHub App ID" env:"SHEPHERD_GITHUB_APP_ID"`
-	PrivateKey    string `help:"Path to GitHub App private key" env:"SHEPHERD_GITHUB_PRIVATE_KEY"`
+	ListenAddr           string `help:"GitHub adapter listen address" default:":8082" env:"SHEPHERD_GITHUB_ADDR"`
+	WebhookSecret        string `help:"GitHub webhook secret" env:"SHEPHERD_GITHUB_WEBHOOK_SECRET"`
+	GithubAppID          int64  `help:"GitHub App ID" env:"SHEPHERD_GITHUB_APP_ID"`
+	GithubInstallationID int64  `help:"GitHub Installation ID" env:"SHEPHERD_GITHUB_INSTALLATION_ID"`
+	GithubPrivateKeyPath string `help:"Path to GitHub App private key" env:"SHEPHERD_GITHUB_PRIVATE_KEY_PATH"`
+	APIURL               string `help:"Shepherd API URL" required:"" env:"SHEPHERD_API_URL"`
+	CallbackSecret       string `help:"Shared secret for callback verification" env:"SHEPHERD_CALLBACK_SECRET"`
+	CallbackURL          string `help:"Callback URL for API to call back" env:"SHEPHERD_CALLBACK_URL"`
 }
 
-func (c *GitHubCmd) Run(globals *CLI) error {
-	return fmt.Errorf("github adapter not implemented yet")
+func (c *GitHubCmd) Run(_ *CLI) error {
+	if c.WebhookSecret == "" {
+		return fmt.Errorf("webhook-secret is required")
+	}
+	if c.GithubAppID == 0 {
+		return fmt.Errorf("github-app-id is required")
+	}
+	if c.GithubInstallationID == 0 {
+		return fmt.Errorf("github-installation-id is required")
+	}
+	if c.GithubPrivateKeyPath == "" {
+		return fmt.Errorf("github-private-key-path is required")
+	}
+
+	return github.Run(github.Options{
+		ListenAddr:     c.ListenAddr,
+		WebhookSecret:  c.WebhookSecret,
+		AppID:          c.GithubAppID,
+		InstallationID: c.GithubInstallationID,
+		PrivateKeyPath: c.GithubPrivateKeyPath,
+		APIURL:         c.APIURL,
+		CallbackSecret: c.CallbackSecret,
+		CallbackURL:    c.CallbackURL,
+	})
 }
 
 func main() {
