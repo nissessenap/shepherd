@@ -22,12 +22,14 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/httprate"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
@@ -43,6 +45,20 @@ type Options struct {
 	CallbackURL    string // URL for API to call back (e.g., "http://github-adapter:8082/callback")
 }
 
+// requireJSON validates Content-Type on POST/PUT/PATCH requests.
+func requireJSON(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodPatch {
+			ct := r.Header.Get("Content-Type")
+			if !strings.HasPrefix(ct, "application/json") {
+				http.Error(w, "Content-Type must be application/json", http.StatusUnsupportedMediaType)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // Run starts the GitHub adapter server.
 func Run(opts Options) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -50,7 +66,12 @@ func Run(opts Options) error {
 
 	log := ctrl.Log.WithName("github-adapter")
 
-	// TODO: Phase 2 - Create GitHub client
+	// Create GitHub client
+	ghClient, err := NewClient(opts.AppID, opts.InstallationID, opts.PrivateKeyPath)
+	if err != nil {
+		return fmt.Errorf("creating github client: %w", err)
+	}
+
 	// TODO: Phase 4 - Create API client
 
 	// Health tracking
@@ -78,12 +99,16 @@ func Run(opts Options) error {
 		_, _ = w.Write([]byte("ok"))
 	})
 
-	// TODO: Phase 3 - Webhook endpoint (rate-limited, with requireJSON)
-	// r.Route("/webhook", func(r chi.Router) {
-	//     r.Use(httprate.LimitByIP(100, time.Minute))
-	//     r.Use(requireJSON)
-	//     r.Post("/", webhookHandler.ServeHTTP)
-	// })
+	// Webhook handler
+	webhookHandler := NewWebhookHandler(opts.WebhookSecret, ghClient, log)
+
+	// Webhook endpoint with rate limiting and content-type validation
+	r.Route("/webhook", func(r chi.Router) {
+		r.Use(httprate.LimitByIP(100, time.Minute))
+		r.Use(requireJSON)
+		r.Post("/", webhookHandler.ServeHTTP)
+	})
+
 	// TODO: Phase 5 - Callback endpoint (with requireJSON)
 	// r.With(requireJSON).Post("/callback", callbackHandler.ServeHTTP)
 
