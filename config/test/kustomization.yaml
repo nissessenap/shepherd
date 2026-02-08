@@ -1,0 +1,37 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+- ../default
+
+# imagePullPolicy: IfNotPresent — kind loads images locally, no registry to pull from.
+
+# Strip GitHub App secrets from API deployment for local/e2e testing.
+# The API starts fine without GitHub config (all-or-nothing flag group).
+# Env indices: 0=SHEPHERD_NAMESPACE, 1=APP_ID, 2=INSTALL_ID, 3=KEY_PATH.
+# Remove highest index first to keep offsets stable.
+patches:
+- patch: |-
+    - op: add
+      path: /spec/template/spec/containers/0/imagePullPolicy
+      value: IfNotPresent
+  target:
+    kind: Deployment
+- patch: |-
+    - op: remove
+      path: /spec/template/spec/volumes
+    - op: remove
+      path: /spec/template/spec/containers/0/volumeMounts
+    - op: remove
+      path: /spec/template/spec/containers/0/env/3
+    - op: remove
+      path: /spec/template/spec/containers/0/env/2
+    - op: remove
+      path: /spec/template/spec/containers/0/env/1
+  target:
+    kind: Deployment
+    name: shepherd-shepherd-api
+images:
+- name: controller
+  newName: shepherd
+  newTag: latest

@@ -59,16 +59,13 @@ spec:
           type: RuntimeDefault
       containers:
       - command:
-        - /shepherd
+        - /ko-app/shepherd
         args:
           - operator
           - --leader-election
           - --health-addr=:8082
           - --metrics-addr=:9090
-          - --allowed-runner-image=$(SHEPHERD_RUNNER_IMAGE)
-        env:
-        - name: SHEPHERD_RUNNER_IMAGE
-          value: shepherd-runner:latest
+          - --apiurl=http://shepherd-shepherd-api.shepherd-system.svc.cluster.local:8081
         image: controller:latest
         name: manager
         ports: []
