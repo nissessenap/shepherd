@@ -137,7 +137,7 @@ func TestCallbackHandler_ServeHTTP(t *testing.T) {
 
 		payload := api.CallbackPayload{
 			TaskID:  "task-123",
-			Event:   "completed",
+			Event:   api.EventCompleted,
 			Message: "Task completed",
 			Details: map[string]any{"prURL": "https://github.com/org/repo/pull/99"},
 		}
@@ -232,7 +232,7 @@ func TestCallbackHandler_HandleCallback(t *testing.T) {
 
 		handler.handleCallback(context.Background(), &api.CallbackPayload{
 			TaskID:  "task-1",
-			Event:   "completed",
+			Event:   api.EventCompleted,
 			Details: map[string]any{"prURL": "https://github.com/org/repo/pull/5"},
 		})
 
@@ -262,7 +262,7 @@ func TestCallbackHandler_HandleCallback(t *testing.T) {
 
 		handler.handleCallback(context.Background(), &api.CallbackPayload{
 			TaskID: "task-2",
-			Event:  "completed",
+			Event:  api.EventCompleted,
 		})
 
 		assert.Contains(t, postedComment, "completed the task successfully")
@@ -290,7 +290,7 @@ func TestCallbackHandler_HandleCallback(t *testing.T) {
 
 		handler.handleCallback(context.Background(), &api.CallbackPayload{
 			TaskID:  "task-3",
-			Event:   "failed",
+			Event:   api.EventFailed,
 			Message: "Build failed",
 		})
 
@@ -322,7 +322,7 @@ func TestCallbackHandler_HandleCallback(t *testing.T) {
 
 		handler.handleCallback(context.Background(), &api.CallbackPayload{
 			TaskID: "task-4",
-			Event:  "started",
+			Event:  api.EventStarted,
 		})
 
 		assert.False(t, commentPosted)
@@ -353,7 +353,7 @@ func TestCallbackHandler_HandleCallback(t *testing.T) {
 
 		handler.handleCallback(context.Background(), &api.CallbackPayload{
 			TaskID:  "task-5",
-			Event:   "progress",
+			Event:   api.EventProgress,
 			Message: "50% done",
 		})
 
@@ -392,7 +392,7 @@ func TestCallbackHandler_HandleCallback(t *testing.T) {
 		// Don't register task - simulate restart
 		handler.handleCallback(context.Background(), &api.CallbackPayload{
 			TaskID:  "task-recovered",
-			Event:   "completed",
+			Event:   api.EventCompleted,
 			Details: map[string]any{"prURL": "https://github.com/recovered-org/recovered-repo/pull/100"},
 		})
 
@@ -421,12 +421,48 @@ func TestCallbackHandler_HandleCallback(t *testing.T) {
 
 		handler.handleCallback(context.Background(), &api.CallbackPayload{
 			TaskID:  "task-6",
-			Event:   "failed",
+			Event:   api.EventFailed,
 			Message: "generic error",
 			Details: map[string]any{"error": "specific error from details"},
 		})
 
 		assert.Contains(t, postedComment, "specific error from details")
 		assert.NotContains(t, postedComment, "generic error")
+	})
+
+	t.Run("API fallback with malformed sourceURL does not post comment", func(t *testing.T) {
+		commentPosted := false
+		ghServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodPost {
+				commentPosted = true
+			}
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer ghServer.Close()
+
+		// API server returns task with invalid sourceURL (PR instead of issue)
+		apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			assert.Equal(t, "/api/v1/tasks/task-bad-url", r.URL.Path)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+				"id":"task-bad-url",
+				"status":{"phase":"Completed"},
+				"task":{"sourceURL":"https://github.com/org/repo/pull/42"}
+			}`))
+		}))
+		defer apiServer.Close()
+
+		ghClient := newTestClientFromServer(t, ghServer)
+		apiClient := NewAPIClient(apiServer.URL)
+		handler := NewCallbackHandler("", ghClient, apiClient, ctrl.Log.WithName("test"))
+
+		// Don't register task - simulate restart scenario
+		handler.handleCallback(context.Background(), &api.CallbackPayload{
+			TaskID:  "task-bad-url",
+			Event:   api.EventCompleted,
+			Details: map[string]any{"prURL": "https://github.com/org/repo/pull/100"},
+		})
+
+		assert.False(t, commentPosted)
 	})
 }

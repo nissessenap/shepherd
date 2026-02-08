@@ -142,6 +142,11 @@ func (h *CallbackHandler) resolveTaskMetadata(ctx context.Context, taskID string
 	}
 
 	// Fallback: query the Shepherd API for task details
+	if h.apiClient == nil {
+		h.log.Info("no API client configured, cannot recover task metadata", "taskID", taskID)
+		return TaskMetadata{}, false
+	}
+
 	task, err := h.apiClient.GetTask(ctx, taskID)
 	if err != nil {
 		h.log.Error(err, "failed to fetch task from API for callback", "taskID", taskID)
@@ -210,22 +215,12 @@ func (h *CallbackHandler) handleCallback(ctx context.Context, payload *api.Callb
 			comment = "Shepherd completed the task successfully."
 		}
 
-		// Clean up task metadata
-		h.mu.Lock()
-		delete(h.tasks, payload.TaskID)
-		h.mu.Unlock()
-
 	case api.EventFailed:
 		errorMsg := payload.Message
 		if v, ok := payload.Details["error"].(string); ok && v != "" {
 			errorMsg = v
 		}
 		comment = formatFailed(errorMsg)
-
-		// Clean up task metadata
-		h.mu.Lock()
-		delete(h.tasks, payload.TaskID)
-		h.mu.Unlock()
 
 	case api.EventStarted, api.EventProgress:
 		// Don't post comments for intermediate events
@@ -235,6 +230,13 @@ func (h *CallbackHandler) handleCallback(ctx context.Context, payload *api.Callb
 	default:
 		h.log.Info("unknown callback event type", "event", payload.Event)
 		return
+	}
+
+	// Clean up task metadata for terminal events
+	if payload.Event == api.EventCompleted || payload.Event == api.EventFailed {
+		h.mu.Lock()
+		delete(h.tasks, payload.TaskID)
+		h.mu.Unlock()
 	}
 
 	if err := h.ghClient.PostComment(ctx, meta.Owner, meta.Repo, meta.IssueNumber, comment); err != nil {
