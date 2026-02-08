@@ -3,7 +3,7 @@ IMG ?= shepherd:latest
 RUNNER_IMG ?= shepherd-runner:latest
 
 # Kind cluster name used by kind-create / kind-delete / ko-build-kind
-KIND_CLUSTER_NAME ?= kind
+KIND_CLUSTER_NAME ?= shepherd
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -86,6 +86,17 @@ lint-config: golangci-lint ## Verify golangci-lint linter configuration
 test-e2e: kind-create ko-build-kind install deploy-test ## Spin up kind cluster, build/load images, deploy, and run e2e tests.
 	go test ./test/e2e/ -v -count=1 -timeout 5m
 	$(MAKE) kind-delete
+
+.PHONY: test-e2e-interactive
+test-e2e-interactive: ## Run e2e tests, keeping the Kind cluster alive for debugging.
+	@if kind get clusters 2>/dev/null | grep -q "^$(KIND_CLUSTER_NAME)$$"; then \
+		echo "Reusing existing cluster: $(KIND_CLUSTER_NAME)"; \
+	else \
+		echo "Creating new cluster: $(KIND_CLUSTER_NAME)"; \
+		$(MAKE) kind-create; \
+	fi
+	$(MAKE) ko-build-kind install deploy-test
+	go test ./test/e2e/ -v -count=1 -timeout 5m
 
 .PHONY: test-e2e-existing
 test-e2e-existing: ## Run e2e tests against an already-running cluster.
