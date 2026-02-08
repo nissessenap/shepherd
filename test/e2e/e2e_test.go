@@ -22,9 +22,11 @@ package e2e
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -35,6 +37,9 @@ import (
 
 // namespace where the project is deployed in
 const namespace = "shepherd-system"
+
+// apiURL is the NodePort-exposed API address for lifecycle tests
+const apiURL = "http://localhost:30080"
 
 // serviceAccountName created for the project
 const serviceAccountName = "shepherd-controller-manager"
@@ -147,6 +152,8 @@ var _ = Describe("Manager", Ordered, func() {
 			agentTaskOutput, err := utils.Run(cmd)
 			if err == nil {
 				_, _ = fmt.Fprintf(GinkgoWriter, "AgentTask status:\n%s\n", agentTaskOutput)
+			} else {
+				_, _ = fmt.Fprintf(GinkgoWriter, "Failed to get AgentTask status: %s\n", err)
 			}
 
 			By("Fetching SandboxClaim status")
@@ -154,6 +161,8 @@ var _ = Describe("Manager", Ordered, func() {
 			claimOutput, err := utils.Run(cmd)
 			if err == nil {
 				_, _ = fmt.Fprintf(GinkgoWriter, "SandboxClaim status:\n%s\n", claimOutput)
+			} else {
+				_, _ = fmt.Fprintf(GinkgoWriter, "Failed to get SandboxClaim status: %s\n", err)
 			}
 
 			By("Fetching Sandbox status")
@@ -161,6 +170,8 @@ var _ = Describe("Manager", Ordered, func() {
 			sandboxOutput, err := utils.Run(cmd)
 			if err == nil {
 				_, _ = fmt.Fprintf(GinkgoWriter, "Sandbox status:\n%s\n", sandboxOutput)
+			} else {
+				_, _ = fmt.Fprintf(GinkgoWriter, "Failed to get Sandbox status: %s\n", err)
 			}
 		}
 	})
@@ -295,16 +306,113 @@ var _ = Describe("Manager", Ordered, func() {
 		})
 
 		// +kubebuilder:scaffold:e2e-webhooks-checks
+	})
 
-		// TODO: Customize the e2e test suite with scenarios specific to your project.
-		// Consider applying sample/CR(s) and check their status and/or verifying
-		// the reconciliation by using the metrics, i.e.:
-		// metricsOutput, err := getMetricsOutput()
-		// Expect(err).NotTo(HaveOccurred(), "Failed to retrieve logs from curl pod")
-		// Expect(metricsOutput).To(ContainSubstring(
-		//    fmt.Sprintf(`controller_runtime_reconcile_total{controller="%s",result="success"} 1`,
-		//    strings.ToLower(<Kind>),
-		// ))
+	Context("AgentTask Lifecycle", func() {
+		var taskName string
+
+		BeforeAll(func() {
+			By("creating the AgentTask via the public API")
+			reqBody := `{
+				"repo": {"url": "https://github.com/test-org/test-repo.git", "ref": "main"},
+				"task": {
+					"description": "E2E lifecycle test task",
+					"context": "This is an e2e test to validate the full task lifecycle"
+				},
+				"callbackURL": "https://example.com/callback",
+				"runner": {
+					"sandboxTemplateName": "e2e-runner",
+					"timeout": "5m"
+				}
+			}`
+			resp, err := http.Post(
+				apiURL+"/api/v1/tasks",
+				"application/json",
+				strings.NewReader(reqBody),
+			)
+			Expect(err).NotTo(HaveOccurred(), "Failed to POST task to API")
+			defer resp.Body.Close()
+			Expect(resp.StatusCode).To(Equal(http.StatusCreated),
+				"Expected 201 Created from API")
+
+			var taskResp struct {
+				ID string `json:"id"`
+			}
+			Expect(json.NewDecoder(resp.Body).Decode(&taskResp)).To(Succeed())
+			Expect(taskResp.ID).NotTo(BeEmpty(), "API should return a task ID")
+			taskName = taskResp.ID
+			GinkgoWriter.Printf("Created task: %s\n", taskName)
+		})
+
+		AfterAll(func() {
+			if taskName != "" {
+				By("cleaning up the AgentTask")
+				cmd := exec.Command("kubectl", "delete", "agenttask", taskName,
+					"-n", namespace, "--ignore-not-found")
+				_, _ = utils.Run(cmd)
+			}
+		})
+
+		It("should create a SandboxClaim for the task", func() {
+			verifySandboxClaim := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "sandboxclaim", taskName,
+					"-n", namespace, "-o", "jsonpath={.metadata.name}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal(taskName))
+			}
+			Eventually(verifySandboxClaim, 30*time.Second, time.Second).Should(Succeed())
+		})
+
+		It("should reach Running state when sandbox is ready", func() {
+			verifyRunning := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "agenttask", taskName,
+					"-n", namespace,
+					"-o", `jsonpath={.status.conditions[?(@.type=="Succeeded")].reason}`)
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("Running"))
+			}
+			Eventually(verifyRunning, 3*time.Minute, 2*time.Second).Should(Succeed())
+		})
+
+		It("should reach Succeeded state after runner completes", func() {
+			verifySucceeded := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "agenttask", taskName,
+					"-n", namespace,
+					"-o", `jsonpath={.status.conditions[?(@.type=="Succeeded")].status}`)
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("True"))
+			}
+			Eventually(verifySucceeded, 3*time.Minute, 2*time.Second).Should(Succeed())
+		})
+
+		It("should set Notified condition after terminal state", func() {
+			verifyNotified := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "agenttask", taskName,
+					"-n", namespace,
+					"-o", `jsonpath={.status.conditions[?(@.type=="Notified")].reason}`)
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				// CallbackSent if example.com responds 2xx, CallbackFailed otherwise — either is valid
+				g.Expect(output).To(SatisfyAny(
+					Equal("CallbackSent"),
+					Equal("CallbackFailed"),
+				))
+			}
+			Eventually(verifyNotified, 30*time.Second, 2*time.Second).Should(Succeed())
+		})
+
+		It("should clean up the SandboxClaim after terminal state", func() {
+			verifyClaimDeleted := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "sandboxclaim", taskName,
+					"-n", namespace, "--no-headers")
+				_, err := utils.Run(cmd)
+				g.Expect(err).To(HaveOccurred(), "SandboxClaim should be deleted")
+			}
+			Eventually(verifyClaimDeleted, 60*time.Second, 2*time.Second).Should(Succeed())
+		})
 	})
 })
 

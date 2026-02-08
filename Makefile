@@ -100,7 +100,7 @@ test-e2e-interactive: ## Run e2e tests, keeping the Kind cluster alive for debug
 
 .PHONY: test-e2e-existing
 test-e2e-existing: ## Run e2e tests against an already-running cluster.
-	go test ./test/e2e/ -v -count=1 -timeout 5m
+	go test ./test/e2e/ -v -count=1 -timeout 10m
 
 ##@ Build
 
