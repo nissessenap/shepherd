@@ -1727,10 +1727,10 @@ func TestParseSourceURL(t *testing.T) {
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `make test` passes all tests
-- [ ] `go vet ./...` clean
-- [ ] `make lint-fix` passes
-- [ ] Callback signature verification tests pass
+- [x] `make test` passes all tests
+- [x] `go vet ./...` clean
+- [x] `make lint-fix` passes
+- [x] Callback signature verification tests pass
 
 #### Manual Verification:
 - [ ] Callback endpoint accepts valid callbacks from API

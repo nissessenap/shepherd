@@ -124,8 +124,8 @@ func Run(opts Options) error {
 		r.Post("/", webhookHandler.ServeHTTP)
 	})
 
-	// TODO: Phase 5 - Callback endpoint (with requireJSON)
-	// r.With(requireJSON).Post("/callback", callbackHandler.ServeHTTP)
+	// Callback endpoint with content-type validation
+	r.With(requireJSON).Post("/callback", callbackHandler.ServeHTTP)
 
 	srv := &http.Server{
 		Addr:         opts.ListenAddr,
