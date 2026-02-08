@@ -1,5 +1,9 @@
 # Image URL to use all building/pushing image targets
 IMG ?= shepherd:latest
+RUNNER_IMG ?= shepherd-runner:latest
+
+# Kind cluster name used by kind-create / kind-delete / ko-build-kind
+KIND_CLUSTER_NAME ?= shepherd
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -76,6 +80,17 @@ lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
 lint-config: golangci-lint ## Verify golangci-lint linter configuration
 	"$(GOLANGCI_LINT)" config verify
 
+##@ E2E Testing
+
+.PHONY: test-e2e
+test-e2e: kind-create ko-build-kind install deploy ## Spin up kind cluster, build/load images, deploy, and run e2e tests.
+	go test ./test/e2e/ -v -count=1 -timeout 5m
+	$(MAKE) kind-delete
+
+.PHONY: test-e2e-existing
+test-e2e-existing: ## Run e2e tests against an already-running cluster.
+	go test ./test/e2e/ -v -count=1 -timeout 5m
+
 ##@ Build
 
 .PHONY: build
@@ -88,17 +103,34 @@ run: manifests generate fmt vet ## Run the operator from your host.
 	go run ./cmd/shepherd/ operator --leader-election=false
 
 .PHONY: ko-build-local
-ko-build-local: ko ## Build container image locally with ko.
-	KO_DOCKER_REPO=$(KO_DOCKER_REPO) "$(KO)" build --sbom=none --bare ./cmd/shepherd/
+ko-build-local: ko ## Build shepherd image locally with ko (sets IMG).
+	$(eval IMG := $(shell KO_DOCKER_REPO=$(KO_DOCKER_REPO) "$(KO)" build --sbom=none --bare --local ./cmd/shepherd/))
+	@echo "IMG=$(IMG)"
 
-.PHONY: ko-build-runner
-ko-build-runner: ko ## Build runner stub image locally with ko.
-	KO_DOCKER_REPO=$(KO_DOCKER_REPO) "$(KO)" build --sbom=none --bare ./cmd/shepherd-runner/
+.PHONY: ko-build-runner-local
+ko-build-runner-local: ko ## Build runner stub image locally with ko (sets RUNNER_IMG).
+	$(eval RUNNER_IMG := $(shell KO_DOCKER_REPO=$(KO_DOCKER_REPO) "$(KO)" build --sbom=none --bare --local ./cmd/shepherd-runner/))
+	@echo "RUNNER_IMG=$(RUNNER_IMG)"
 
 .PHONY: build-smoke
-build-smoke: ko-build-local ko-build-runner manifests kustomize ## Verify ko builds + kustomize render.
+build-smoke: ko-build-local ko-build-runner-local manifests kustomize ## Verify ko builds + kustomize render.
 	"$(KUSTOMIZE)" build config/default > /dev/null
 	@echo "Build smoke test passed: ko images built, kustomize renders cleanly"
+
+.PHONY: ko-build-kind
+ko-build-kind: ko-build-local ko-build-runner-local ## Build images and load them into the kind cluster.
+	kind load docker-image "$(IMG)" --name "$(KIND_CLUSTER_NAME)"
+	kind load docker-image "$(RUNNER_IMG)" --name "$(KIND_CLUSTER_NAME)"
+
+##@ Kind
+
+.PHONY: kind-create
+kind-create: ## Create a kind cluster for development/testing.
+	kind create cluster --name "$(KIND_CLUSTER_NAME)"
+
+.PHONY: kind-delete
+kind-delete: ## Delete the kind cluster.
+	kind delete cluster --name "$(KIND_CLUSTER_NAME)"
 
 ##@ Deployment
 
@@ -118,7 +150,7 @@ uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified 
 
 .PHONY: deploy
 deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in ~/.kube/config.
-	cd config/manager && "$(KUSTOMIZE)" edit set image controller=${IMG}
+	cd config/default && "$(KUSTOMIZE)" edit set image controller=${IMG}
 	"$(KUSTOMIZE)" build config/default | "$(KUBECTL)" apply -f -
 
 .PHONY: undeploy
