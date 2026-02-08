@@ -517,9 +517,9 @@ func TestExecuteTask(t *testing.T) {
 
 #### Automated Verification
 
-- [ ] `go test ./cmd/shepherd-runner/ -v` passes
-- [ ] `go vet ./cmd/shepherd-runner/` passes
-- [ ] `make lint` passes
+- [x] `go test ./cmd/shepherd-runner/ -v` passes
+- [x] `go vet ./cmd/shepherd-runner/` passes
+- [x] `make lint` passes
 
 #### Manual Verification
 

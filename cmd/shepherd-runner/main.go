@@ -1,13 +1,17 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 )
 
 // TaskAssignment is the payload sent by the operator when assigning a task.
@@ -36,13 +40,66 @@ func main() {
 	// Wait for task assignment or shutdown
 	select {
 	case ta := <-assigned:
-		slog.Info("task assigned, stub exiting", "taskID", ta.TaskID)
-		// In full implementation: pull data, clone repo, run claude, report results
+		slog.Info("task assigned", "taskID", ta.TaskID, "apiURL", ta.APIURL)
+		if err := executeTask(ctx, ta); err != nil {
+			slog.Error("task execution failed, reporting failure", "error", err)
+			_ = reportStatus(ctx, ta, "failed", err.Error())
+		}
 	case <-ctx.Done():
 		slog.Info("shutting down")
 	}
 
 	_ = srv.Shutdown(context.Background())
+}
+
+func executeTask(ctx context.Context, ta TaskAssignment) error {
+	client := &http.Client{Timeout: 30 * time.Second}
+
+	// 1. Fetch task data
+	dataURL := ta.APIURL + "/api/v1/tasks/" + ta.TaskID + "/data"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, dataURL, nil)
+	if err != nil {
+		return fmt.Errorf("creating data request: %w", err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("fetching task data: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected data response: %d %s", resp.StatusCode, string(body))
+	}
+	slog.Info("task data fetched", "taskID", ta.TaskID)
+
+	// 2. Report completed status
+	return reportStatus(ctx, ta, "completed", "stub runner completed successfully")
+}
+
+func reportStatus(ctx context.Context, ta TaskAssignment, event, message string) error {
+	client := &http.Client{Timeout: 30 * time.Second}
+
+	statusURL := ta.APIURL + "/api/v1/tasks/" + ta.TaskID + "/status"
+	payload, _ := json.Marshal(map[string]string{
+		"event":   event,
+		"message": message,
+	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, statusURL, bytes.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("creating status request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("reporting status: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected status response: %d", resp.StatusCode)
+	}
+	slog.Info("status reported", "taskID", ta.TaskID, "event", event)
+	return nil
 }
 
 func newMux(assigned chan<- TaskAssignment) *http.ServeMux {

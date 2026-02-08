@@ -1,10 +1,16 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestHealthEndpoint(t *testing.T) {
@@ -91,4 +97,31 @@ func TestPostTaskInvalidJSON(t *testing.T) {
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d", resp.StatusCode)
 	}
+}
+
+func TestExecuteTask(t *testing.T) {
+	var dataRequested, statusRequested atomic.Bool
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/data"):
+			dataRequested.Store(true)
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"description": "test task",
+			})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/status"):
+			statusRequested.Store(true)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"status":"accepted"}`))
+		default:
+			http.Error(w, "not found", http.StatusNotFound)
+		}
+	}))
+	defer api.Close()
+
+	ta := TaskAssignment{TaskID: "test-task", APIURL: api.URL}
+	err := executeTask(context.Background(), ta)
+	require.NoError(t, err)
+	assert.True(t, dataRequested.Load(), "should have requested task data")
+	assert.True(t, statusRequested.Load(), "should have reported status")
 }
