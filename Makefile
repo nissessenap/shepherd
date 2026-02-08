@@ -83,8 +83,8 @@ lint-config: golangci-lint ## Verify golangci-lint linter configuration
 ##@ E2E Testing
 
 .PHONY: test-e2e
-test-e2e: kind-create ko-build-kind install deploy-test ## Spin up kind cluster, build/load images, deploy, and run e2e tests.
-	go test ./test/e2e/ -v -count=1 -timeout 5m
+test-e2e: kind-create ko-build-kind install-agent-sandbox install deploy-test deploy-e2e-fixtures ## Spin up kind cluster, build/load images, deploy, and run e2e tests.
+	go test ./test/e2e/ -v -count=1 -timeout 10m
 	$(MAKE) kind-delete
 
 .PHONY: test-e2e-interactive
@@ -95,8 +95,8 @@ test-e2e-interactive: ## Run e2e tests, keeping the Kind cluster alive for debug
 		echo "Creating new cluster: $(KIND_CLUSTER_NAME)"; \
 		$(MAKE) kind-create; \
 	fi
-	$(MAKE) ko-build-kind install deploy-test
-	go test ./test/e2e/ -v -count=1 -timeout 5m
+	$(MAKE) ko-build-kind install-agent-sandbox install deploy-test deploy-e2e-fixtures
+	go test ./test/e2e/ -v -count=1 -timeout 10m
 
 .PHONY: test-e2e-existing
 test-e2e-existing: ## Run e2e tests against an already-running cluster.
@@ -139,11 +139,24 @@ ko-build-kind: ko-build-local ko-build-runner-local ## Build images and load the
 
 .PHONY: kind-create
 kind-create: ## Create a kind cluster for development/testing.
-	kind create cluster --name "$(KIND_CLUSTER_NAME)"
+	kind create cluster --name "$(KIND_CLUSTER_NAME)" --config test/e2e/kind-config.yaml
 
 .PHONY: kind-delete
 kind-delete: ## Delete the kind cluster.
 	kind delete cluster --name "$(KIND_CLUSTER_NAME)"
+
+##@ Agent-Sandbox
+AGENT_SANDBOX_VERSION ?= v0.1.1
+
+.PHONY: install-agent-sandbox
+install-agent-sandbox: ## Install agent-sandbox operator into the cluster.
+	$(KUBECTL) apply -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/$(AGENT_SANDBOX_VERSION)/manifest.yaml
+	$(KUBECTL) apply -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/$(AGENT_SANDBOX_VERSION)/extensions.yaml
+	$(KUBECTL) wait --for=condition=Available deployment -l control-plane=controller-manager -n agent-sandbox-system --timeout=2m
+
+.PHONY: deploy-e2e-fixtures
+deploy-e2e-fixtures: ## Deploy e2e test fixtures (SandboxTemplate).
+	$(KUBECTL) apply -f test/e2e/fixtures/
 
 ##@ Deployment
 

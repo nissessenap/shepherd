@@ -72,6 +72,13 @@ var _ = Describe("Manager", Ordered, func() {
 		cmd = exec.Command("make", "deploy-test")
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
+
+		By("verifying agent-sandbox controller is available")
+		cmd = exec.Command("kubectl", "wait", "--for=condition=Available",
+			"deployment", "-l", "control-plane=controller-manager",
+			"-n", "agent-sandbox-system", "--timeout=2m")
+		_, err = utils.Run(cmd)
+		Expect(err).NotTo(HaveOccurred(), "agent-sandbox controller not available")
 	})
 
 	// After all tests have been executed, clean up by undeploying the controller, uninstalling CRDs,
@@ -133,6 +140,27 @@ var _ = Describe("Manager", Ordered, func() {
 				fmt.Println("Pod description:\n", podDescription)
 			} else {
 				fmt.Println("Failed to describe controller pod")
+			}
+
+			By("Fetching AgentTask status")
+			cmd = exec.Command("kubectl", "get", "agenttask", "-n", namespace, "-o", "yaml")
+			agentTaskOutput, err := utils.Run(cmd)
+			if err == nil {
+				_, _ = fmt.Fprintf(GinkgoWriter, "AgentTask status:\n%s\n", agentTaskOutput)
+			}
+
+			By("Fetching SandboxClaim status")
+			cmd = exec.Command("kubectl", "get", "sandboxclaim", "-n", namespace, "-o", "yaml")
+			claimOutput, err := utils.Run(cmd)
+			if err == nil {
+				_, _ = fmt.Fprintf(GinkgoWriter, "SandboxClaim status:\n%s\n", claimOutput)
+			}
+
+			By("Fetching Sandbox status")
+			cmd = exec.Command("kubectl", "get", "sandbox", "-n", namespace, "-o", "yaml")
+			sandboxOutput, err := utils.Run(cmd)
+			if err == nil {
+				_, _ = fmt.Fprintf(GinkgoWriter, "Sandbox status:\n%s\n", sandboxOutput)
 			}
 		}
 	})
