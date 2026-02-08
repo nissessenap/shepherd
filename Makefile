@@ -83,7 +83,7 @@ lint-config: golangci-lint ## Verify golangci-lint linter configuration
 ##@ E2E Testing
 
 .PHONY: test-e2e
-test-e2e: kind-create ko-build-kind install deploy ## Spin up kind cluster, build/load images, deploy, and run e2e tests.
+test-e2e: kind-create ko-build-kind install deploy-test ## Spin up kind cluster, build/load images, deploy, and run e2e tests.
 	go test ./test/e2e/ -v -count=1 -timeout 5m
 	$(MAKE) kind-delete
 
@@ -152,6 +152,11 @@ uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified 
 deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in ~/.kube/config.
 	cd config/default && "$(KUSTOMIZE)" edit set image controller=${IMG}
 	"$(KUSTOMIZE)" build config/default | "$(KUBECTL)" apply -f -
+
+.PHONY: deploy-test
+deploy-test: manifests kustomize ## Deploy for local testing (IfNotPresent pull policy, no GitHub secrets).
+	cd config/test && "$(KUSTOMIZE)" edit set image controller=${IMG}
+	"$(KUSTOMIZE)" build config/test | "$(KUBECTL)" apply -f -
 
 .PHONY: undeploy
 undeploy: kustomize ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
