@@ -205,11 +205,34 @@ Limits total API token spend for the session. With Sonnet 4.5 ($3/M input, $15/M
 - **$10 budget ~= 1.1M combined tokens**, roughly 100-500 turns
 - Average developer usage is ~$6/day, so $10 is generous for a single focused task
 
+#### Output Format
+
+Three modes available via `--output-format`:
+
+| Mode | Output | Use Case |
+| --- | --- | --- |
+| `text` (default) | Plain text response, no metadata | Human reading |
+| `json` | Single JSON object on exit with metadata | Machine parsing after completion |
+| `stream-json` | Streaming JSON lines during execution | Real-time monitoring, future streaming |
+
+**v1**: Use `--output-format json`. The Go entrypoint runs CC, waits for exit, parses the single JSON result.
+
+**Future**: Switch to `--output-format stream-json` to enable:
+
+- Real-time progress streaming to a websocket (live task monitoring UI)
+- Saving full CC output to GCS/S3 for audit and debugging
+- Interactive sessions where a user watches CC work in real-time
+- Progress events piped to the shepherd API as `progress` status updates
+
+The `stream-json` format emits one JSON object per line during execution (tool calls, reasoning, results) and ends with a final result object containing the same metadata as `json` mode. The Go entrypoint can read stdout line-by-line, tee it to storage, and parse the final line for the result.
+
 #### Exit Code Behavior (Critical)
 
 **`claude -p` exits 0 even when Claude decides it cannot do the task.** Exit 0 means the process ran without errors, not that the task was accomplished. Claude saying "I can't solve this" is a successful process run.
 
-JSON output fields:
+**Requires `--output-format json`** to get structured metadata. Without it, you only get plain text.
+
+JSON output on exit:
 
 ```json
 {
@@ -238,6 +261,8 @@ Non-zero exit codes indicate process-level failures:
 | 0 | Process ran (task may or may not be done) |
 | 1 | General failure (config, auth, environment) |
 | non-zero | Max turns or budget limit hit (varies) |
+
+The Go entrypoint logs `total_cost_usd`, `num_turns`, and `session_id` from the JSON output for observability regardless of success/failure.
 
 #### Environment Variables
 
@@ -420,12 +445,12 @@ The real runner entrypoint is a Go program using `pkg/runner`:
    k. **CC hooks** may report progress during execution (see section 7)
    l. Parse JSON output: check `is_error`, `subtype`, `total_cost_usd`, `num_turns`
    m. **Verify concrete artifacts**: `git diff --stat`, check for PR URL in output, `gh pr list --head <branch>`
-   n. Report `completed` with PR URL if artifacts exist, or `failed` with CC's result text
+   n. **Check if CC's `Stop` hook already reported** terminal status to the API (query task status). Only report `completed`/`failed` if the task is not already terminal. This avoids duplicate status updates.
 3. **Exit** after task completion (pod lifecycle is single-task)
 
 **Completion detection**: Since `claude -p` exits 0 even when Claude gives up, the Go entrypoint verifies success by checking for concrete artifacts (git changes, PR created) rather than trusting the exit code. The JSON output's `total_cost_usd` and `num_turns` are logged for observability.
 
-**Dual notification**: CC's `Stop` hook can report to the API during execution. The Go entrypoint then checks whether the API already received a terminal status before reporting again, avoiding duplicate updates. If CC crashes (non-zero exit without hook firing), the Go entrypoint reports `failed`.
+**Dual notification**: CC's `Stop` hook fires first and may report completion to the API. The Go entrypoint then queries the task status from the API - if it's already terminal (hook succeeded), the entrypoint skips reporting and just exits. If the task is still running (hook failed or CC crashed), the entrypoint reports based on artifact verification. This makes the Go entrypoint a **safety net**, not the primary reporter.
 
 ### 11. Prompt Design (Hardcoded for v1)
 
@@ -651,10 +676,10 @@ Operator                    Runner (Go entrypoint)      API Server
 ## Open Questions
 
 1. **Token scoping for gh CLI**: The GitHub token from API is an installation token. Can `gh` use it directly via `GH_TOKEN` env var, or does it need `gh auth login`?
-2. **Max turns / budget defaults**: Candidates: `--max-turns 30 --max-budget-usd 5.00` for simple tasks, `--max-turns 100 --max-budget-usd 15.00` for complex. Need real-world data. These should become CRD/API fields in the future.
+2. **Max turns / budget defaults**: Candidates: `--max-turns 30 --max-budget-usd 5.00` for simple tasks, `--max-turns 50 --max-budget-usd 10.00` for complex. Need real-world data. These should become CRD/API fields in the future.
 3. **Error recovery**: If Claude Code fails mid-task (OOM, API error), should the entrypoint retry or just report failure? Leaning toward report failure - retries are a future feature.
 4. **Separate repo**: When moving the runner image to a separate repo, how should the entrypoint Go code reference shared types (TaskAssignment, API client)? Likely extract `pkg/runner/` as a Go module.
-5. **Auto-updater**: Claude Code has an auto-updater. Disabled via `DISABLE_AUTOUPDATER=1`, but should we pin a specific version in the Dockerfile for reproducibility?
+5. **Auto-updater**: Claude Code has an auto-updater. Disabled via `DISABLE_AUTOUPDATER=1`, but should we pin a specific version in the Dockerfile for reproducibility? No, we should always use the latest version, LLM is none deterministic by nature.
 6. **Hook idempotency**: The `Stop` hook and Go entrypoint both report status. The API's status handler must handle duplicate terminal status updates gracefully (idempotent transitions).
 7. **Prompt engineering**: The v1 prompt template (section 11) is a starting point. It needs iteration based on real task outcomes. How do we measure prompt effectiveness? Should we log CC's `result` text for analysis?
-8. **Success detection heuristics**: Beyond `git diff` and PR creation, what else should the Go entrypoint check? Test results? Lint pass? This determines the boundary between "CC made changes" and "CC made good changes."
+8. **Success detection heuristics**: Beyond `git diff` and PR creation, what else should the Go entrypoint check? Test results? Lint pass? This determines the boundary between "CC made changes" and "CC made good changes." The entrypoint should only focus on external sources, is a PR created for example an. But we can't have the entrypoint run tests or linting, that is CCs job.
