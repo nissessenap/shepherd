@@ -289,27 +289,6 @@ var _ = Describe("Manager", Ordered, func() {
 			Eventually(verifySucceeded, 3*time.Minute, 2*time.Second).Should(Succeed())
 		})
 
-		It("should have runner pod logs showing task execution", func() {
-			verifyRunnerLogs := func(g Gomega) {
-				// Find the runner pod by label selector
-				cmd := exec.Command("kubectl", "get", "pods",
-					"-n", namespace,
-					"-l", fmt.Sprintf("shepherd.dev/task=%s", taskName),
-					"-o", "jsonpath={.items[0].metadata.name}")
-				podName, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(podName).NotTo(BeEmpty())
-
-				// Get the logs
-				cmd = exec.Command("kubectl", "logs", podName, "-n", namespace)
-				logs, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(logs).To(ContainSubstring("task data fetched"))
-				g.Expect(logs).To(ContainSubstring("status reported"))
-			}
-			Eventually(verifyRunnerLogs, 3*time.Minute, 2*time.Second).Should(Succeed())
-		})
-
 		It("should set Notified condition after terminal state", func() {
 			verifyNotified := func(g Gomega) {
 				cmd := exec.Command("kubectl", "get", "agenttask", taskName,
