@@ -84,7 +84,7 @@ lint-config: golangci-lint ## Verify golangci-lint linter configuration
 
 .PHONY: test-e2e
 test-e2e: kind-create ko-build-kind install-agent-sandbox install deploy-test deploy-e2e-fixtures ## Spin up kind cluster, build/load images, deploy, and run e2e tests.
-	go test ./test/e2e/ -v -count=1 -timeout 10m
+	go test ./test/e2e/ -tags e2e -v -count=1 -timeout 10m
 	$(MAKE) kind-delete
 
 .PHONY: test-e2e-interactive
@@ -96,11 +96,11 @@ test-e2e-interactive: ## Run e2e tests, keeping the Kind cluster alive for debug
 		$(MAKE) kind-create; \
 	fi
 	$(MAKE) ko-build-kind install-agent-sandbox install deploy-test deploy-e2e-fixtures
-	go test ./test/e2e/ -v -count=1 -timeout 10m
+	go test ./test/e2e/ -tags e2e -v -count=1 -timeout 10m
 
 .PHONY: test-e2e-existing
 test-e2e-existing: ## Run e2e tests against an already-running cluster.
-	go test ./test/e2e/ -v -count=1 -timeout 10m
+	go test ./test/e2e/ -tags e2e -v -count=1 -timeout 10m
 
 ##@ Build
 

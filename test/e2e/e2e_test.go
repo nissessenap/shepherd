@@ -312,6 +312,15 @@ var _ = Describe("Manager", Ordered, func() {
 		var taskName string
 
 		BeforeAll(func() {
+			By("waiting for API to be ready")
+			verifyAPIReady := func(g Gomega) {
+				resp, err := http.Get(apiURL + "/healthz")
+				g.Expect(err).NotTo(HaveOccurred())
+				defer resp.Body.Close()
+				g.Expect(resp.StatusCode).To(Equal(http.StatusOK))
+			}
+			Eventually(verifyAPIReady, 30*time.Second, 2*time.Second).Should(Succeed())
+
 			By("creating the AgentTask via the public API")
 			reqBody := `{
 				"repo": {"url": "https://github.com/test-org/test-repo.git", "ref": "main"},
@@ -350,6 +359,11 @@ var _ = Describe("Manager", Ordered, func() {
 				cmd := exec.Command("kubectl", "delete", "agenttask", taskName,
 					"-n", namespace, "--ignore-not-found")
 				_, _ = utils.Run(cmd)
+
+				By("cleaning up the SandboxClaim")
+				cmd = exec.Command("kubectl", "delete", "sandboxclaim", taskName,
+					"-n", namespace, "--ignore-not-found")
+				_, _ = utils.Run(cmd)
 			}
 		})
 
@@ -386,6 +400,27 @@ var _ = Describe("Manager", Ordered, func() {
 				g.Expect(output).To(Equal("True"))
 			}
 			Eventually(verifySucceeded, 3*time.Minute, 2*time.Second).Should(Succeed())
+		})
+
+		It("should have runner pod logs showing task execution", func() {
+			verifyRunnerLogs := func(g Gomega) {
+				// Find the runner pod by label selector
+				cmd := exec.Command("kubectl", "get", "pods",
+					"-n", namespace,
+					"-l", fmt.Sprintf("shepherd.dev/task=%s", taskName),
+					"-o", "jsonpath={.items[0].metadata.name}")
+				podName, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(podName).NotTo(BeEmpty())
+
+				// Get the logs
+				cmd = exec.Command("kubectl", "logs", podName, "-n", namespace)
+				logs, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(logs).To(ContainSubstring("task data fetched"))
+				g.Expect(logs).To(ContainSubstring("status reported"))
+			}
+			Eventually(verifyRunnerLogs, 3*time.Minute, 2*time.Second).Should(Succeed())
 		})
 
 		It("should set Notified condition after terminal state", func() {

@@ -14,6 +14,10 @@ import (
 	"time"
 )
 
+// NOTE: This stub intentionally creates short-lived http.Client instances per request
+// rather than using a shared client. The overhead is negligible in this simple stub,
+// and optimizing it would add unnecessary complexity for minimal benefit.
+
 // TaskAssignment is the payload sent by the operator when assigning a task.
 type TaskAssignment struct {
 	TaskID string `json:"taskID"`
@@ -94,9 +98,9 @@ func reportStatus(ctx context.Context, ta TaskAssignment, event, message string)
 		return fmt.Errorf("reporting status: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	_, _ = io.Copy(io.Discard, resp.Body)
+	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status response: %d", resp.StatusCode)
+		return fmt.Errorf("unexpected status response: %d %s", resp.StatusCode, string(body))
 	}
 	slog.Info("status reported", "taskID", ta.TaskID, "event", event)
 	return nil
