@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -61,16 +62,6 @@ var _ = Describe("Manager", Ordered, func() {
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to label namespace with restricted policy")
 
-		By("installing CRDs")
-		cmd = exec.Command("make", "install")
-		_, err = utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to install CRDs")
-
-		By("deploying the controller-manager")
-		cmd = exec.Command("make", "deploy-test")
-		_, err = utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
-
 		By("verifying agent-sandbox controller is available")
 		cmd = exec.Command("kubectl", "rollout", "status",
 			"statefulset/agent-sandbox-controller",
@@ -82,6 +73,18 @@ var _ = Describe("Manager", Ordered, func() {
 	// After all tests have been executed, clean up by undeploying the controller, uninstalling CRDs,
 	// and deleting the namespace.
 	AfterAll(func() {
+		if os.Getenv("E2E_SKIP_TEARDOWN") == "true" {
+			By("Skipping teardown (E2E_SKIP_TEARDOWN=true)")
+			_, _ = fmt.Fprintf(GinkgoWriter, "\n"+
+				"Cluster and resources left intact for debugging.\n"+
+				"To clean up manually, run:\n"+
+				"  make undeploy\n"+
+				"  make uninstall\n"+
+				"  kubectl delete ns %s\n"+
+				"  make kind-delete\n", namespace)
+			return
+		}
+
 		By("undeploying the controller-manager")
 		cmd := exec.Command("make", "undeploy")
 		_, _ = utils.Run(cmd)

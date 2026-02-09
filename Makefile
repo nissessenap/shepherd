@@ -96,7 +96,7 @@ test-e2e-interactive: ## Run e2e tests, keeping the Kind cluster alive for debug
 		$(MAKE) kind-create; \
 	fi
 	$(MAKE) ko-build-kind install-agent-sandbox install deploy-test deploy-e2e-fixtures
-	go test ./test/e2e/ -tags e2e -v -count=1 -timeout 10m
+	E2E_SKIP_TEARDOWN=true go test ./test/e2e/ -tags e2e -v -count=1 -timeout 10m
 
 .PHONY: test-e2e-existing
 test-e2e-existing: install-agent-sandbox install deploy-test deploy-e2e-fixtures ## Run e2e tests against an already-running cluster.
