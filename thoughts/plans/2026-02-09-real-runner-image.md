@@ -13,7 +13,8 @@ Implement the production runner image (`shepherd-runner-go`) that replaces the e
 - **API types** in `pkg/api/types.go` define the contract: `TaskDataResponse`, `TokenResponse`, `StatusUpdateRequest`.
 - **Operator** at `internal/controller/agenttask_controller.go` POSTs `{taskID, apiURL}` to `http://{sandboxFQDN}:8888/task`.
 
-### Key Discoveries:
+### Key Discoveries
+
 - Sandbox builder (`internal/controller/sandbox_builder.go`) uses `SandboxTemplateName` from the task spec - the runner image is configured in the SandboxTemplate CRD, not the operator code
 - Status handler (`pkg/api/handler_status.go:78-97`) already handles terminal event deduplication via `Notified` condition - safe for both hook and entrypoint to report
 - Token endpoint (`pkg/api/handler_token.go:61-64`) is one-time-use with `TokenIssued` flag - runner must handle 409 Conflict gracefully on retry
@@ -30,7 +31,8 @@ A production-ready runner container image (`shepherd-runner-go`) that:
 5. Reports `failed` status if CC crashes/exits non-zero (Go entrypoint fallback)
 6. Exits after task completion (single-task pod lifecycle)
 
-### Verification:
+### Verification
+
 - `make test` passes with new `pkg/runner/` and `cmd/shepherd-runner-go/` tests
 - `make lint-fix` passes
 - `docker build -f build/runner-go/Dockerfile .` produces a working image
@@ -62,11 +64,13 @@ The work is split into 6 phases, each producing compilable, testable code:
 ## Phase 1: `pkg/runner/` - Shared Runner Package
 
 ### Overview
+
 Create the reusable runner package with HTTP server, API client, and the `TaskRunner` interface. This package is shared across language-specific runners.
 
-### Changes Required:
+### Changes Required
 
 #### 1. Runner types and interface
+
 **File**: `pkg/runner/runner.go`
 
 ```go
@@ -105,6 +109,7 @@ type TaskRunner interface {
 ```
 
 #### 2. HTTP server
+
 **File**: `pkg/runner/server.go`
 
 Implements the `:8888` HTTP server with `/healthz` and `POST /task`. Follows the POC pattern: shut down HTTP server before starting work.
@@ -126,6 +131,7 @@ func (s *Server) Serve(ctx context.Context) error
 ```
 
 The `Serve` method:
+
 1. Starts HTTP server on `:8888`
 2. Waits for task assignment on channel (or context cancellation)
 3. Shuts down HTTP server with 5s timeout (prevents second assignment)
@@ -138,6 +144,7 @@ The `Serve` method:
 10. Exits
 
 #### 3. API client
+
 **File**: `pkg/runner/client.go`
 
 HTTP client for the shepherd API (internal port 8081).
@@ -164,9 +171,11 @@ func (c *Client) ReportStatus(ctx context.Context, taskID string, event, message
 ```
 
 #### 4. Tests
+
 **File**: `pkg/runner/server_test.go`
 
 Tests for the HTTP endpoints:
+
 - `TestHealthEndpoint` - GET /healthz returns 200
 - `TestTaskAccepted` - POST /task with valid JSON returns 200
 - `TestTaskRejectsSecond` - Second POST returns 409
@@ -175,13 +184,15 @@ Tests for the HTTP endpoints:
 **File**: `pkg/runner/client_test.go`
 
 Tests for the API client using `httptest.Server`:
+
 - `TestFetchTaskData` - Happy path, 404, 410
 - `TestFetchToken` - Happy path, 409 (already issued)
 - `TestReportStatus` - Happy path, validates request body
 
-### Success Criteria:
+### Success Criteria
 
-#### Automated Verification:
+#### Automated Verification
+
 - [ ] `go build ./pkg/runner/` compiles
 - [ ] `go test ./pkg/runner/` passes
 - [ ] `make lint-fix` passes
@@ -192,11 +203,13 @@ Tests for the API client using `httptest.Server`:
 ## Phase 2: `cmd/shepherd-runner-go/` - CLI Entry Point
 
 ### Overview
+
 Create the runner binary with Kong CLI, two subcommands (`serve` and `hook`), and wire them up.
 
-### Changes Required:
+### Changes Required
 
 #### 1. Main entry point
+
 **File**: `cmd/shepherd-runner-go/main.go`
 
 ```go
@@ -228,6 +241,7 @@ func main() {
 ```
 
 #### 2. Serve subcommand
+
 **File**: `cmd/shepherd-runner-go/serve.go`
 
 ```go
@@ -241,6 +255,7 @@ func (c *ServeCmd) Run() error {
 ```
 
 #### 3. Hook subcommand (stub for now)
+
 **File**: `cmd/shepherd-runner-go/hook.go`
 
 ```go
@@ -252,9 +267,10 @@ func (c *HookCmd) Run() error {
 }
 ```
 
-### Success Criteria:
+### Success Criteria
 
-#### Automated Verification:
+#### Automated Verification
+
 - [ ] `go build ./cmd/shepherd-runner-go/` compiles
 - [ ] `make lint-fix` passes
 - [ ] `make test` passes
@@ -264,11 +280,13 @@ func (c *HookCmd) Run() error {
 ## Phase 3: Go Runner Logic
 
 ### Overview
+
 Implement the `GoRunner` that clones the repo, configures git, invokes Claude Code, and parses the result.
 
-### Changes Required:
+### Changes Required
 
 #### 1. Go runner implementation
+
 **File**: `cmd/shepherd-runner-go/gorunner.go`
 
 ```go
@@ -298,6 +316,7 @@ func (r *GoRunner) Run(ctx context.Context, task runner.TaskData, token string) 
 ```
 
 Key design decisions:
+
 - **`CommandExecutor` interface** allows testing without real `git`/`claude` binaries
 - **Prompt is hardcoded** in a `buildPrompt(task)` function for v1
 - **Git credentials** use `git config credential.helper` with a store file containing the token
@@ -305,6 +324,7 @@ Key design decisions:
 - **CC environment**: `ANTHROPIC_API_KEY` from container env, `DISABLE_AUTOUPDATER=1`, `CI=true`
 
 #### 2. Prompt builder
+
 **File**: `cmd/shepherd-runner-go/prompt.go`
 
 ```go
@@ -317,17 +337,20 @@ func buildPrompt(task runner.TaskData) string {
 ```
 
 #### 3. Tests
+
 **File**: `cmd/shepherd-runner-go/gorunner_test.go`
 
 Tests using mock `CommandExecutor`:
+
 - `TestRunCloneAndInvoke` - Happy path: verifies git clone, branch creation, CC invocation with correct args
 - `TestRunCloneFailure` - Git clone fails, returns error
 - `TestRunCCNonZeroExit` - CC exits non-zero, returns error
 - `TestBuildPrompt` - Prompt contains description, source URL, context file path
 
-### Success Criteria:
+### Success Criteria
 
-#### Automated Verification:
+#### Automated Verification
+
 - [ ] `go build ./cmd/shepherd-runner-go/` compiles
 - [ ] `go test ./cmd/shepherd-runner-go/` passes
 - [ ] `make lint-fix` passes
@@ -338,11 +361,13 @@ Tests using mock `CommandExecutor`:
 ## Phase 4: Hook Subcommand
 
 ### Overview
+
 Implement the `hook` subcommand that handles CC's Stop hook. When CC finishes, this subcommand reads the hook JSON from stdin, determines the outcome (success/failure), and reports status to the shepherd API.
 
-### Changes Required:
+### Changes Required
 
 #### 1. Hook implementation
+
 **File**: `cmd/shepherd-runner-go/hook.go`
 
 Replace the stub with:
@@ -365,6 +390,7 @@ func (c *HookCmd) Run() error {
 ```
 
 The hook is configured in `~/.claude/settings.json` (baked into image):
+
 ```json
 {
   "hooks": {
@@ -384,6 +410,7 @@ The hook is configured in `~/.claude/settings.json` (baked into image):
 ```
 
 #### 2. Hook input types
+
 **File**: `cmd/shepherd-runner-go/hook.go` (same file)
 
 ```go
@@ -398,6 +425,7 @@ type HookInput struct {
 ```
 
 #### 3. Tests
+
 **File**: `cmd/shepherd-runner-go/hook_test.go`
 
 - `TestHookStopHookActive` - When `stop_hook_active=true`, exits without reporting
@@ -406,9 +434,10 @@ type HookInput struct {
 - `TestHookChangesNoPR` - Git diff shows changes but no PR found, reports `failed`
 - `TestHookMissingEnvVars` - Missing `SHEPHERD_API_URL`, returns error
 
-### Success Criteria:
+### Success Criteria
 
-#### Automated Verification:
+#### Automated Verification
+
 - [ ] `go build ./cmd/shepherd-runner-go/` compiles
 - [ ] `go test ./cmd/shepherd-runner-go/` passes
 - [ ] `make lint-fix` passes
@@ -419,11 +448,13 @@ type HookInput struct {
 ## Phase 5: Dockerfile + Image Configuration
 
 ### Overview
+
 Create the Dockerfile for `shepherd-runner-go` and the baked-in configuration files (CLAUDE.md, settings.json).
 
-### Changes Required:
+### Changes Required
 
 #### 1. Dockerfile
+
 **File**: `build/runner-go/Dockerfile`
 
 ```dockerfile
@@ -481,6 +512,7 @@ ENTRYPOINT ["shepherd-runner-go"]
 Note: The `COPY --from=builder` and `COPY build/runner-go/` need the binary to be writable by the shepherd user, and the `/usr/local/bin/` copy should happen before the `USER shepherd` directive. The Claude Code installer runs as root. I'll refine the exact ordering during implementation.
 
 #### 2. CLAUDE.md for runner
+
 **File**: `build/runner-go/CLAUDE.md`
 
 ```markdown
@@ -498,6 +530,7 @@ You are a coding agent running inside a Shepherd runner container. You have been
 ```
 
 #### 3. Claude Code settings
+
 **File**: `build/runner-go/settings.json`
 
 ```json
@@ -530,6 +563,7 @@ You are a coding agent running inside a Shepherd runner container. You have been
 ```
 
 #### 4. SandboxTemplate example
+
 **File**: `config/samples/sandbox-template-runner-go.yaml`
 
 ```yaml
@@ -573,14 +607,16 @@ spec:
       restartPolicy: Never
 ```
 
-### Success Criteria:
+### Success Criteria
 
-#### Automated Verification:
+#### Automated Verification
+
 - [ ] `docker build -f build/runner-go/Dockerfile .` builds successfully
 - [ ] `make lint-fix` passes
 - [ ] `make test` passes
 
-#### Manual Verification:
+#### Manual Verification
+
 - [ ] Container starts and responds to `GET /healthz` with 200
 - [ ] `claude --version` works inside the container
 - [ ] `go version` works inside the container
@@ -593,11 +629,13 @@ spec:
 ## Phase 6: GHA Release Workflow
 
 ### Overview
+
 Create a GitHub Actions workflow that builds and pushes both `shepherd` and `shepherd-runner-go` images to GHCR on tag push.
 
-### Changes Required:
+### Changes Required
 
 #### 1. Release workflow
+
 **File**: `.github/workflows/release.yaml`
 
 ```yaml
@@ -669,6 +707,7 @@ jobs:
 ```
 
 #### 2. Makefile updates
+
 **File**: `Makefile`
 
 Add new targets for building the runner-go image locally:
@@ -678,17 +717,19 @@ RUNNER_GO_IMG ?= shepherd-runner-go:latest
 
 .PHONY: docker-build-runner-go
 docker-build-runner-go: ## Build shepherd-runner-go Docker image locally.
-	docker build -f build/runner-go/Dockerfile -t $(RUNNER_GO_IMG) .
+ docker build -f build/runner-go/Dockerfile -t $(RUNNER_GO_IMG) .
 ```
 
-### Success Criteria:
+### Success Criteria
 
-#### Automated Verification:
+#### Automated Verification
+
 - [ ] `make lint-fix` passes
 - [ ] `make test` passes
 - [ ] `make docker-build-runner-go` builds locally
 
-#### Manual Verification:
+#### Manual Verification
+
 - [ ] Push a test tag to trigger the workflow (on a fork or with `workflow_dispatch`)
 - [ ] Both images appear in GHCR with correct tags
 - [ ] Images contain expected binaries (`shepherd`, `shepherd-runner-go`, `claude`, `go`, `gh`)
@@ -697,20 +738,23 @@ docker-build-runner-go: ## Build shepherd-runner-go Docker image locally.
 
 ## Testing Strategy
 
-### Unit Tests:
+### Unit Tests
+
 - `pkg/runner/server_test.go` - HTTP endpoint tests (healthz, task assignment, conflict, invalid JSON)
 - `pkg/runner/client_test.go` - API client tests with httptest mocks (fetch data, fetch token, report status)
 - `cmd/shepherd-runner-go/gorunner_test.go` - GoRunner tests with mocked command executor
 - `cmd/shepherd-runner-go/hook_test.go` - Hook subcommand tests (stdin parsing, outcome detection)
 - `cmd/shepherd-runner-go/prompt_test.go` - Prompt builder tests
 
-### What We Don't Test:
+### What We Don't Test
+
 - Actual Claude Code invocation (subprocess, non-deterministic)
 - Docker image building (tested via `docker build` in CI)
 - GitHub token generation (API server's responsibility)
 - Real git clone operations (mocked via CommandExecutor)
 
-### Manual Testing Steps:
+### Manual Testing Steps
+
 1. Build Docker image locally: `make docker-build-runner-go`
 2. Run container: `docker run -p 8888:8888 -e ANTHROPIC_API_KEY=... shepherd-runner-go:latest`
 3. Verify health: `curl localhost:8888/healthz`
@@ -726,7 +770,8 @@ docker-build-runner-go: ## Build shepherd-runner-go Docker image locally.
 
 ## File Summary
 
-### New Files:
+### New Files
+
 ```
 pkg/runner/
   runner.go              - Types and TaskRunner interface
@@ -757,7 +802,8 @@ config/samples/
   release.yaml           - Build and push images on tag
 ```
 
-### Modified Files:
+### Modified Files
+
 ```
 Makefile                 - Add docker-build-runner-go target
 go.mod / go.sum          - New dependency: kong (already present)
