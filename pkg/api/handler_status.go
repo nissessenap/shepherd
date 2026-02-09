@@ -99,18 +99,36 @@ func (h *taskHandler) updateTaskStatus(w http.ResponseWriter, r *http.Request) {
 	// Update CRD status fields based on event
 	// Only terminal events modify status fields
 	if isTerminal {
+		now := metav1.Now()
+		task.Status.CompletionTime = &now
+		task.Status.GraceDeadline = nil
+
 		switch req.Event {
 		case EventCompleted:
 			if prURL, ok := req.Details["pr_url"].(string); ok {
 				task.Status.Result.PRURL = prURL
 			}
+			apimeta.SetStatusCondition(&task.Status.Conditions, metav1.Condition{
+				Type:               toolkitv1alpha1.ConditionSucceeded,
+				Status:             metav1.ConditionTrue,
+				Reason:             toolkitv1alpha1.ReasonSucceeded,
+				Message:            req.Message,
+				ObservedGeneration: task.Generation,
+			})
 		case EventFailed:
 			if errMsg, ok := req.Details["error"].(string); ok {
 				task.Status.Result.Error = errMsg
 			}
+			apimeta.SetStatusCondition(&task.Status.Conditions, metav1.Condition{
+				Type:               toolkitv1alpha1.ConditionSucceeded,
+				Status:             metav1.ConditionFalse,
+				Reason:             toolkitv1alpha1.ReasonFailed,
+				Message:            req.Message,
+				ObservedGeneration: task.Generation,
+			})
 		}
 
-		// Phase 1: Set Notified condition to CallbackPending (Unknown status) in the SAME update
+		// Set Notified condition to CallbackPending (Unknown status) in the SAME update
 		// as result fields to avoid a double-write race (resource version changes after first update).
 		apimeta.SetStatusCondition(&task.Status.Conditions, metav1.Condition{
 			Type:               toolkitv1alpha1.ConditionNotified,
