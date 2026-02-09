@@ -2,7 +2,7 @@
 
 ## Overview
 
-Implement the production runner image (`shepherd-runner-go`) that replaces the e2e stub with a container capable of executing coding tasks via Claude Code. The runner receives task assignments from the operator, fetches task data and GitHub tokens from the API, clones the repo, invokes Claude Code in headless mode, and reports status back via both a CC Stop hook and a Go entrypoint fallback.
+Implement the production runner image (`shepherd-runner`) that replaces the e2e stub with a container capable of executing coding tasks via Claude Code. The runner receives task assignments from the operator, fetches task data and GitHub tokens from the API, clones the repo, invokes Claude Code in headless mode, and reports status back via both a CC Stop hook and a Go entrypoint fallback.
 
 ## Current State Analysis
 
@@ -22,20 +22,20 @@ Implement the production runner image (`shepherd-runner-go`) that replaces the e
 
 ## Desired End State
 
-A production-ready runner container image (`shepherd-runner-go`) that:
+A production-ready runner container image (`shepherd-runner`) that:
 
 1. Listens on `:8888` with `/healthz` and `POST /task` endpoints
 2. On task assignment: fetches task data, fetches GitHub token, clones repo, runs Claude Code
 3. Reports `started` status before CC invocation (Go entrypoint)
-4. Reports `completed`/`failed` status after CC finishes (CC Stop hook via `shepherd-runner-go hook` subcommand)
+4. Reports `completed`/`failed` status after CC finishes (CC Stop hook via `shepherd-runner hook` subcommand)
 5. Reports `failed` status if CC crashes/exits non-zero (Go entrypoint fallback)
 6. Exits after task completion (single-task pod lifecycle)
 
 ### Verification
 
-- `make test` passes with new `pkg/runner/` and `cmd/shepherd-runner-go/` tests
+- `make test` passes with new `pkg/runner/` and `cmd/shepherd-runner/` tests
 - `make lint-fix` passes
-- `docker build -f build/runner-go/Dockerfile .` produces a working image
+- `docker build -f build/runner/Dockerfile .` produces a working image
 - GHA release workflow triggers on `v*` tags and pushes to GHCR
 
 ## What We're NOT Doing
@@ -45,19 +45,66 @@ A production-ready runner container image (`shepherd-runner-go`) that:
 - **No prompt engineering iteration** - hardcoded v1 prompt, iteration happens later
 - **No ARM64 support** - linux/amd64 only
 - **No independent versioning** - runner image tracks shepherd release version
-- **No changes to the e2e stub** (`cmd/shepherd-runner/`) - it stays as-is
 - **No changes to the operator or API server** - runner implements the existing contract
 
 ## Implementation Approach
 
-The work is split into 6 phases, each producing compilable, testable code:
+The work is split into 7 phases, each producing compilable, testable code:
 
+0. **Move e2e stub** - Relocate `cmd/shepherd-runner/` to `test/e2e/testrunner/`
 1. **`pkg/runner/`** - Shared HTTP server, API client, and interfaces
-2. **`cmd/shepherd-runner-go/`** - CLI with `serve` and `hook` subcommands
+2. **`cmd/shepherd-runner/`** - CLI with `serve` and `hook` subcommands
 3. **Go runner logic** - Clone, invoke CC, parse output
 4. **Hook subcommand** - CC Stop hook handler that reports status
 5. **Dockerfile + image config** - CLAUDE.md, settings.json, Dockerfile
 6. **GHA release workflow** - Build and push both images to GHCR
+
+---
+
+## Phase 0: Move E2E Stub Runner
+
+### Overview
+
+The current `cmd/shepherd-runner/` is a minimal stub (72 lines) used only for e2e testing. It doesn't belong in `cmd/` since that directory is for production binaries. Move it to `test/e2e/testrunner/` to free up the `cmd/shepherd-runner/` path for the real production runner.
+
+### Rationale
+
+- `cmd/` is for production binaries that ship to users — the stub is test infrastructure
+- Go projects don't suffix binaries with `-go` (YAGNI — no other language runners exist yet)
+- If a Python/Rust runner is added later, image tags or repo names handle differentiation
+- Follows Kubernetes project conventions (`test/e2e/` for e2e test binaries)
+
+### Changes Required
+
+#### 1. Move stub runner
+
+```bash
+git mv cmd/shepherd-runner test/e2e/testrunner
+```
+
+#### 2. Update references
+
+- **Makefile**: Update any `cmd/shepherd-runner` build targets to `test/e2e/testrunner`
+- **`.ko.yaml`** (if exists): Update import path
+- **e2e tests**: Update any references to the old binary path
+- **Operator code**: The operator doesn't reference the binary path directly (it uses the SandboxTemplate image) — no changes needed
+
+#### 3. Verify
+
+Ensure the stub is still buildable from its new location:
+
+```bash
+go build ./test/e2e/testrunner/
+```
+
+### Success Criteria
+
+#### Automated Verification
+
+- [ ] `go build ./test/e2e/testrunner/` compiles
+- [ ] `make lint-fix` passes
+- [ ] `make test` passes (all existing tests still pass)
+- [ ] No references to `cmd/shepherd-runner` remain (except in git history)
 
 ---
 
@@ -200,7 +247,7 @@ Tests for the API client using `httptest.Server`:
 
 ---
 
-## Phase 2: `cmd/shepherd-runner-go/` - CLI Entry Point
+## Phase 2: `cmd/shepherd-runner/` - CLI Entry Point
 
 ### Overview
 
@@ -210,7 +257,7 @@ Create the runner binary with Kong CLI, two subcommands (`serve` and `hook`), an
 
 #### 1. Main entry point
 
-**File**: `cmd/shepherd-runner-go/main.go`
+**File**: `cmd/shepherd-runner/main.go`
 
 ```go
 package main
@@ -230,8 +277,8 @@ type CLI struct {
 func main() {
     cli := CLI{}
     ctx := kong.Parse(&cli,
-        kong.Name("shepherd-runner-go"),
-        kong.Description("Shepherd runner for Go development tasks"),
+        kong.Name("shepherd-runner"),
+        kong.Description("Shepherd runner for coding tasks"),
     )
     if err := ctx.Run(); err != nil {
         fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -242,7 +289,7 @@ func main() {
 
 #### 2. Serve subcommand
 
-**File**: `cmd/shepherd-runner-go/serve.go`
+**File**: `cmd/shepherd-runner/serve.go`
 
 ```go
 type ServeCmd struct {
@@ -256,7 +303,7 @@ func (c *ServeCmd) Run() error {
 
 #### 3. Hook subcommand (stub for now)
 
-**File**: `cmd/shepherd-runner-go/hook.go`
+**File**: `cmd/shepherd-runner/hook.go`
 
 ```go
 type HookCmd struct{}
@@ -271,7 +318,7 @@ func (c *HookCmd) Run() error {
 
 #### Automated Verification
 
-- [ ] `go build ./cmd/shepherd-runner-go/` compiles
+- [ ] `go build ./cmd/shepherd-runner/` compiles
 - [ ] `make lint-fix` passes
 - [ ] `make test` passes
 
@@ -287,7 +334,7 @@ Implement the `GoRunner` that clones the repo, configures git, invokes Claude Co
 
 #### 1. Go runner implementation
 
-**File**: `cmd/shepherd-runner-go/gorunner.go`
+**File**: `cmd/shepherd-runner/gorunner.go`
 
 ```go
 // GoRunner implements runner.TaskRunner for Go development tasks.
@@ -325,7 +372,7 @@ Key design decisions:
 
 #### 2. Prompt builder
 
-**File**: `cmd/shepherd-runner-go/prompt.go`
+**File**: `cmd/shepherd-runner/prompt.go`
 
 ```go
 func buildPrompt(task runner.TaskData) string {
@@ -338,7 +385,7 @@ func buildPrompt(task runner.TaskData) string {
 
 #### 3. Tests
 
-**File**: `cmd/shepherd-runner-go/gorunner_test.go`
+**File**: `cmd/shepherd-runner/gorunner_test.go`
 
 Tests using mock `CommandExecutor`:
 
@@ -351,8 +398,8 @@ Tests using mock `CommandExecutor`:
 
 #### Automated Verification
 
-- [ ] `go build ./cmd/shepherd-runner-go/` compiles
-- [ ] `go test ./cmd/shepherd-runner-go/` passes
+- [ ] `go build ./cmd/shepherd-runner/` compiles
+- [ ] `go test ./cmd/shepherd-runner/` passes
 - [ ] `make lint-fix` passes
 - [ ] `make test` passes
 
@@ -368,7 +415,7 @@ Implement the `hook` subcommand that handles CC's Stop hook. When CC finishes, t
 
 #### 1. Hook implementation
 
-**File**: `cmd/shepherd-runner-go/hook.go`
+**File**: `cmd/shepherd-runner/hook.go`
 
 Replace the stub with:
 
@@ -399,7 +446,7 @@ The hook is configured in `~/.claude/settings.json` (baked into image):
         "hooks": [
           {
             "type": "command",
-            "command": "/usr/local/bin/shepherd-runner-go hook",
+            "command": "/usr/local/bin/shepherd-runner hook",
             "timeout": 30
           }
         ]
@@ -411,7 +458,7 @@ The hook is configured in `~/.claude/settings.json` (baked into image):
 
 #### 2. Hook input types
 
-**File**: `cmd/shepherd-runner-go/hook.go` (same file)
+**File**: `cmd/shepherd-runner/hook.go` (same file)
 
 ```go
 // HookInput is the JSON data CC passes to hooks on stdin.
@@ -426,7 +473,7 @@ type HookInput struct {
 
 #### 3. Tests
 
-**File**: `cmd/shepherd-runner-go/hook_test.go`
+**File**: `cmd/shepherd-runner/hook_test.go`
 
 - `TestHookStopHookActive` - When `stop_hook_active=true`, exits without reporting
 - `TestHookWithPR` - Mocked git/gh output shows PR exists, reports `completed` with PR URL
@@ -438,8 +485,8 @@ type HookInput struct {
 
 #### Automated Verification
 
-- [ ] `go build ./cmd/shepherd-runner-go/` compiles
-- [ ] `go test ./cmd/shepherd-runner-go/` passes
+- [ ] `go build ./cmd/shepherd-runner/` compiles
+- [ ] `go test ./cmd/shepherd-runner/` passes
 - [ ] `make lint-fix` passes
 - [ ] `make test` passes
 
@@ -449,13 +496,13 @@ type HookInput struct {
 
 ### Overview
 
-Create the Dockerfile for `shepherd-runner-go` and the baked-in configuration files (CLAUDE.md, settings.json).
+Create the Dockerfile for `shepherd-runner` and the baked-in configuration files (CLAUDE.md, settings.json).
 
 ### Changes Required
 
 #### 1. Dockerfile
 
-**File**: `build/runner-go/Dockerfile`
+**File**: `build/runner/Dockerfile`
 
 ```dockerfile
 FROM golang:1.25-bookworm AS builder
@@ -464,7 +511,7 @@ WORKDIR /build
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -o /shepherd-runner-go ./cmd/shepherd-runner-go/
+RUN CGO_ENABLED=0 go build -o /shepherd-runner ./cmd/shepherd-runner/
 
 FROM golang:1.25-bookworm
 
@@ -496,24 +543,24 @@ RUN git config --global user.name "Shepherd Bot" \
     && git config --global user.email "shepherd-bot@users.noreply.github.com"
 
 # Copy runner binary
-COPY --from=builder /shepherd-runner-go /usr/local/bin/shepherd-runner-go
+COPY --from=builder /shepherd-runner /usr/local/bin/shepherd-runner
 
 # Copy configuration files
-COPY build/runner-go/CLAUDE.md /home/shepherd/.claude/CLAUDE.md
-COPY build/runner-go/settings.json /home/shepherd/.claude/settings.json
+COPY build/runner/CLAUDE.md /home/shepherd/.claude/CLAUDE.md
+COPY build/runner/settings.json /home/shepherd/.claude/settings.json
 
 # Create workspace directory
 RUN mkdir -p /workspace
 
 EXPOSE 8888
-ENTRYPOINT ["shepherd-runner-go"]
+ENTRYPOINT ["shepherd-runner"]
 ```
 
-Note: The `COPY --from=builder` and `COPY build/runner-go/` need the binary to be writable by the shepherd user, and the `/usr/local/bin/` copy should happen before the `USER shepherd` directive. The Claude Code installer runs as root. I'll refine the exact ordering during implementation.
+Note: The `COPY --from=builder` and `COPY build/runner/` need the binary to be writable by the shepherd user, and the `/usr/local/bin/` copy should happen before the `USER shepherd` directive. The Claude Code installer runs as root. I'll refine the exact ordering during implementation.
 
 #### 2. CLAUDE.md for runner
 
-**File**: `build/runner-go/CLAUDE.md`
+**File**: `build/runner/CLAUDE.md`
 
 ```markdown
 # Shepherd Runner
@@ -531,7 +578,7 @@ You are a coding agent running inside a Shepherd runner container. You have been
 
 #### 3. Claude Code settings
 
-**File**: `build/runner-go/settings.json`
+**File**: `build/runner/settings.json`
 
 ```json
 {
@@ -552,7 +599,7 @@ You are a coding agent running inside a Shepherd runner container. You have been
         "hooks": [
           {
             "type": "command",
-            "command": "/usr/local/bin/shepherd-runner-go hook",
+            "command": "/usr/local/bin/shepherd-runner hook",
             "timeout": 30
           }
         ]
@@ -564,13 +611,13 @@ You are a coding agent running inside a Shepherd runner container. You have been
 
 #### 4. SandboxTemplate example
 
-**File**: `config/samples/sandbox-template-runner-go.yaml`
+**File**: `config/samples/sandbox-template-runner.yaml`
 
 ```yaml
 apiVersion: extensions.agents.x-k8s.io/v1alpha1
 kind: SandboxTemplate
 metadata:
-  name: runner-go
+  name: runner
 spec:
   template:
     spec:
@@ -581,7 +628,7 @@ spec:
         runAsNonRoot: true
       containers:
         - name: runner
-          image: ghcr.io/nissessenap/shepherd-runner-go:latest
+          image: ghcr.io/nissessenap/shepherd-runner:latest
           ports:
             - containerPort: 8888
               protocol: TCP
@@ -611,7 +658,7 @@ spec:
 
 #### Automated Verification
 
-- [ ] `docker build -f build/runner-go/Dockerfile .` builds successfully
+- [ ] `docker build -f build/runner/Dockerfile .` builds successfully
 - [ ] `make lint-fix` passes
 - [ ] `make test` passes
 
@@ -630,7 +677,7 @@ spec:
 
 ### Overview
 
-Create a GitHub Actions workflow that builds and pushes both `shepherd` and `shepherd-runner-go` images to GHCR on tag push.
+Create a GitHub Actions workflow that builds and pushes both `shepherd` and `shepherd-runner` images to GHCR on tag push.
 
 ### Changes Required
 
@@ -654,7 +701,7 @@ permissions:
 env:
   REGISTRY: ghcr.io
   SHEPHERD_IMAGE: ghcr.io/${{ github.repository_owner }}/shepherd
-  RUNNER_IMAGE: ghcr.io/${{ github.repository_owner }}/shepherd-runner-go
+  RUNNER_IMAGE: ghcr.io/${{ github.repository_owner }}/shepherd-runner
 
 jobs:
   shepherd:
@@ -681,8 +728,8 @@ jobs:
             --tags=latest \
             ./cmd/shepherd/
 
-  runner-go:
-    name: Build shepherd-runner-go image
+  runner:
+    name: Build shepherd-runner image
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -698,7 +745,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: build/runner-go/Dockerfile
+          file: build/runner/Dockerfile
           push: true
           platforms: linux/amd64
           tags: |
@@ -710,14 +757,14 @@ jobs:
 
 **File**: `Makefile`
 
-Add new targets for building the runner-go image locally:
+Add new targets for building the runner image locally:
 
 ```makefile
-RUNNER_GO_IMG ?= shepherd-runner-go:latest
+RUNNER_IMG ?= shepherd-runner:latest
 
-.PHONY: docker-build-runner-go
-docker-build-runner-go: ## Build shepherd-runner-go Docker image locally.
- docker build -f build/runner-go/Dockerfile -t $(RUNNER_GO_IMG) .
+.PHONY: docker-build-runner
+docker-build-runner: ## Build shepherd-runner Docker image locally.
+ docker build -f build/runner/Dockerfile -t $(RUNNER_IMG) .
 ```
 
 ### Success Criteria
@@ -726,13 +773,13 @@ docker-build-runner-go: ## Build shepherd-runner-go Docker image locally.
 
 - [ ] `make lint-fix` passes
 - [ ] `make test` passes
-- [ ] `make docker-build-runner-go` builds locally
+- [ ] `make docker-build-runner` builds locally
 
 #### Manual Verification
 
 - [ ] Push a test tag to trigger the workflow (on a fork or with `workflow_dispatch`)
 - [ ] Both images appear in GHCR with correct tags
-- [ ] Images contain expected binaries (`shepherd`, `shepherd-runner-go`, `claude`, `go`, `gh`)
+- [ ] Images contain expected binaries (`shepherd`, `shepherd-runner`, `claude`, `go`, `gh`)
 
 ---
 
@@ -742,9 +789,9 @@ docker-build-runner-go: ## Build shepherd-runner-go Docker image locally.
 
 - `pkg/runner/server_test.go` - HTTP endpoint tests (healthz, task assignment, conflict, invalid JSON)
 - `pkg/runner/client_test.go` - API client tests with httptest mocks (fetch data, fetch token, report status)
-- `cmd/shepherd-runner-go/gorunner_test.go` - GoRunner tests with mocked command executor
-- `cmd/shepherd-runner-go/hook_test.go` - Hook subcommand tests (stdin parsing, outcome detection)
-- `cmd/shepherd-runner-go/prompt_test.go` - Prompt builder tests
+- `cmd/shepherd-runner/gorunner_test.go` - GoRunner tests with mocked command executor
+- `cmd/shepherd-runner/hook_test.go` - Hook subcommand tests (stdin parsing, outcome detection)
+- `cmd/shepherd-runner/prompt_test.go` - Prompt builder tests
 
 ### What We Don't Test
 
@@ -755,8 +802,8 @@ docker-build-runner-go: ## Build shepherd-runner-go Docker image locally.
 
 ### Manual Testing Steps
 
-1. Build Docker image locally: `make docker-build-runner-go`
-2. Run container: `docker run -p 8888:8888 -e ANTHROPIC_API_KEY=... shepherd-runner-go:latest`
+1. Build Docker image locally: `make docker-build-runner`
+2. Run container: `docker run -p 8888:8888 -e ANTHROPIC_API_KEY=... shepherd-runner:latest`
 3. Verify health: `curl localhost:8888/healthz`
 4. In a kind cluster: deploy SandboxTemplate, create AgentTask, verify runner picks up and executes
 
@@ -780,7 +827,10 @@ pkg/runner/
   client.go              - API client (fetch data, token, report status)
   client_test.go         - Client tests with httptest mocks
 
-cmd/shepherd-runner-go/
+test/e2e/testrunner/
+  main.go                - Stub runner moved from cmd/shepherd-runner/ (e2e test infrastructure)
+
+cmd/shepherd-runner/
   main.go                - Kong CLI entry point (serve + hook subcommands)
   serve.go               - Serve subcommand (wires GoRunner + runner.Server)
   gorunner.go            - GoRunner implementation (clone, invoke CC)
@@ -790,13 +840,13 @@ cmd/shepherd-runner-go/
   hook.go                - Hook subcommand (CC Stop hook handler)
   hook_test.go           - Hook tests
 
-build/runner-go/
+build/runner/
   Dockerfile             - Multi-stage Dockerfile
   CLAUDE.md              - Baked-in coding instructions
   settings.json          - CC permissions + hook config
 
 config/samples/
-  sandbox-template-runner-go.yaml  - Example SandboxTemplate
+  sandbox-template-runner.yaml  - Example SandboxTemplate
 
 .github/workflows/
   release.yaml           - Build and push images on tag
@@ -805,7 +855,7 @@ config/samples/
 ### Modified Files
 
 ```
-Makefile                 - Add docker-build-runner-go target
+Makefile                 - Add docker-build-runner target
 go.mod / go.sum          - New dependency: kong (already present)
 ```
 
@@ -813,7 +863,7 @@ go.mod / go.sum          - New dependency: kong (already present)
 
 - Research: `thoughts/research/2026-02-08-real-runner-image-design.md`
 - POC entrypoint: `poc/sandbox/cmd/entrypoint/main.go`
-- Runner stub: `cmd/shepherd-runner/main.go`
+- Runner stub (moved): `test/e2e/testrunner/main.go` (originally `cmd/shepherd-runner/main.go`)
 - API types: `pkg/api/types.go`
 - Operator task assignment: `internal/controller/agenttask_controller.go:217-256`
 - Status handler: `pkg/api/handler_status.go`
