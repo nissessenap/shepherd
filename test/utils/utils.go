@@ -136,7 +136,7 @@ func IsCertManagerCRDsInstalled() bool {
 // LoadImageToKindClusterWithName loads a local docker image to the kind cluster
 func LoadImageToKindClusterWithName(name string) error {
 	cluster := defaultKindCluster
-	if v, ok := os.LookupEnv("KIND_CLUSTER"); ok {
+	if v, ok := os.LookupEnv("KIND_CLUSTER_NAME"); ok {
 		cluster = v
 	}
 	kindOptions := []string{"load", "docker-image", name, "--name", cluster}
