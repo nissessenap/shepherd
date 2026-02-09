@@ -196,17 +196,14 @@ var _ = Describe("Manager", Ordered, func() {
 	})
 
 	Context("AgentTask Lifecycle", func() {
-		var taskName string
-
-		BeforeAll(func() {
+		It("should complete the full task lifecycle", func() {
 			By("waiting for API to be ready")
-			verifyAPIReady := func(g Gomega) {
+			Eventually(func(g Gomega) {
 				resp, err := http.Get(apiURL + "/healthz")
 				g.Expect(err).NotTo(HaveOccurred())
 				defer resp.Body.Close()
 				g.Expect(resp.StatusCode).To(Equal(http.StatusOK))
-			}
-			Eventually(verifyAPIReady, 30*time.Second, 2*time.Second).Should(Succeed())
+			}, 30*time.Second, 2*time.Second).Should(Succeed())
 
 			By("creating the AgentTask via the public API")
 			reqBody := `{
@@ -236,83 +233,65 @@ var _ = Describe("Manager", Ordered, func() {
 			}
 			Expect(json.NewDecoder(resp.Body).Decode(&taskResp)).To(Succeed())
 			Expect(taskResp.ID).NotTo(BeEmpty(), "API should return a task ID")
-			taskName = taskResp.ID
+			taskName := taskResp.ID
 			GinkgoWriter.Printf("Created task: %s\n", taskName)
-		})
 
-		AfterAll(func() {
-			if taskName != "" {
+			defer func() {
 				By("cleaning up the AgentTask")
 				cmd := exec.Command("kubectl", "delete", "agenttask", taskName,
 					"-n", namespace, "--ignore-not-found")
 				_, _ = utils.Run(cmd)
-
-				By("cleaning up the SandboxClaim")
-				cmd = exec.Command("kubectl", "delete", "sandboxclaim", taskName,
-					"-n", namespace, "--ignore-not-found")
-				_, _ = utils.Run(cmd)
-			}
-		})
-
-		It("should create a SandboxClaim for the task", func() {
-			verifySandboxClaim := func(g Gomega) {
+			}()
+			By("verifying a SandboxClaim is created for the task")
+			Eventually(func(g Gomega) {
 				cmd := exec.Command("kubectl", "get", "sandboxclaim", taskName,
 					"-n", namespace, "-o", "jsonpath={.metadata.name}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(output).To(Equal(taskName))
-			}
-			Eventually(verifySandboxClaim, 30*time.Second, time.Second).Should(Succeed())
-		})
+			}, 30*time.Second, time.Second).Should(Succeed())
 
-		It("should reach Running state when sandbox is ready", func() {
-			verifyRunning := func(g Gomega) {
+			By("waiting for Running state")
+			Eventually(func(g Gomega) {
 				cmd := exec.Command("kubectl", "get", "agenttask", taskName,
 					"-n", namespace,
 					"-o", `jsonpath={.status.conditions[?(@.type=="Succeeded")].reason}`)
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(output).To(Equal("Running"))
-			}
-			Eventually(verifyRunning, 3*time.Minute, 2*time.Second).Should(Succeed())
-		})
+			}, 3*time.Minute, 2*time.Second).Should(Succeed())
 
-		It("should reach Succeeded state after runner completes", func() {
-			verifySucceeded := func(g Gomega) {
+			By("waiting for Succeeded state after runner completes")
+			Eventually(func(g Gomega) {
 				cmd := exec.Command("kubectl", "get", "agenttask", taskName,
 					"-n", namespace,
 					"-o", `jsonpath={.status.conditions[?(@.type=="Succeeded")].status}`)
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(output).To(Equal("True"))
-			}
-			Eventually(verifySucceeded, 3*time.Minute, 2*time.Second).Should(Succeed())
-		})
+			}, 3*time.Minute, 2*time.Second).Should(Succeed())
 
-		It("should set Notified condition after terminal state", func() {
-			verifyNotified := func(g Gomega) {
+			By("verifying Notified condition is set")
+			Eventually(func(g Gomega) {
 				cmd := exec.Command("kubectl", "get", "agenttask", taskName,
 					"-n", namespace,
 					"-o", `jsonpath={.status.conditions[?(@.type=="Notified")].reason}`)
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
-				// CallbackSent if example.com responds 2xx, CallbackFailed otherwise — either is valid
+				// CallbackSent if example.com responds 2xx, CallbackFailed otherwise
 				g.Expect(output).To(SatisfyAny(
 					Equal("CallbackSent"),
 					Equal("CallbackFailed"),
 				))
-			}
-			Eventually(verifyNotified, 30*time.Second, 2*time.Second).Should(Succeed())
-		})
+			}, 30*time.Second, 2*time.Second).Should(Succeed())
 
-		It("should clean up the SandboxClaim after terminal state", func() {
-			verifyClaimDeleted := func(g Gomega) {
+			By("verifying SandboxClaim is cleaned up")
+			Eventually(func(g Gomega) {
 				cmd := exec.Command("kubectl", "get", "sandboxclaim", taskName,
 					"-n", namespace, "--no-headers")
 				_, err := utils.Run(cmd)
 				g.Expect(err).To(HaveOccurred(), "SandboxClaim should be deleted")
-			}
-			Eventually(verifyClaimDeleted, 60*time.Second, 2*time.Second).Should(Succeed())
+			}, 60*time.Second, 2*time.Second).Should(Succeed())
 		})
 	})
 })
