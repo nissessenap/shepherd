@@ -76,7 +76,15 @@ func executeTask(ctx context.Context, ta TaskAssignment) error {
 	}
 	slog.Info("task data fetched", "taskID", ta.TaskID)
 
-	// 2. Report completed status
+	// 2. Simulate work (gives e2e tests time to observe Running state)
+	slog.Info("simulating work", "taskID", ta.TaskID, "duration", "5s")
+	select {
+	case <-time.After(5 * time.Second):
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+
+	// 3. Report completed status
 	return reportStatus(ctx, ta, "completed", "stub runner completed successfully")
 }
 
