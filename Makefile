@@ -99,7 +99,7 @@ test-e2e-interactive: ## Run e2e tests, keeping the Kind cluster alive for debug
 	go test ./test/e2e/ -tags e2e -v -count=1 -timeout 10m
 
 .PHONY: test-e2e-existing
-test-e2e-existing: ## Run e2e tests against an already-running cluster.
+test-e2e-existing: install-agent-sandbox install deploy-test deploy-e2e-fixtures ## Run e2e tests against an already-running cluster.
 	go test ./test/e2e/ -tags e2e -v -count=1 -timeout 10m
 
 ##@ Build
@@ -152,7 +152,7 @@ AGENT_SANDBOX_VERSION ?= v0.1.1
 install-agent-sandbox: ## Install agent-sandbox operator into the cluster.
 	$(KUBECTL) apply -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/$(AGENT_SANDBOX_VERSION)/manifest.yaml
 	$(KUBECTL) apply -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/$(AGENT_SANDBOX_VERSION)/extensions.yaml
-	$(KUBECTL) wait --for=condition=Available deployment -l control-plane=controller-manager -n agent-sandbox-system --timeout=2m
+	$(KUBECTL) rollout status statefulset/agent-sandbox-controller -n agent-sandbox-system --timeout=2m
 
 .PHONY: deploy-e2e-fixtures
 deploy-e2e-fixtures: ## Deploy e2e test fixtures (SandboxTemplate).

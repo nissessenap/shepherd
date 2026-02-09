@@ -79,8 +79,8 @@ var _ = Describe("Manager", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
 
 		By("verifying agent-sandbox controller is available")
-		cmd = exec.Command("kubectl", "wait", "--for=condition=Available",
-			"deployment", "-l", "control-plane=controller-manager",
+		cmd = exec.Command("kubectl", "rollout", "status",
+			"statefulset/agent-sandbox-controller",
 			"-n", "agent-sandbox-system", "--timeout=2m")
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "agent-sandbox controller not available")

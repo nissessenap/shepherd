@@ -41,3 +41,7 @@ patches:
   target:
     kind: Service
     name: shepherd-shepherd-api
+images:
+- name: controller
+  newName: shepherd
+  newTag: latest
