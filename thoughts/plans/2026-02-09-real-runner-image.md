@@ -167,7 +167,7 @@ type Server struct {
     runner   TaskRunner
     client   *Client
     addr     string
-    logger   *slog.Logger
+    logger   logr.Logger
 }
 
 // NewServer creates a runner server.
@@ -201,7 +201,7 @@ HTTP client for the shepherd API (internal port 8081).
 type Client struct {
     baseURL    string
     httpClient *http.Client
-    logger     *slog.Logger
+    logger     logr.Logger
 }
 
 // NewClient creates an API client.
@@ -340,7 +340,7 @@ Implement the `GoRunner` that clones the repo, configures git, invokes Claude Co
 // GoRunner implements runner.TaskRunner for Go development tasks.
 type GoRunner struct {
     workDir    string // e.g., /workspace
-    logger     *slog.Logger
+    logger     logr.Logger
     execCmd    CommandExecutor // interface for testing
 }
 
@@ -409,7 +409,15 @@ Tests using mock `CommandExecutor`:
 
 ### Overview
 
-Implement the `hook` subcommand that handles CC's Stop hook. When CC finishes, this subcommand reads the hook JSON from stdin, determines the outcome (success/failure), and reports status to the shepherd API.
+Implement the `hook` subcommand that handles CC's Stop hook. For MVP, the hook is kept simple: it reads the hook JSON from stdin, checks for the infinite-loop guard, and reports a `completed` status to the shepherd API. **No artifact verification** (no `git diff`, no `gh pr list`) — CC itself is responsible for creating the PR via the prompt instructions. The Go entrypoint fallback in `server.go` handles crash/error reporting.
+
+### Design Decision (MVP Simplification)
+
+The research doc considered having the hook verify artifacts (git changes, PR existence), but for MVP:
+- CC is instructed via the prompt to create a PR — trust it to do so
+- The hook just signals "CC finished" to the API
+- The Go entrypoint reports `failed` if CC exits non-zero (crash/timeout)
+- Artifact verification (was a PR actually created?) is a future enhancement
 
 ### Changes Required
 
@@ -426,13 +434,8 @@ func (c *HookCmd) Run() error {
     // 1. Read hook JSON from stdin (CC passes hook data on stdin)
     // 2. Check stop_hook_active field - if true, exit early (prevent infinite loop)
     // 3. Read SHEPHERD_API_URL and SHEPHERD_TASK_ID from env vars
-    // 4. Determine outcome:
-    //    a. Run "git diff --stat" in CWD to check for changes
-    //    b. Run "gh pr list --head shepherd/{taskID} --json url" to find PR
-    //    c. If PR found: event=completed, details={pr_url: <url>}
-    //    d. If changes but no PR: event=failed, message="changes made but no PR created"
-    //    e. If no changes: event=failed, message="no changes made"
-    // 5. POST status to API via runner.Client
+    // 4. Report completed status to API via runner.Client
+    //    (CC is trusted to have created the PR per prompt instructions)
 }
 ```
 
@@ -476,9 +479,7 @@ type HookInput struct {
 **File**: `cmd/shepherd-runner/hook_test.go`
 
 - `TestHookStopHookActive` - When `stop_hook_active=true`, exits without reporting
-- `TestHookWithPR` - Mocked git/gh output shows PR exists, reports `completed` with PR URL
-- `TestHookNoChanges` - No git diff output, reports `failed`
-- `TestHookChangesNoPR` - Git diff shows changes but no PR found, reports `failed`
+- `TestHookReportsCompleted` - Normal stop, reports `completed` to API
 - `TestHookMissingEnvVars` - Missing `SHEPHERD_API_URL`, returns error
 
 ### Success Criteria
@@ -790,7 +791,7 @@ docker-build-runner: ## Build shepherd-runner Docker image locally.
 - `pkg/runner/server_test.go` - HTTP endpoint tests (healthz, task assignment, conflict, invalid JSON)
 - `pkg/runner/client_test.go` - API client tests with httptest mocks (fetch data, fetch token, report status)
 - `cmd/shepherd-runner/gorunner_test.go` - GoRunner tests with mocked command executor
-- `cmd/shepherd-runner/hook_test.go` - Hook subcommand tests (stdin parsing, outcome detection)
+- `cmd/shepherd-runner/hook_test.go` - Hook subcommand tests (stdin parsing, stop_hook_active guard, status reporting)
 - `cmd/shepherd-runner/prompt_test.go` - Prompt builder tests
 
 ### What We Don't Test
