@@ -20,7 +20,7 @@ This task was created from: %s
 
 ## Additional Context
 
-Additional context has been written to the file task-context.md in this repository.
+Additional context has been written to ~/task-context.md (outside the repository).
 
 ## Instructions
 

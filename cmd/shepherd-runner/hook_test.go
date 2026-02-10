@@ -57,10 +57,10 @@ func TestHookStopHookActive(t *testing.T) {
 }
 
 func TestHookNoChanges(t *testing.T) {
-	// git diff --quiet HEAD exits 0 = no changes
+	// git rev-list --count returns "0" = no commits on branch
 	mock := &mockExecutor{
 		results: []*ExecResult{
-			{ExitCode: 0}, // git diff --quiet HEAD
+			{ExitCode: 0, Stdout: []byte("0\n")}, // git rev-list --count
 		},
 		errs: []error{nil},
 	}
@@ -87,19 +87,19 @@ func TestHookNoChanges(t *testing.T) {
 	assert.Equal(t, "failed", reportedEvent)
 	assert.Equal(t, "no changes made", reportedMessage)
 
-	// Verify git diff was called
+	// Verify git rev-list was called
 	require.Len(t, mock.calls, 1)
 	assert.Equal(t, "git", mock.calls[0].Name)
-	assert.Equal(t, []string{"diff", "--quiet", "HEAD"}, mock.calls[0].Args)
+	assert.Equal(t, []string{"rev-list", "--count", "HEAD", "^HEAD@{upstream}"}, mock.calls[0].Args)
 	assert.Equal(t, "/tmp/repo", mock.calls[0].Opts.Dir)
 }
 
 func TestHookChangesNoPR(t *testing.T) {
-	// git diff --quiet exits 1 = changes exist, gh pr list returns empty
+	// git rev-list --count returns "2" = commits exist, gh pr list returns empty
 	mock := &mockExecutor{
 		results: []*ExecResult{
-			{ExitCode: 1},                     // git diff --quiet HEAD (changes exist)
-			{ExitCode: 0, Stdout: []byte("")}, // gh pr list (no PR)
+			{ExitCode: 0, Stdout: []byte("2\n")}, // git rev-list --count (2 commits)
+			{ExitCode: 0, Stdout: []byte("")},    // gh pr list (no PR)
 		},
 		errs: []error{nil, nil},
 	}
@@ -134,10 +134,10 @@ func TestHookChangesNoPR(t *testing.T) {
 }
 
 func TestHookPRCreated(t *testing.T) {
-	// git diff --quiet exits 1, gh pr list returns URL
+	// git rev-list --count returns "1" = commits exist, gh pr list returns URL
 	mock := &mockExecutor{
 		results: []*ExecResult{
-			{ExitCode: 1}, // git diff --quiet HEAD
+			{ExitCode: 0, Stdout: []byte("1\n")},                                   // git rev-list --count
 			{ExitCode: 0, Stdout: []byte("https://github.com/org/repo/pull/42\n")}, // gh pr list
 		},
 		errs: []error{nil, nil},
@@ -201,10 +201,10 @@ func TestHookMissingEnvVars(t *testing.T) {
 }
 
 func TestHookAPINetworkError(t *testing.T) {
-	// git diff shows changes, PR exists, but API is unreachable
+	// git rev-list shows commits, PR exists, but API is unreachable
 	mock := &mockExecutor{
 		results: []*ExecResult{
-			{ExitCode: 1}, // git diff
+			{ExitCode: 0, Stdout: []byte("1\n")},                                   // git rev-list --count
 			{ExitCode: 0, Stdout: []byte("https://github.com/org/repo/pull/42\n")}, // gh pr list
 		},
 		errs: []error{nil, nil},

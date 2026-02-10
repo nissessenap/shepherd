@@ -32,11 +32,15 @@ func WithLogger(l logr.Logger) ServerOption {
 	return func(s *Server) { s.logger = l }
 }
 
+// WithClient sets the API client (useful for testing).
+func WithClient(c APIClient) ServerOption {
+	return func(s *Server) { s.client = c }
+}
+
 // NewServer creates a runner server.
-func NewServer(runner TaskRunner, client APIClient, opts ...ServerOption) *Server {
+func NewServer(runner TaskRunner, opts ...ServerOption) *Server {
 	s := &Server{
 		runner:   runner,
-		client:   client,
 		addr:     ":8888",
 		logger:   logr.Discard(),
 		assigned: make(chan TaskAssignment, 1),
@@ -114,28 +118,34 @@ func (s *Server) Serve(ctx context.Context) error {
 func (s *Server) executeTask(ctx context.Context, ta TaskAssignment) error {
 	log := s.logger.WithValues("taskID", ta.TaskID)
 
+	// Use injected client (testing) or create a new one
+	client := s.client
+	if client == nil {
+		client = NewClient(ta.APIURL, WithClientLogger(log))
+	}
+
 	// Report started status
-	if err := s.client.ReportStatus(ctx, ta.TaskID, "started", "runner starting task", nil); err != nil {
+	if err := client.ReportStatus(ctx, ta.TaskID, "started", "runner starting task", nil); err != nil {
 		log.Error(err, "failed to report started status")
 		// Continue — non-fatal
 	}
 
 	// Fetch task data
-	taskData, err := s.client.FetchTaskData(ctx, ta.TaskID)
+	taskData, err := client.FetchTaskData(ctx, ta.TaskID)
 	if err != nil {
 		msg := fmt.Sprintf("failed to fetch task data: %v", err)
 		log.Error(err, "failed to fetch task data")
-		_ = s.client.ReportStatus(ctx, ta.TaskID, "failed", msg, nil)
+		_ = client.ReportStatus(ctx, ta.TaskID, "failed", msg, nil)
 		return fmt.Errorf("fetching task data: %w", err)
 	}
 	taskData.APIURL = ta.APIURL
 
 	// Fetch GitHub token (409 = fatal, non-retriable)
-	token, expiresAt, err := s.client.FetchToken(ctx, ta.TaskID)
+	token, expiresAt, err := client.FetchToken(ctx, ta.TaskID)
 	if err != nil {
 		msg := fmt.Sprintf("failed to fetch token: %v", err)
 		log.Error(err, "failed to fetch token")
-		_ = s.client.ReportStatus(ctx, ta.TaskID, "failed", msg, nil)
+		_ = client.ReportStatus(ctx, ta.TaskID, "failed", msg, nil)
 		return fmt.Errorf("fetching token: %w", err)
 	}
 	log.Info("token fetched", "expiresAt", expiresAt.Format(time.RFC3339))
@@ -146,7 +156,7 @@ func (s *Server) executeTask(ctx context.Context, ta TaskAssignment) error {
 		// Fallback: report failed if hook didn't fire
 		msg := fmt.Sprintf("runner failed: %v", err)
 		log.Error(err, "runner execution failed")
-		_ = s.client.ReportStatus(ctx, ta.TaskID, "failed", msg, nil)
+		_ = client.ReportStatus(ctx, ta.TaskID, "failed", msg, nil)
 		return fmt.Errorf("running task: %w", err)
 	}
 

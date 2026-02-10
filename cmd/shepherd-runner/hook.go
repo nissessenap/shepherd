@@ -93,20 +93,25 @@ func verifyArtifacts(
 	ctx context.Context, logger logr.Logger, exec CommandExecutor,
 	cwd, taskID string,
 ) (event, message string, details map[string]any) {
-	// Check if any changes were made: git diff --quiet HEAD
-	diffArgs := []string{"diff", "--quiet", "HEAD"}
-	res, err := exec.Run(ctx, "git", diffArgs, ExecOptions{Dir: cwd})
+	// Check if commits were made on the branch (not just uncommitted changes).
+	// git rev-list --count HEAD ^HEAD@{upstream} counts commits ahead of the
+	// upstream tracking branch. If CC committed its work (as instructed), this
+	// detects it correctly — unlike git diff --quiet HEAD which only checks
+	// the working tree.
+	revArgs := []string{"rev-list", "--count", "HEAD", "^HEAD@{upstream}"}
+	res, err := exec.Run(ctx, "git", revArgs, ExecOptions{Dir: cwd})
 	if err != nil {
-		logger.Error(err, "failed to run git diff")
+		logger.Error(err, "failed to check commit count")
 		return eventFailed, "failed to check git state", nil
 	}
 
-	if res.ExitCode == 0 {
-		// No changes made
+	commitCount := strings.TrimSpace(string(res.Stdout))
+	if res.ExitCode != 0 || commitCount == "0" {
+		// No commits on branch
 		return eventFailed, "no changes made", nil
 	}
 
-	// Changes exist — check if a PR was created
+	// Commits exist — check if a PR was created
 	branch := "shepherd/" + taskID
 	prArgs := []string{
 		"pr", "list", "--head", branch,

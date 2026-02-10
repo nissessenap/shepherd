@@ -34,8 +34,7 @@ func (c *ServeCmd) Run() error {
 		execCmd:   &osExecutor{},
 	}
 
-	client := runner.NewClient("") // base URL comes from task assignment
-	srv := runner.NewServer(taskRunner, client, runner.WithAddr(c.Addr), runner.WithLogger(logger))
+	srv := runner.NewServer(taskRunner, runner.WithAddr(c.Addr), runner.WithLogger(logger))
 
 	return srv.Serve(ctx)
 }

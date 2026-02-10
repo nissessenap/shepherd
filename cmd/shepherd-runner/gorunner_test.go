@@ -75,6 +75,7 @@ func setupConfigDir(t *testing.T) string {
 }
 
 func TestRunCloneAndInvoke(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	configDir := setupConfigDir(t)
 	workDir := t.TempDir()
 
@@ -141,18 +142,19 @@ func TestRunCloneAndInvoke(t *testing.T) {
 	assert.Equal(t, "1", envMap["DISABLE_AUTOUPDATER"])
 	assert.Equal(t, "true", envMap["CI"])
 
-	// Verify task-context.md was written
-	contextContent, err := os.ReadFile(filepath.Join(repoDir, "task-context.md"))
+	// Verify task-context.md was written to home dir (not repo dir)
+	home, _ := os.UserHomeDir()
+	contextContent, err := os.ReadFile(filepath.Join(home, "task-context.md"))
 	require.NoError(t, err)
 	assert.Equal(t, "The login form crashes when email contains a plus sign", string(contextContent))
 
 	// Verify CC config was staged
-	home, _ := os.UserHomeDir()
 	_, err = os.Stat(filepath.Join(home, ".claude", "settings.json"))
 	assert.NoError(t, err)
 }
 
 func TestRunCloneFailure(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	configDir := setupConfigDir(t)
 	workDir := t.TempDir()
 
@@ -178,6 +180,7 @@ func TestRunCloneFailure(t *testing.T) {
 }
 
 func TestRunCCNonZeroExit(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	configDir := setupConfigDir(t)
 	workDir := t.TempDir()
 
@@ -208,6 +211,7 @@ func TestRunCCNonZeroExit(t *testing.T) {
 }
 
 func TestRunCommandExecutorError(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	configDir := setupConfigDir(t)
 	workDir := t.TempDir()
 
@@ -235,7 +239,7 @@ func TestBuildPrompt(t *testing.T) {
 
 	assert.Contains(t, prompt, "Fix the login bug")
 	assert.Contains(t, prompt, "https://github.com/org/repo/issues/42")
-	assert.Contains(t, prompt, "task-context.md")
+	assert.Contains(t, prompt, "~/task-context.md")
 	assert.Contains(t, prompt, "pull request")
 	assert.Contains(t, prompt, "Stay focused")
 }

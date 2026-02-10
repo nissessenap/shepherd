@@ -117,8 +117,12 @@ func (r *GoRunner) Run(ctx context.Context, task runner.TaskData, token string) 
 	}
 	log.Info("created branch", "branch", branch)
 
-	// 3. Write task context to repoDir/task-context.md
-	contextPath := filepath.Join(repoDir, "task-context.md")
+	// 3. Write task context to ~/task-context.md (outside the repo to avoid polluting it)
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("getting home dir: %w", err)
+	}
+	contextPath := filepath.Join(home, "task-context.md")
 	if err := os.WriteFile(contextPath, []byte(task.Context), 0o644); err != nil {
 		return nil, fmt.Errorf("writing task context: %w", err)
 	}
@@ -225,7 +229,9 @@ func (r *GoRunner) cloneRepo(ctx context.Context, log logr.Logger, task runner.T
 		return "", fmt.Errorf("git clone: %w", err)
 	}
 	if res.ExitCode != 0 {
-		return "", fmt.Errorf("git clone failed (exit %d): %s", res.ExitCode, string(res.Stderr))
+		// Sanitize stderr to avoid leaking the token in logs
+		sanitized := strings.ReplaceAll(string(res.Stderr), token, "***")
+		return "", fmt.Errorf("git clone failed (exit %d): %s", res.ExitCode, sanitized)
 	}
 
 	return repoDir, nil

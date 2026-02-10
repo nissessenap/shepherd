@@ -13,7 +13,7 @@ import (
 )
 
 func TestHealthEndpoint(t *testing.T) {
-	s := NewServer(nil, nil)
+	s := NewServer(nil)
 	srv := httptest.NewServer(s.newMux())
 	defer srv.Close()
 
@@ -27,7 +27,7 @@ func TestHealthEndpoint(t *testing.T) {
 }
 
 func TestTaskAccepted(t *testing.T) {
-	s := NewServer(nil, nil)
+	s := NewServer(nil)
 	srv := httptest.NewServer(s.newMux())
 	defer srv.Close()
 
@@ -46,7 +46,7 @@ func TestTaskAccepted(t *testing.T) {
 }
 
 func TestTaskRejectsSecond(t *testing.T) {
-	s := NewServer(nil, nil)
+	s := NewServer(nil)
 	srv := httptest.NewServer(s.newMux())
 	defer srv.Close()
 
@@ -71,7 +71,7 @@ func TestTaskRejectsSecond(t *testing.T) {
 }
 
 func TestTaskInvalidJSON(t *testing.T) {
-	s := NewServer(nil, nil)
+	s := NewServer(nil)
 	srv := httptest.NewServer(s.newMux())
 	defer srv.Close()
 
@@ -85,7 +85,7 @@ func TestTaskInvalidJSON(t *testing.T) {
 }
 
 func TestTaskMissingFields(t *testing.T) {
-	s := NewServer(nil, nil)
+	s := NewServer(nil)
 	srv := httptest.NewServer(s.newMux())
 	defer srv.Close()
 
@@ -188,7 +188,7 @@ func TestExecuteTaskHappyPath(t *testing.T) {
 		err: nil,
 	}
 
-	s := NewServer(mockRun, mockClient)
+	s := NewServer(mockRun, WithClient(mockClient))
 	ta := TaskAssignment{
 		TaskID: "task-1",
 		APIURL: "http://api:8081",
@@ -211,7 +211,7 @@ func TestExecuteTaskFetchDataFails(t *testing.T) {
 	}
 	mockRun := &mockRunner{}
 
-	s := NewServer(mockRun, mockClient)
+	s := NewServer(mockRun, WithClient(mockClient))
 	ta := TaskAssignment{
 		TaskID: "task-1",
 		APIURL: "http://api:8081",
@@ -239,7 +239,7 @@ func TestExecuteTaskFetchTokenFails(t *testing.T) {
 	}
 	mockRun := &mockRunner{}
 
-	s := NewServer(mockRun, mockClient)
+	s := NewServer(mockRun, WithClient(mockClient))
 	ta := TaskAssignment{
 		TaskID: "task-1",
 		APIURL: "http://api:8081",
@@ -271,7 +271,7 @@ func TestExecuteTaskRunnerFails(t *testing.T) {
 		err:    assert.AnError,
 	}
 
-	s := NewServer(mockRun, mockClient)
+	s := NewServer(mockRun, WithClient(mockClient))
 	ta := TaskAssignment{
 		TaskID: "task-1",
 		APIURL: "http://api:8081",
@@ -307,7 +307,7 @@ func TestExecuteTaskStartedReportFails(t *testing.T) {
 		err: nil,
 	}
 
-	s := NewServer(mockRun, mockClient)
+	s := NewServer(mockRun, WithClient(mockClient))
 	ta := TaskAssignment{
 		TaskID: "task-1",
 		APIURL: "http://api:8081",
