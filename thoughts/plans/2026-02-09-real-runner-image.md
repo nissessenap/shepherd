@@ -106,10 +106,10 @@ go build ./test/e2e/testrunner/
 
 #### Automated Verification
 
-- [ ] `go build ./test/e2e/testrunner/` compiles
-- [ ] `make lint-fix` passes
-- [ ] `make test` passes (all existing tests still pass)
-- [ ] No references to `cmd/shepherd-runner` remain (except in git history)
+- [x] `go build ./test/e2e/testrunner/` compiles
+- [x] `make lint-fix` passes
+- [x] `make test` passes (all existing tests still pass)
+- [x] No references to `cmd/shepherd-runner` remain (except in git history)
 
 ---
 

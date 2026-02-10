@@ -120,7 +120,7 @@ ko-build-local: ko ## Build shepherd image locally with ko (sets IMG).
 
 .PHONY: ko-build-runner-local
 ko-build-runner-local: ko ## Build runner stub image locally with ko (sets RUNNER_IMG).
-	$(eval RUNNER_IMG := $(shell KO_DOCKER_REPO=$(KO_DOCKER_REPO) "$(KO)" build --sbom=none --bare --local ./cmd/shepherd-runner/))
+	$(eval RUNNER_IMG := $(shell KO_DOCKER_REPO=$(KO_DOCKER_REPO) "$(KO)" build --sbom=none --bare --local ./test/e2e/testrunner/))
 	@echo "RUNNER_IMG=$(RUNNER_IMG)"
 
 .PHONY: build-smoke
