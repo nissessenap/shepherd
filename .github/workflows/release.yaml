@@ -8,6 +8,8 @@ on:
 permissions:
   contents: read
   packages: write
+  id-token: write
+  attestations: write
 
 env:
   REGISTRY: ghcr.io
@@ -18,6 +20,8 @@ jobs:
   shepherd:
     name: Build shepherd image
     runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
     steps:
       - name: Clone the code
         uses: actions/checkout@v6
@@ -26,6 +30,7 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+          cache: true
 
       - uses: ko-build/setup-ko@v0.9
 
@@ -37,17 +42,40 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push
+        id: build
         env:
           KO_DOCKER_REPO: ${{ env.SHEPHERD_IMAGE }}
         run: |
           ko build --sbom=none --bare --platform=linux/amd64 \
             --tags=${{ github.ref_name }} \
             --tags=latest \
+            --image-refs ./image-digest \
+            --image-label "org.opencontainers.image.title=shepherd" \
+            --image-label "org.opencontainers.image.description=Background coding agent orchestrator on Kubernetes" \
+            --image-label "org.opencontainers.image.url=${{ github.server_url }}/${{ github.repository }}" \
+            --image-label "org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" \
+            --image-label "org.opencontainers.image.version=${{ github.ref_name }}" \
+            --image-label "org.opencontainers.image.revision=${{ github.sha }}" \
+            --image-label "org.opencontainers.image.created=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
+            --image-label "org.opencontainers.image.licenses=Apache-2.0" \
             ./cmd/shepherd/
+
+          IMAGE_REF=$(head -n 1 ./image-digest)
+          IMAGE_DIGEST=$(echo "$IMAGE_REF" | cut -d'@' -f2)
+          echo "digest=$IMAGE_DIGEST" >> "$GITHUB_OUTPUT"
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.SHEPHERD_IMAGE }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
 
   runner:
     name: Build shepherd-runner image
     runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
     steps:
       - name: Clone the code
         uses: actions/checkout@v6
@@ -59,16 +87,35 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.RUNNER_IMAGE }}
+          tags: |
+            type=semver,pattern={{version}}
+          labels: |
+            org.opencontainers.image.title=shepherd-runner
+            org.opencontainers.image.description=Shepherd runner for executing coding tasks via Claude Code
+            org.opencontainers.image.licenses=Apache-2.0
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
       - name: Build and push
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
           file: build/runner/Dockerfile
           push: true
           platforms: linux/amd64
-          tags: |
-            ${{ env.RUNNER_IMAGE }}:${{ github.ref_name }}
-            ${{ env.RUNNER_IMAGE }}:latest
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.RUNNER_IMAGE }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
