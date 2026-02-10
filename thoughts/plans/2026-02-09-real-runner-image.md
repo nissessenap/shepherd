@@ -735,8 +735,8 @@ Note: The emptyDir mounts ensure `/home/shepherd` and `/workspace` are writable 
 #### Automated Verification
 
 - [ ] `docker build -f build/runner/Dockerfile .` builds successfully
-- [ ] `make lint-fix` passes
-- [ ] `make test` passes
+- [x] `make lint-fix` passes
+- [x] `make test` passes
 
 #### Manual Verification
 
