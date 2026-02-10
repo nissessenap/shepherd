@@ -441,10 +441,10 @@ Tests using mock `CommandExecutor`:
 
 #### Automated Verification
 
-- [ ] `go build ./cmd/shepherd-runner/` compiles
-- [ ] `go test ./cmd/shepherd-runner/` passes
-- [ ] `make lint-fix` passes
-- [ ] `make test` passes
+- [x] `go build ./cmd/shepherd-runner/` compiles
+- [x] `go test ./cmd/shepherd-runner/` passes
+- [x] `make lint-fix` passes
+- [x] `make test` passes
 
 ---
 
