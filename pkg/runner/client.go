@@ -76,12 +76,6 @@ type statusUpdateRequest struct {
 	Details map[string]any `json:"details,omitempty"`
 }
 
-// errorResponse mirrors pkg/api.ErrorResponse for JSON decoding.
-type errorResponse struct {
-	Error   string `json:"error"`
-	Details string `json:"details,omitempty"`
-}
-
 // FetchTaskData retrieves task details from the API.
 func (c *Client) FetchTaskData(ctx context.Context, taskID string) (*TaskData, error) {
 	url := c.baseURL + "/api/v1/tasks/" + taskID + "/data"
@@ -96,7 +90,7 @@ func (c *Client) FetchTaskData(ctx context.Context, taskID string) (*TaskData, e
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 	if err != nil {
 		return nil, fmt.Errorf("reading response body: %w", err)
 	}
@@ -143,7 +137,7 @@ func (c *Client) FetchToken(ctx context.Context, taskID string) (string, time.Ti
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
 	if err != nil {
 		return "", time.Time{}, fmt.Errorf("reading response body: %w", err)
 	}
@@ -196,7 +190,7 @@ func (c *Client) ReportStatus(ctx context.Context, taskID string, event, message
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 	if err != nil {
 		return fmt.Errorf("reading response body: %w", err)
 	}

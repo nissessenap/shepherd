@@ -61,6 +61,10 @@ func (s *Server) newMux() *http.ServeMux {
 			http.Error(w, "invalid request", http.StatusBadRequest)
 			return
 		}
+		if ta.TaskID == "" || ta.APIURL == "" {
+			http.Error(w, "taskID and apiURL are required", http.StatusBadRequest)
+			return
+		}
 		s.logger.Info("received task assignment", "taskID", ta.TaskID, "apiURL", ta.APIURL)
 		select {
 		case s.assigned <- ta:

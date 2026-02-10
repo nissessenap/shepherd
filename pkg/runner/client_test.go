@@ -50,7 +50,7 @@ func TestFetchTaskData(t *testing.T) {
 	t.Run("not found", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(errorResponse{Error: "task not found"})
+			_, _ = w.Write([]byte(`{"error":"task not found"}`))
 		}))
 		defer srv.Close()
 
@@ -63,7 +63,7 @@ func TestFetchTaskData(t *testing.T) {
 	t.Run("gone (terminal)", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusGone)
-			_ = json.NewEncoder(w).Encode(errorResponse{Error: "task is terminal"})
+			_, _ = w.Write([]byte(`{"error":"task is terminal"}`))
 		}))
 		defer srv.Close()
 
@@ -100,7 +100,7 @@ func TestFetchToken(t *testing.T) {
 	t.Run("409 conflict (already issued)", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusConflict)
-			_ = json.NewEncoder(w).Encode(errorResponse{Error: "token already issued"})
+			_, _ = w.Write([]byte(`{"error":"token already issued"}`))
 		}))
 		defer srv.Close()
 
