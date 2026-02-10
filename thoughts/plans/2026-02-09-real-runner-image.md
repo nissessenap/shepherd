@@ -262,10 +262,10 @@ Tests for the API client using `httptest.Server`:
 
 #### Automated Verification
 
-- [ ] `go build ./pkg/runner/` compiles
-- [ ] `go test ./pkg/runner/` passes
-- [ ] `make lint-fix` passes
-- [ ] `make test` passes (all existing tests still pass)
+- [x] `go build ./pkg/runner/` compiles
+- [x] `go test ./pkg/runner/` passes
+- [x] `make lint-fix` passes
+- [x] `make test` passes (all existing tests still pass)
 
 ---
 
