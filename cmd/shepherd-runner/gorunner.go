@@ -131,6 +131,7 @@ func (r *GoRunner) Run(ctx context.Context, task runner.TaskData, token string) 
 	env := []string{
 		"SHEPHERD_API_URL=" + task.APIURL,
 		"SHEPHERD_TASK_ID=" + task.TaskID,
+		"GH_TOKEN=" + token,
 		"DISABLE_AUTOUPDATER=1",
 		"CI=true",
 	}

@@ -94,11 +94,11 @@ func verifyArtifacts(
 	cwd, taskID string,
 ) (event, message string, details map[string]any) {
 	// Check if commits were made on the branch (not just uncommitted changes).
-	// git rev-list --count HEAD ^HEAD@{upstream} counts commits ahead of the
-	// upstream tracking branch. If CC committed its work (as instructed), this
-	// detects it correctly — unlike git diff --quiet HEAD which only checks
-	// the working tree.
-	revArgs := []string{"rev-list", "--count", "HEAD", "^HEAD@{upstream}"}
+	// git rev-list --count HEAD --not --remotes counts commits on HEAD that
+	// don't exist on any remote branch — i.e., local-only commits. This works
+	// for branches without upstream tracking, unlike HEAD@{upstream}.
+	logger.Info("checking for local commits")
+	revArgs := []string{"rev-list", "--count", "HEAD", "--not", "--remotes"}
 	res, err := exec.Run(ctx, "git", revArgs, ExecOptions{Dir: cwd})
 	if err != nil {
 		logger.Error(err, "failed to check commit count")
@@ -113,6 +113,7 @@ func verifyArtifacts(
 
 	// Commits exist — check if a PR was created
 	branch := "shepherd/" + taskID
+	logger.Info("checking for pull request", "branch", branch)
 	prArgs := []string{
 		"pr", "list", "--head", branch,
 		"--json", "url", "--jq", ".[0].url",

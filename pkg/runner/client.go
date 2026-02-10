@@ -12,6 +12,12 @@ import (
 	"github.com/go-logr/logr"
 )
 
+const (
+	maxTaskDataResponseSize = 10 << 20 // 10MB — task context can be large
+	maxTokenResponseSize    = 4 << 10  // 4KB — token response is small
+	maxStatusResponseSize   = 64 << 10 // 64KB — status response with error details
+)
+
 // APIClient communicates with the shepherd API server.
 type APIClient interface {
 	FetchTaskData(ctx context.Context, taskID string) (*TaskData, error)
@@ -90,7 +96,7 @@ func (c *Client) FetchTaskData(ctx context.Context, taskID string) (*TaskData, e
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxTaskDataResponseSize))
 	if err != nil {
 		return nil, fmt.Errorf("reading response body: %w", err)
 	}
@@ -137,7 +143,7 @@ func (c *Client) FetchToken(ctx context.Context, taskID string) (string, time.Ti
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxTokenResponseSize))
 	if err != nil {
 		return "", time.Time{}, fmt.Errorf("reading response body: %w", err)
 	}
@@ -190,7 +196,7 @@ func (c *Client) ReportStatus(ctx context.Context, taskID string, event, message
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxStatusResponseSize))
 	if err != nil {
 		return fmt.Errorf("reading response body: %w", err)
 	}

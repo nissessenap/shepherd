@@ -139,6 +139,7 @@ func TestRunCloneAndInvoke(t *testing.T) {
 	}
 	assert.Equal(t, "http://api:8081", envMap["SHEPHERD_API_URL"])
 	assert.Equal(t, "task-123", envMap["SHEPHERD_TASK_ID"])
+	assert.Equal(t, "ghp_test_token", envMap["GH_TOKEN"])
 	assert.Equal(t, "1", envMap["DISABLE_AUTOUPDATER"])
 	assert.Equal(t, "true", envMap["CI"])
 

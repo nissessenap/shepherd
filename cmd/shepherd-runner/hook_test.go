@@ -90,7 +90,7 @@ func TestHookNoChanges(t *testing.T) {
 	// Verify git rev-list was called
 	require.Len(t, mock.calls, 1)
 	assert.Equal(t, "git", mock.calls[0].Name)
-	assert.Equal(t, []string{"rev-list", "--count", "HEAD", "^HEAD@{upstream}"}, mock.calls[0].Args)
+	assert.Equal(t, []string{"rev-list", "--count", "HEAD", "--not", "--remotes"}, mock.calls[0].Args)
 	assert.Equal(t, "/tmp/repo", mock.calls[0].Opts.Dir)
 }
 
