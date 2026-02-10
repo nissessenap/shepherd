@@ -340,9 +340,9 @@ func (c *HookCmd) Run() error {
 
 #### Automated Verification
 
-- [ ] `go build ./cmd/shepherd-runner/` compiles
-- [ ] `make lint-fix` passes
-- [ ] `make test` passes
+- [x] `go build ./cmd/shepherd-runner/` compiles
+- [x] `make lint-fix` passes
+- [x] `make test` passes
 
 ---
 
