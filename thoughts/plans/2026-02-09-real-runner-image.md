@@ -41,11 +41,13 @@ A production-ready runner container image (`shepherd-runner`) that:
 ## What We're NOT Doing
 
 - **No real-time progress streaming** - CC Stop hook fires once at end, no `PostToolUse` hooks
-- **No artifact verification in Go entrypoint** - we trust CC + hook to handle success detection
 - **No prompt engineering iteration** - hardcoded v1 prompt, iteration happens later
 - **No ARM64 support** - linux/amd64 only
 - **No independent versioning** - runner image tracks shepherd release version
 - **No changes to the operator or API server** - runner implements the existing contract
+- **No prompt injection sanitization** - task description is interpolated into CC prompt; trusted because it flows through our adapter/API first (known limitation)
+- **No git credential hardening** - token embedded in clone URL, stored in `.git/config` as remote origin; acceptable for single-task pods that get deleted after completion (TODO: consider `GIT_ASKPASS` in future)
+- **No token retry on 409** - if runner crashes after fetching token but before using it, the token is burned and the task fails permanently; operator would need to create a new AgentTask
 
 ## Implementation Approach
 
@@ -84,7 +86,10 @@ git mv cmd/shepherd-runner test/e2e/testrunner
 
 #### 2. Update references
 
-- **Makefile**: Update any `cmd/shepherd-runner` build targets to `test/e2e/testrunner`
+- **Makefile targets** (all reference `./cmd/shepherd-runner/`):
+  - `ko-build-runner-local` (line ~122): Change build path to `./test/e2e/testrunner/`
+  - `build-smoke` (line ~127): Depends on `ko-build-runner-local` — no path change needed, just verify it still works
+  - `ko-build-kind` (line ~132): Uses `$(RUNNER_IMG)` variable — no change needed
 - **`.ko.yaml`** (if exists): Update import path
 - **e2e tests**: Update any references to the old binary path
 - **Operator code**: The operator doesn't reference the binary path directly (it uses the SandboxTemplate image) — no changes needed
@@ -155,7 +160,24 @@ type TaskRunner interface {
 }
 ```
 
-#### 2. HTTP server
+#### 2. API client interface
+
+**File**: `pkg/runner/client.go`
+
+Define an `APIClient` interface for testability (follows the `TokenProvider` pattern from `pkg/api/github_token.go`):
+
+```go
+// APIClient communicates with the shepherd API server.
+type APIClient interface {
+    FetchTaskData(ctx context.Context, taskID string) (*TaskData, error)
+    FetchToken(ctx context.Context, taskID string) (token string, expiresAt time.Time, err error)
+    ReportStatus(ctx context.Context, taskID string, event, message string, details map[string]any) error
+}
+```
+
+The concrete `Client` struct implements `APIClient`. Tests inject a mock.
+
+#### 3. HTTP server
 
 **File**: `pkg/runner/server.go`
 
@@ -165,13 +187,13 @@ Implements the `:8888` HTTP server with `/healthz` and `POST /task`. Follows the
 // Server handles task assignment and delegates to a TaskRunner.
 type Server struct {
     runner   TaskRunner
-    client   *Client
+    client   APIClient  // interface, not concrete *Client
     addr     string
     logger   logr.Logger
 }
 
 // NewServer creates a runner server.
-func NewServer(runner TaskRunner, opts ...ServerOption) *Server
+func NewServer(runner TaskRunner, client APIClient, opts ...ServerOption) *Server
 
 // Serve starts the HTTP server and blocks until task is complete or context is cancelled.
 func (s *Server) Serve(ctx context.Context) error
@@ -182,22 +204,21 @@ The `Serve` method:
 1. Starts HTTP server on `:8888`
 2. Waits for task assignment on channel (or context cancellation)
 3. Shuts down HTTP server with 5s timeout (prevents second assignment)
-4. Creates API client from `TaskAssignment.APIURL`
-5. Reports `started` status
-6. Fetches task data
-7. Fetches GitHub token
-8. Calls `runner.Run(ctx, taskData, token)`
-9. If `runner.Run` returns error: reports `failed` status (fallback - hook may have already reported)
-10. Exits
+4. Reports `started` status
+5. Fetches task data
+6. Fetches GitHub token (409 Conflict = fatal error, task cannot be retried — see "What We're NOT Doing")
+7. Calls `runner.Run(ctx, taskData, token)`
+8. If `runner.Run` returns error: reports `failed` status (fallback - hook may have already reported)
+9. Exits
 
-#### 3. API client
+#### 4. Concrete API client
 
-**File**: `pkg/runner/client.go`
+**File**: `pkg/runner/client.go` (same file as interface)
 
-HTTP client for the shepherd API (internal port 8081).
+Concrete implementation of `APIClient` for the shepherd API (internal port 8081).
 
 ```go
-// Client communicates with the shepherd API server.
+// Client implements APIClient for the shepherd API server.
 type Client struct {
     baseURL    string
     httpClient *http.Client
@@ -211,13 +232,14 @@ func NewClient(baseURL string, opts ...ClientOption) *Client
 func (c *Client) FetchTaskData(ctx context.Context, taskID string) (*TaskData, error)
 
 // FetchToken retrieves a GitHub installation token.
+// Returns a fatal error on 409 Conflict (token already issued, non-retriable).
 func (c *Client) FetchToken(ctx context.Context, taskID string) (token string, expiresAt time.Time, err error)
 
 // ReportStatus sends a status update to the API.
 func (c *Client) ReportStatus(ctx context.Context, taskID string, event, message string, details map[string]any) error
 ```
 
-#### 4. Tests
+#### 5. Tests
 
 **File**: `pkg/runner/server_test.go`
 
@@ -344,31 +366,52 @@ type GoRunner struct {
     execCmd    CommandExecutor // interface for testing
 }
 
+// ExecOptions configures command execution.
+type ExecOptions struct {
+    Dir   string     // Working directory
+    Env   []string   // Environment variables (KEY=VALUE)
+    Stdin io.Reader  // Standard input (nil = no stdin)
+}
+
+// ExecResult holds the outcome of a command execution.
+type ExecResult struct {
+    Stdout   []byte
+    Stderr   []byte
+    ExitCode int
+}
+
 // CommandExecutor abstracts os/exec for testing.
 type CommandExecutor interface {
-    Run(ctx context.Context, name string, args []string, opts ExecOptions) ([]byte, error)
+    // Run executes a command. Returns ExecResult for command outcomes (including non-zero exit).
+    // Returns error only for non-command failures (context cancel, command not found).
+    Run(ctx context.Context, name string, args []string, opts ExecOptions) (*ExecResult, error)
 }
 
 func (r *GoRunner) Run(ctx context.Context, task runner.TaskData, token string) (*runner.Result, error) {
-    // 1. Configure git credentials: https://x-access-token:{token}@github.com
-    // 2. Clone repo at specified ref into workDir
-    // 3. Create working branch: shepherd/{taskID}
-    // 4. Write task context to workDir/task-context.md
-    // 5. Set env vars for hook: SHEPHERD_API_URL, SHEPHERD_TASK_ID
-    // 6. Build prompt from task data
-    // 7. Invoke: claude -p "<prompt>" --dangerously-skip-permissions --output-format json --max-turns 50 --max-budget-usd 10.00
-    // 8. Parse JSON output: log total_cost_usd, num_turns, session_id
-    // 9. Return Result{} - success detection is done by the hook
+    // 0. Copy baked-in CC config from /etc/shepherd/ to ~/.claude/ (emptyDir mount shadows baked-in files)
+    //    - mkdir -p ~/.claude
+    //    - copy /etc/shepherd/settings.json -> ~/.claude/settings.json
+    //    - copy /etc/shepherd/CLAUDE.md -> ~/.claude/CLAUDE.md
+    // 1. Clone repo using token in URL: git clone https://x-access-token:{token}@github.com/owner/repo.git
+    //    (token in clone URL is stored in .git/config as remote — acceptable for single-task pods; TODO: GIT_ASKPASS)
+    // 2. Create working branch: shepherd/{taskID}
+    // 3. Write task context to workDir/task-context.md
+    // 4. Set env vars for hook: SHEPHERD_API_URL, SHEPHERD_TASK_ID
+    // 5. Build prompt from task data
+    // 6. Invoke: claude -p "<prompt>" --dangerously-skip-permissions --output-format json --max-turns 50 --max-budget-usd 10.00
+    // 7. Parse JSON output: log total_cost_usd, num_turns, session_id
+    // 8. Return Result{} — the hook handles success/failure detection via artifact verification
 }
 ```
 
 Key design decisions:
 
-- **`CommandExecutor` interface** allows testing without real `git`/`claude` binaries
+- **`CommandExecutor` interface** allows testing without real `git`/`claude` binaries; returns `*ExecResult` to distinguish exit codes from execution failures
 - **Prompt is hardcoded** in a `buildPrompt(task)` function for v1
-- **Git credentials** use `git config credential.helper` with a store file containing the token
+- **Git credentials** use token embedded in clone URL (`https://x-access-token:{token}@github.com/...`) — standard GitHub approach, no extra scripts
 - **Working branch** named `shepherd/{taskID}` for easy identification
 - **CC environment**: `ANTHROPIC_API_KEY` from container env, `DISABLE_AUTOUPDATER=1`, `CI=true`
+- **Config staging**: CC config files are baked into `/etc/shepherd/` in the image and copied to `~/.claude/` at startup, because the emptyDir volume mount at `/home/shepherd` shadows any files baked into the image
 
 #### 2. Prompt builder
 
@@ -409,15 +452,18 @@ Tests using mock `CommandExecutor`:
 
 ### Overview
 
-Implement the `hook` subcommand that handles CC's Stop hook. For MVP, the hook is kept simple: it reads the hook JSON from stdin, checks for the infinite-loop guard, and reports a `completed` status to the shepherd API. **No artifact verification** (no `git diff`, no `gh pr list`) — CC itself is responsible for creating the PR via the prompt instructions. The Go entrypoint fallback in `server.go` handles crash/error reporting.
+Implement the `hook` subcommand that handles CC's Stop hook. The hook reads the hook JSON from stdin, checks the infinite-loop guard, performs basic artifact verification (`git diff`, `gh pr list`), and reports `completed` or `failed` status to the shepherd API. The Go entrypoint fallback in `server.go` handles crash/error reporting if the hook fails to fire.
 
-### Design Decision (MVP Simplification)
+### Design Decision: Basic Artifact Verification
 
-The research doc considered having the hook verify artifacts (git changes, PR existence), but for MVP:
-- CC is instructed via the prompt to create a PR — trust it to do so
-- The hook just signals "CC finished" to the API
-- The Go entrypoint reports `failed` if CC exits non-zero (crash/timeout)
-- Artifact verification (was a PR actually created?) is a future enhancement
+The CC Stop hook receives **only metadata** on stdin (session_id, transcript_path, cwd, etc.) — it does NOT receive any information about what CC accomplished. Since `claude -p` exits 0 even when Claude cannot complete the task, we need basic artifact checks to distinguish success from failure:
+
+1. **`git diff --quiet HEAD`** — did CC make any changes?
+2. **`gh pr list --head shepherd/{taskID}`** — was a PR created?
+
+If no changes were made, report `failed`. If changes exist but no PR, report `failed` with "changes made but no PR created". Only report `completed` when a PR exists.
+
+The hook uses `CommandExecutor` (same interface as GoRunner) for testability — git/gh commands are mockable in tests.
 
 ### Changes Required
 
@@ -434,12 +480,18 @@ func (c *HookCmd) Run() error {
     // 1. Read hook JSON from stdin (CC passes hook data on stdin)
     // 2. Check stop_hook_active field - if true, exit early (prevent infinite loop)
     // 3. Read SHEPHERD_API_URL and SHEPHERD_TASK_ID from env vars
-    // 4. Report completed status to API via runner.Client
-    //    (CC is trusted to have created the PR per prompt instructions)
+    // 4. Verify artifacts:
+    //    a. Run `git diff --quiet HEAD` in CWD — if exit 0, no changes were made
+    //    b. If changes exist, run `gh pr list --head shepherd/{taskID} --json url --jq '.[0].url'`
+    // 5. Report status to API via runner.Client:
+    //    - No changes: report "failed" with message "No changes made"
+    //    - Changes but no PR: report "failed" with message "Changes made but no PR created"
+    //    - PR exists: report "completed" with pr_url in details
+    // 6. On network errors reaching API: exit 0 silently (let Go entrypoint be the safety net)
 }
 ```
 
-The hook is configured in `~/.claude/settings.json` (baked into image):
+The hook is configured in `~/.claude/settings.json` (staged at `/etc/shepherd/settings.json`, copied at startup):
 
 ```json
 {
@@ -465,6 +517,8 @@ The hook is configured in `~/.claude/settings.json` (baked into image):
 
 ```go
 // HookInput is the JSON data CC passes to hooks on stdin.
+// Note: CC does NOT pass result data — only metadata. Artifact verification
+// must be done by inspecting git state and PR existence.
 type HookInput struct {
     SessionID      string `json:"session_id"`
     TranscriptPath string `json:"transcript_path"`
@@ -479,8 +533,11 @@ type HookInput struct {
 **File**: `cmd/shepherd-runner/hook_test.go`
 
 - `TestHookStopHookActive` - When `stop_hook_active=true`, exits without reporting
-- `TestHookReportsCompleted` - Normal stop, reports `completed` to API
+- `TestHookNoChanges` - `git diff --quiet` exits 0, reports `failed` with "No changes made"
+- `TestHookChangesNoPR` - `git diff` shows changes, `gh pr list` returns empty, reports `failed`
+- `TestHookPRCreated` - `git diff` shows changes, `gh pr list` returns URL, reports `completed` with pr_url
 - `TestHookMissingEnvVars` - Missing `SHEPHERD_API_URL`, returns error
+- `TestHookAPINetworkError` - API unreachable, exits 0 (silent, lets entrypoint handle it)
 
 ### Success Criteria
 
@@ -516,7 +573,7 @@ RUN CGO_ENABLED=0 go build -o /shepherd-runner ./cmd/shepherd-runner/
 
 FROM golang:1.25-bookworm
 
-# Install tools
+# Install tools (as root)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     bash \
@@ -525,39 +582,45 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     jq \
     && rm -rf /var/lib/apt/lists/*
 
-# Install gh CLI
+# Install gh CLI (as root)
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
     && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
     | tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
     && apt-get update && apt-get install -y gh && rm -rf /var/lib/apt/lists/*
 
-# Install Claude Code (native Bun binary)
+# Install Claude Code (native Bun binary, as root)
 RUN curl -fsSL https://claude.ai/install.sh | bash
 
-# Create non-root user
+# Copy runner binary (root ownership is fine for system binaries)
+COPY --from=builder /shepherd-runner /usr/local/bin/shepherd-runner
+
+# Stage CC config files at /etc/shepherd/ (read-only in image).
+# The Go entrypoint copies these to ~/.claude/ at startup because the
+# emptyDir volume mount at /home/shepherd shadows any baked-in files.
+COPY build/runner/CLAUDE.md /etc/shepherd/CLAUDE.md
+COPY build/runner/settings.json /etc/shepherd/settings.json
+
+# Create non-root user (after all root-requiring operations)
 RUN useradd -m -u 1000 -s /bin/bash shepherd
+
+# Create workspace directory (owned by shepherd)
+RUN mkdir -p /workspace && chown shepherd:shepherd /workspace
+
 USER shepherd
 WORKDIR /home/shepherd
 
-# Configure git identity
+# Configure git identity (as shepherd user)
 RUN git config --global user.name "Shepherd Bot" \
     && git config --global user.email "shepherd-bot@users.noreply.github.com"
-
-# Copy runner binary
-COPY --from=builder /shepherd-runner /usr/local/bin/shepherd-runner
-
-# Copy configuration files
-COPY build/runner/CLAUDE.md /home/shepherd/.claude/CLAUDE.md
-COPY build/runner/settings.json /home/shepherd/.claude/settings.json
-
-# Create workspace directory
-RUN mkdir -p /workspace
 
 EXPOSE 8888
 ENTRYPOINT ["shepherd-runner"]
 ```
 
-Note: The `COPY --from=builder` and `COPY build/runner/` need the binary to be writable by the shepherd user, and the `/usr/local/bin/` copy should happen before the `USER shepherd` directive. The Claude Code installer runs as root. I'll refine the exact ordering during implementation.
+Design notes:
+- **Config staging at `/etc/shepherd/`**: CC config (settings.json, CLAUDE.md) is baked into a read-only path. The Go entrypoint copies them to `~/.claude/` at startup. This is needed because the SandboxTemplate mounts an emptyDir at `/home/shepherd` for writability, which shadows any files baked into the image.
+- **Binary in `/usr/local/bin/`**: COPY always runs as root regardless of USER directive, so ordering doesn't matter. Root ownership is correct for system binaries.
+- **`/workspace` owned by shepherd**: Created as root, chowned to shepherd for git clone operations.
 
 #### 2. CLAUDE.md for runner
 
@@ -652,8 +715,20 @@ spec:
             limits:
               memory: "4Gi"
               cpu: "2000m"
+          volumeMounts:
+            - name: home
+              mountPath: /home/shepherd
+            - name: workspace
+              mountPath: /workspace
+      volumes:
+        - name: home
+          emptyDir: {}
+        - name: workspace
+          emptyDir: {}
       restartPolicy: Never
 ```
+
+Note: The emptyDir mounts ensure `/home/shepherd` and `/workspace` are writable even with read-only root filesystem policies. The Go entrypoint copies CC config from `/etc/shepherd/` to `~/.claude/` at startup since the emptyDir shadows baked-in files.
 
 ### Success Criteria
 
@@ -791,7 +866,7 @@ docker-build-runner: ## Build shepherd-runner Docker image locally.
 - `pkg/runner/server_test.go` - HTTP endpoint tests (healthz, task assignment, conflict, invalid JSON)
 - `pkg/runner/client_test.go` - API client tests with httptest mocks (fetch data, fetch token, report status)
 - `cmd/shepherd-runner/gorunner_test.go` - GoRunner tests with mocked command executor
-- `cmd/shepherd-runner/hook_test.go` - Hook subcommand tests (stdin parsing, stop_hook_active guard, status reporting)
+- `cmd/shepherd-runner/hook_test.go` - Hook subcommand tests (stdin parsing, stop_hook_active guard, artifact verification, status reporting)
 - `cmd/shepherd-runner/prompt_test.go` - Prompt builder tests
 
 ### What We Don't Test
