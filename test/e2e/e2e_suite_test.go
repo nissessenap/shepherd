@@ -67,16 +67,22 @@ func setupCertManager() {
 		return
 	}
 
-	// Mark for cleanup before installation to handle interruptions and partial installs.
-	shouldCleanupCertManager = true
-
 	By("installing CertManager")
 	Expect(utils.InstallCertManager()).To(Succeed(), "Failed to install CertManager")
+
+	// Only mark for cleanup after successful installation.
+	shouldCleanupCertManager = true
 }
 
 // teardownCertManager uninstalls CertManager if it was installed by setupCertManager.
-// This ensures we only remove what we installed.
+// This ensures we only remove what we installed. Respects E2E_SKIP_TEARDOWN=true
+// (set by `make test-e2e-interactive`) to leave resources in place for debugging.
 func teardownCertManager() {
+	if os.Getenv("E2E_SKIP_TEARDOWN") == "true" {
+		_, _ = fmt.Fprintf(GinkgoWriter, "Skipping CertManager cleanup (E2E_SKIP_TEARDOWN=true)\n")
+		return
+	}
+
 	if !shouldCleanupCertManager {
 		_, _ = fmt.Fprintf(GinkgoWriter, "Skipping CertManager cleanup (not installed by this suite)\n")
 		return
