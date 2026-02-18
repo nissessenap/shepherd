@@ -1,0 +1,48 @@
+apiVersion: extensions.agents.x-k8s.io/v1alpha1
+kind: SandboxTemplate
+metadata:
+  name: runner
+spec:
+  template:
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        runAsNonRoot: true
+      containers:
+        - name: runner
+          image: ghcr.io/nissessenap/shepherd-runner:v0.1.0  # Replace with your release version
+          ports:
+            - containerPort: 8888
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8888
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          env:
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: anthropic-credentials
+                  key: api-key
+          resources:
+            requests:
+              memory: "2Gi"
+              cpu: "500m"
+            limits:
+              memory: "4Gi"
+              cpu: "2000m"
+          volumeMounts:
+            - name: home
+              mountPath: /home/shepherd
+            - name: workspace
+              mountPath: /workspace
+      volumes:
+        - name: home
+          emptyDir: {}
+        - name: workspace
+          emptyDir: {}
+      restartPolicy: Never
