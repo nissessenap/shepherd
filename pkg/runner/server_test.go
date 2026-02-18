@@ -197,10 +197,12 @@ func TestExecuteTaskHappyPath(t *testing.T) {
 	err := s.executeTask(context.Background(), ta)
 	require.NoError(t, err)
 
-	// Verify status calls
-	require.Len(t, mockClient.statusCalls, 1)
+	// Verify status calls: started + fallback completed
+	require.Len(t, mockClient.statusCalls, 2)
 	assert.Equal(t, "task-1", mockClient.statusCalls[0].taskID)
 	assert.Equal(t, "started", mockClient.statusCalls[0].event)
+	assert.Equal(t, "completed", mockClient.statusCalls[1].event)
+	assert.Equal(t, "PR created", mockClient.statusCalls[1].message)
 }
 
 func TestExecuteTaskFetchDataFails(t *testing.T) {
@@ -317,6 +319,8 @@ func TestExecuteTaskStartedReportFails(t *testing.T) {
 	err := s.executeTask(context.Background(), ta)
 	require.NoError(t, err)
 
-	// Verify status calls were attempted
-	assert.Greater(t, len(mockClient.statusCalls), 0)
+	// Verify status calls were attempted (started + fallback completed, both fail but non-fatal)
+	require.Len(t, mockClient.statusCalls, 2)
+	assert.Equal(t, "started", mockClient.statusCalls[0].event)
+	assert.Equal(t, "completed", mockClient.statusCalls[1].event)
 }

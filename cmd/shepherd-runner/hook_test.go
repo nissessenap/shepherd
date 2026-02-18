@@ -33,6 +33,8 @@ func makeGetenv(apiURL, taskID string) func(string) string {
 			return apiURL
 		case "SHEPHERD_TASK_ID":
 			return taskID
+		case "SHEPHERD_BASE_REF":
+			return "main"
 		default:
 			return ""
 		}
@@ -57,12 +59,13 @@ func TestHookStopHookActive(t *testing.T) {
 }
 
 func TestHookNoChanges(t *testing.T) {
-	// git rev-list --count returns "0" = no commits on branch
+	// gh pr list returns empty (no PR), git rev-list returns "0" (no commits)
 	mock := &mockExecutor{
 		results: []*ExecResult{
+			{ExitCode: 0, Stdout: []byte("")},    // gh pr list (no PR)
 			{ExitCode: 0, Stdout: []byte("0\n")}, // git rev-list --count
 		},
-		errs: []error{nil},
+		errs: []error{nil, nil},
 	}
 
 	// Set up a mock API server to capture the status report
@@ -87,19 +90,22 @@ func TestHookNoChanges(t *testing.T) {
 	assert.Equal(t, "failed", reportedEvent)
 	assert.Equal(t, "no changes made", reportedMessage)
 
-	// Verify git rev-list was called
-	require.Len(t, mock.calls, 1)
-	assert.Equal(t, "git", mock.calls[0].Name)
-	assert.Equal(t, []string{"rev-list", "--count", "HEAD", "--not", "--remotes"}, mock.calls[0].Args)
-	assert.Equal(t, "/tmp/repo", mock.calls[0].Opts.Dir)
+	// Verify PR check then commit check
+	require.Len(t, mock.calls, 2)
+	assert.Equal(t, "gh", mock.calls[0].Name)
+	assert.Contains(t, mock.calls[0].Args, "--head")
+	assert.Contains(t, mock.calls[0].Args, "shepherd/task-1")
+	assert.Equal(t, "git", mock.calls[1].Name)
+	assert.Equal(t, []string{"rev-list", "--count", "origin/main..HEAD"}, mock.calls[1].Args)
+	assert.Equal(t, "/tmp/repo", mock.calls[1].Opts.Dir)
 }
 
 func TestHookChangesNoPR(t *testing.T) {
-	// git rev-list --count returns "2" = commits exist, gh pr list returns empty
+	// gh pr list returns empty (no PR), git rev-list returns "2" (commits exist)
 	mock := &mockExecutor{
 		results: []*ExecResult{
-			{ExitCode: 0, Stdout: []byte("2\n")}, // git rev-list --count (2 commits)
 			{ExitCode: 0, Stdout: []byte("")},    // gh pr list (no PR)
+			{ExitCode: 0, Stdout: []byte("2\n")}, // git rev-list --count (2 commits)
 		},
 		errs: []error{nil, nil},
 	}
@@ -125,22 +131,22 @@ func TestHookChangesNoPR(t *testing.T) {
 	assert.Equal(t, "failed", reportedEvent)
 	assert.Equal(t, "changes made but no PR created", reportedMessage)
 
-	// Verify both commands were called
+	// Verify PR check then commit check
 	require.Len(t, mock.calls, 2)
-	assert.Equal(t, "git", mock.calls[0].Name)
-	assert.Equal(t, "gh", mock.calls[1].Name)
-	assert.Contains(t, mock.calls[1].Args, "--head")
-	assert.Contains(t, mock.calls[1].Args, "shepherd/task-1")
+	assert.Equal(t, "gh", mock.calls[0].Name)
+	assert.Contains(t, mock.calls[0].Args, "--head")
+	assert.Contains(t, mock.calls[0].Args, "shepherd/task-1")
+	assert.Equal(t, "git", mock.calls[1].Name)
+	assert.Equal(t, []string{"rev-list", "--count", "origin/main..HEAD"}, mock.calls[1].Args)
 }
 
 func TestHookPRCreated(t *testing.T) {
-	// git rev-list --count returns "1" = commits exist, gh pr list returns URL
+	// gh pr list returns URL — PR found, no need to check commits
 	mock := &mockExecutor{
 		results: []*ExecResult{
-			{ExitCode: 0, Stdout: []byte("1\n")},                                   // git rev-list --count
 			{ExitCode: 0, Stdout: []byte("https://github.com/org/repo/pull/42\n")}, // gh pr list
 		},
-		errs: []error{nil, nil},
+		errs: []error{nil},
 	}
 
 	var reportedEvent, reportedMessage string
@@ -168,6 +174,10 @@ func TestHookPRCreated(t *testing.T) {
 	assert.Equal(t, "completed", reportedEvent)
 	assert.Equal(t, "task completed", reportedMessage)
 	assert.Equal(t, "https://github.com/org/repo/pull/42", reportedDetails["pr_url"])
+
+	// Only PR check was needed — no commit check
+	require.Len(t, mock.calls, 1)
+	assert.Equal(t, "gh", mock.calls[0].Name)
 }
 
 func TestHookMissingEnvVars(t *testing.T) {
@@ -201,13 +211,12 @@ func TestHookMissingEnvVars(t *testing.T) {
 }
 
 func TestHookAPINetworkError(t *testing.T) {
-	// git rev-list shows commits, PR exists, but API is unreachable
+	// PR exists, but API is unreachable (transport error)
 	mock := &mockExecutor{
 		results: []*ExecResult{
-			{ExitCode: 0, Stdout: []byte("1\n")},                                   // git rev-list --count
 			{ExitCode: 0, Stdout: []byte("https://github.com/org/repo/pull/42\n")}, // gh pr list
 		},
-		errs: []error{nil, nil},
+		errs: []error{nil},
 	}
 
 	// Use an unreachable URL — closed server
@@ -221,6 +230,32 @@ func TestHookAPINetworkError(t *testing.T) {
 		hookInput(false, "/tmp/repo"), mock,
 		makeGetenv(apiServer.URL, "task-1"),
 	)
-	// Should not return an error — exits silently on network failure
+	// Should not return an error — exits silently on transport failure
 	require.NoError(t, err)
+}
+
+func TestHookAPIHTTPError(t *testing.T) {
+	// PR exists, but API returns 500 (HTTP error, not transport)
+	mock := &mockExecutor{
+		results: []*ExecResult{
+			{ExitCode: 0, Stdout: []byte("https://github.com/org/repo/pull/42\n")}, // gh pr list
+		},
+		errs: []error{nil},
+	}
+
+	// API returns 500
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte("internal error"))
+	}))
+	defer apiServer.Close()
+
+	err := runHook(
+		context.Background(), logr.Discard(),
+		hookInput(false, "/tmp/repo"), mock,
+		makeGetenv(apiServer.URL, "task-1"),
+	)
+	// Should return an error — HTTP errors are not swallowed
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "API rejected status report")
 }

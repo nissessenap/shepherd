@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -85,18 +86,21 @@ func (s *Server) newMux() *http.ServeMux {
 func (s *Server) Serve(ctx context.Context) error {
 	srv := &http.Server{Addr: s.addr, Handler: s.newMux()}
 
+	listenErr := make(chan error, 1)
 	go func() {
 		s.logger.Info("runner listening", "addr", s.addr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			s.logger.Error(err, "server error")
+			listenErr <- err
 		}
 	}()
 
-	// Wait for task assignment or context cancellation
+	// Wait for task assignment, startup error, or context cancellation
 	var ta TaskAssignment
 	select {
 	case ta = <-s.assigned:
 		s.logger.Info("task assigned", "taskID", ta.TaskID, "apiURL", ta.APIURL)
+	case err := <-listenErr:
+		return fmt.Errorf("server failed to start: %w", err)
 	case <-ctx.Done():
 		s.logger.Info("shutting down, no task received")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -122,6 +126,13 @@ func (s *Server) executeTask(ctx context.Context, ta TaskAssignment) error {
 	client := s.client
 	if client == nil {
 		client = NewClient(ta.APIURL, WithClientLogger(log))
+	}
+
+	// Guard against nil runner
+	if s.runner == nil {
+		msg := "no task runner configured"
+		_ = client.ReportStatus(ctx, ta.TaskID, "failed", msg, nil)
+		return errors.New(msg)
 	}
 
 	// Report started status
@@ -158,6 +169,25 @@ func (s *Server) executeTask(ctx context.Context, ta TaskAssignment) error {
 		log.Error(err, "runner execution failed")
 		_ = client.ReportStatus(ctx, ta.TaskID, "failed", msg, nil)
 		return fmt.Errorf("running task: %w", err)
+	}
+
+	// Fallback: report terminal status in case the Stop hook didn't fire.
+	// The API deduplicates terminal status updates, so this is safe even
+	// if the hook already reported.
+	status := "completed"
+	if !result.Success {
+		status = "failed"
+	}
+	fallbackMsg := result.Message
+	if fallbackMsg == "" {
+		fallbackMsg = "task " + status
+	}
+	var details map[string]any
+	if result.PRURL != "" {
+		details = map[string]any{"pr_url": result.PRURL}
+	}
+	if err := client.ReportStatus(ctx, ta.TaskID, status, fallbackMsg, details); err != nil {
+		log.Error(err, "failed to report fallback terminal status", "status", status)
 	}
 
 	log.Info("task completed", "success", result.Success, "prURL", result.PRURL)

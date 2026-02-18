@@ -48,7 +48,6 @@ jobs:
         run: |
           ko build --sbom=none --bare --platform=linux/amd64 \
             --tags=${{ github.ref_name }} \
-            --tags=latest \
             --image-refs ./image-digest \
             --image-label "org.opencontainers.image.title=shepherd" \
             --image-label "org.opencontainers.image.description=Background coding agent orchestrator on Kubernetes" \

@@ -18,6 +18,17 @@ const (
 	maxStatusResponseSize   = 64 << 10 // 64KB — status response with error details
 )
 
+// HTTPStatusError is returned when the API responds with a non-OK status code.
+// Use errors.As to distinguish HTTP errors from transport-level errors.
+type HTTPStatusError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *HTTPStatusError) Error() string {
+	return fmt.Sprintf("unexpected status %d: %s", e.StatusCode, e.Body)
+}
+
 // APIClient communicates with the shepherd API server.
 type APIClient interface {
 	FetchTaskData(ctx context.Context, taskID string) (*TaskData, error)
@@ -202,7 +213,7 @@ func (c *Client) ReportStatus(ctx context.Context, taskID string, event, message
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(respBody))
+		return &HTTPStatusError{StatusCode: resp.StatusCode, Body: string(respBody)}
 	}
 
 	return nil

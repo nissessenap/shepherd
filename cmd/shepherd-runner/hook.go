@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -75,11 +76,17 @@ func runHook(
 
 	// 4. Verify artifacts
 	client := runner.NewClient(apiURL)
-	event, message, details := verifyArtifacts(ctx, logger, exec, input.CWD, taskID)
+	event, message, details := verifyArtifacts(ctx, logger, exec, input.CWD, taskID, getenv)
 
 	// 5. Report status to API
 	if err := client.ReportStatus(ctx, taskID, event, message, details); err != nil {
-		// On network errors reaching API: exit silently (let Go entrypoint be the safety net)
+		var httpErr *runner.HTTPStatusError
+		if errors.As(err, &httpErr) {
+			// API rejected the request — this is a real error, not a network issue
+			return fmt.Errorf("API rejected status report (HTTP %d): %w", httpErr.StatusCode, err)
+		}
+		// Transport-level error (network unreachable, timeout, etc.) — exit silently
+		// and let the Go entrypoint be the safety net
 		logger.Error(err, "failed to report status, entrypoint will handle fallback")
 		return nil
 	}
@@ -88,18 +95,43 @@ func runHook(
 	return nil
 }
 
-// verifyArtifacts checks git state and PR existence to determine task outcome.
+// verifyArtifacts checks PR existence and git state to determine task outcome.
+// PR check comes first because it's the definitive success signal and is
+// unaffected by whether commits have been pushed to the remote.
 func verifyArtifacts(
 	ctx context.Context, logger logr.Logger, exec CommandExecutor,
-	cwd, taskID string,
+	cwd, taskID string, getenv func(string) string,
 ) (event, message string, details map[string]any) {
-	// Check if commits were made on the branch (not just uncommitted changes).
-	// git rev-list --count HEAD --not --remotes counts commits on HEAD that
-	// don't exist on any remote branch — i.e., local-only commits. This works
-	// for branches without upstream tracking, unlike HEAD@{upstream}.
-	logger.Info("checking for local commits")
-	revArgs := []string{"rev-list", "--count", "HEAD", "--not", "--remotes"}
-	res, err := exec.Run(ctx, "git", revArgs, ExecOptions{Dir: cwd})
+	branch := "shepherd/" + taskID
+
+	// 1. Check PR first — most definitive signal of success.
+	// After push, git rev-list --not --remotes returns 0 (commits are on remote),
+	// so checking PR first avoids a false "no changes" on the happy path.
+	logger.Info("checking for pull request", "branch", branch)
+	prArgs := []string{
+		"pr", "list", "--head", branch,
+		"--json", "url", "--jq", ".[0].url",
+	}
+	res, err := exec.Run(ctx, "gh", prArgs, ExecOptions{Dir: cwd})
+	if err != nil {
+		logger.Error(err, "failed to run gh pr list")
+		// Fall through to commit check
+	} else {
+		prURL := strings.TrimSpace(string(res.Stdout))
+		if prURL != "" {
+			return eventCompleted, "task completed", map[string]any{"pr_url": prURL}
+		}
+	}
+
+	// 2. No PR — check if commits were made on the branch.
+	// Compare against origin/{baseRef} so the count is correct even after push.
+	baseRef := getenv("SHEPHERD_BASE_REF")
+	if baseRef == "" {
+		baseRef = "main"
+	}
+	logger.Info("checking for commits", "baseRef", baseRef)
+	revArgs := []string{"rev-list", "--count", "origin/" + baseRef + "..HEAD"}
+	res, err = exec.Run(ctx, "git", revArgs, ExecOptions{Dir: cwd})
 	if err != nil {
 		logger.Error(err, "failed to check commit count")
 		return eventFailed, "failed to check git state", nil
@@ -107,27 +139,8 @@ func verifyArtifacts(
 
 	commitCount := strings.TrimSpace(string(res.Stdout))
 	if res.ExitCode != 0 || commitCount == "0" {
-		// No commits on branch
 		return eventFailed, "no changes made", nil
 	}
 
-	// Commits exist — check if a PR was created
-	branch := "shepherd/" + taskID
-	logger.Info("checking for pull request", "branch", branch)
-	prArgs := []string{
-		"pr", "list", "--head", branch,
-		"--json", "url", "--jq", ".[0].url",
-	}
-	res, err = exec.Run(ctx, "gh", prArgs, ExecOptions{Dir: cwd})
-	if err != nil {
-		logger.Error(err, "failed to run gh pr list")
-		return eventFailed, "changes made but failed to check PR status", nil
-	}
-
-	prURL := strings.TrimSpace(string(res.Stdout))
-	if prURL == "" {
-		return eventFailed, "changes made but no PR created", nil
-	}
-
-	return eventCompleted, "task completed", map[string]any{"pr_url": prURL}
+	return eventFailed, "changes made but no PR created", nil
 }
