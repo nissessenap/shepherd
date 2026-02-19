@@ -7,9 +7,9 @@ repository: NissesSenap/shepherd_init
 topic: "Agent visibility and streaming architecture: real-time task monitoring inspired by Stripe Minions"
 tags: [research, codebase, streaming, sse, websocket, visibility, stripe, minions, claude-code, opencode, goose, architecture, gateway-api, envoy-gateway]
 status: complete
-last_updated: 2026-02-18
+last_updated: 2026-02-19
 last_updated_by: claude
-last_updated_note: "Added transport protocol comparison (SSE vs WebSocket vs REST polling), Kubernetes Gateway API / Envoy Gateway proxy configuration, updated recommendation from SSE to WebSocket"
+last_updated_note: "Follow-up: Stripe Minions Part 2 comparison — blueprint pattern, CI feedback loops, Toolshed, context management vs Shepherd architecture"
 ---
 
 # Research: Agent Visibility and Streaming Architecture
@@ -817,3 +817,166 @@ The event stream is a parallel, additive channel. It does not replace the existi
 - [Envoy Gateway ClientTrafficPolicy](https://gateway.envoyproxy.io/latest/tasks/traffic/client-traffic-policy/) — Idle timeout configuration
 - [Ingress-nginx retirement announcement](https://kubernetes.io/blog/2025/11/11/ingress-nginx-retirement/) — EOL March 31, 2026
 - [Kubernetes Steering Committee statement on ingress-nginx](https://kubernetes.io/blog/2026/01/29/ingress-nginx-statement/) — Migration urgency
+
+---
+
+## Follow-up Research: Stripe Minions Part 2 Comparison (2026-02-19)
+
+**Context**: Stripe published [Part 2 of the Minions blog](https://stripe.dev/blog/minions-stripes-one-shot-end-to-end-coding-agents-part-2) on 2026-02-19, covering the technical architecture in depth. This section compares their disclosed architecture against Shepherd's design as documented above and implemented in the codebase at commit `a6538e4`.
+
+### What Part 2 Revealed
+
+Part 2 covers three pillars of the Minions architecture:
+
+1. **Infrastructure**: Pre-warmed EC2 devboxes (10-second startup target) with warm pool management, pre-cloned repos, pre-warmed Bazel/type-checking caches
+2. **Orchestration**: "Blueprint" pattern — a state machine interleaving deterministic nodes (lint, push, CI) with agentic nodes (implement, fix failures)
+3. **Tooling**: Centralized MCP server ("Toolshed") with ~500 tools, curated tool subsets per task, Cursor-format rule files for context
+
+The blog does **not** describe streaming, real-time visibility infrastructure, or event architectures. The monitoring screenshot shows a devbox dashboard listing active minion runs — no event stream UI.
+
+### Architectural Comparison
+
+#### 1. Orchestration: Blueprints vs Linear Runner
+
+This is the most significant architectural divergence.
+
+| Aspect | Stripe Minions | Shepherd |
+|--------|---------------|----------|
+| Orchestration model | State machine ("Blueprint") with deterministic + agentic nodes | Linear pipeline: clone → branch → single agent invocation → hook verification |
+| Deterministic steps | Linting, pushing, CI trigger — no LLM invocation | Config staging, git clone, branch creation — pre-agent only |
+| Agent invocations | Multiple per task (e.g., "Implement task", "Fix CI failures") | Single CC invocation with `--max-turns 50` |
+| CI feedback loop | 2 CI iterations max, agent retries on failure, deterministic autofixes between iterations | None — CC is instructed to run tests locally but no structured CI retry |
+| Retry strategy | Structured: push → CI → autofix → agent retry → CI → human escalation | CC's internal retry within its turn budget; hook verifies PR/commits after |
+
+Stripe's key insight: *"Writing code to deterministically accomplish small decisions we can anticipate—such as 'always lint changes at the end of a run'—saves tokens (and CI costs) at scale."* And: *"Putting LLMs into contained boxes compounds into system-wide reliability upside."*
+
+**Assessment**: Shepherd's linear runner is appropriate for its current stage. The blueprint pattern is an optimization for scale — Stripe processes 1,300+ PRs/week where token and CI costs compound. Shepherd could evolve toward a blueprint-like state machine later by adding pre/post deterministic steps to the GoRunner without changing the API or event architecture. The runner is the natural place for this evolution.
+
+#### 2. Tool Ecosystem: Toolshed vs CC Built-in Tools
+
+| Aspect | Stripe Minions | Shepherd |
+|--------|---------------|----------|
+| Tool count | ~500 MCP tools via centralized "Toolshed" | 6 CC built-in tools (Bash, Read, Edit, Write, Glob, Grep) |
+| Tool discovery | Automatic via Toolshed, tools "discoverable to agentic systems" | Static — tools defined in `build/runner/settings.json` |
+| Tool curation | "Intentionally small subset by default" with per-user expansion | All 6 tools always available with wildcard permissions |
+| Tool sharing | Toolshed serves CLI agents, Slack bots, custom agents, no-code builder | CC-specific permissions only |
+
+Stripe's insight: *"Agents perform best when given a 'smaller box' with a tastefully curated set of tools."*
+
+**Assessment**: Shepherd already follows the "smaller box" principle — CC gets 6 well-defined tools, not hundreds. The difference is that Stripe's agents need MCP tools for internal systems (documentation, ticket details, build statuses, code intelligence) because they operate at enterprise scale. Shepherd's agents interact with the codebase directly; external information flows through the task context and CLAUDE.md files. MCP integration is a natural extension point if Shepherd needs to give agents access to external systems later.
+
+#### 3. Context Management: Rule Files vs CLAUDE.md
+
+| Aspect | Stripe Minions | Shepherd |
+|--------|---------------|----------|
+| Format | Cursor rule format (shared with Cursor + Claude Code) | CLAUDE.md (CC native) |
+| Scoping | Per-subdirectory/file-pattern, auto-attached as agent traverses filesystem | Project root CLAUDE.md + runner CLAUDE.md + per-task context file |
+| Dynamic context | MCP tools fetch docs, tickets, build status at runtime | Task context injected as `~/task-context.md` before agent starts |
+| Context size management | "Use unconditional global rules very judiciously" to avoid filling context window | gzip compression + 1.4MB limit for CRD storage (`pkg/api/compress.go`) |
+
+**Assessment**: Both approaches use file-based agent instructions. Stripe's subdirectory-scoped rules are more sophisticated but only necessary for their monorepo scale. Shepherd's approach — project CLAUDE.md for repo conventions, runner CLAUDE.md for sandbox behavior, task-context.md for per-task information — is a clean three-tier model. CC natively supports CLAUDE.md discovery through the filesystem, so adding scoped rules is a natural progression if needed.
+
+#### 4. Safety and Isolation
+
+| Aspect | Stripe Minions | Shepherd |
+|--------|---------------|----------|
+| Isolation primitive | AWS EC2 devboxes ("cattle, not pets") | K8s pods via agent-sandbox CRD |
+| Environment | QA environment, no prod access, no real user data | Isolated namespace, `--dangerously-skip-permissions` |
+| Permission model | Full permissions inside sandbox (no confirmation prompts) | All tools with wildcard permissions (`settings.json`) |
+| Network isolation | No arbitrary network egress | K8s NetworkPolicy (planned, not yet implemented) |
+| Blast radius | One devbox per task, ephemeral | One pod per task, ephemeral |
+
+Stripe's philosophy: *"A development environment that's safe for humans has proven to be just as useful for minions."*
+
+**Assessment**: Identical philosophy, different infrastructure. Both grant full permissions inside an isolated sandbox. Both treat sandboxes as ephemeral cattle. The K8s-native approach gives Shepherd portability (any K8s cluster), while Stripe's devboxes are optimized for their specific development environment (pre-warmed caches, services, monorepo).
+
+#### 5. Agent Wrapping
+
+| Aspect | Stripe Minions | Shepherd |
+|--------|---------------|----------|
+| Agent | Forked Goose (Rust, Apache-2.0) | Claude Code (proprietary) |
+| Customization | Internal fork with Stripe LLM infrastructure integration | Subprocess wrapper with `--output-format json` |
+| Agent-API boundary | Goose fork runs inside devbox, communicates via blueprint orchestration | CC runs inside pod, hook reports status to API on exit |
+| Swappability | Fork model means deep coupling to Goose internals | Agent-agnostic API — only runner knows about CC |
+
+**Assessment**: Shepherd's agent-agnostic API design is actually more flexible than Stripe's fork approach. Stripe is deeply invested in their Goose fork; changing agents would require rewriting blueprint integrations. Shepherd's runner translates CC-specific output into generic events — swapping agents means changing only the runner image, not the API, operator, or adapters.
+
+#### 6. Visibility and Streaming
+
+| Aspect | Stripe Minions | Shepherd |
+|--------|---------------|----------|
+| Current state | Devbox dashboard showing active runs (screenshot in Part 2) | No streaming infrastructure |
+| Streaming protocol | **Not disclosed** | WebSocket via `coder/websocket` (designed, not implemented) |
+| Event granularity | **Not disclosed** | Turn-level TaskEvent schema with tool_call/tool_result/thinking/error types |
+| Consumer model | **Not disclosed** | API-first: WebSocket endpoint for web UI and CLI consumers |
+
+**Assessment**: Part 2's visibility disclosure is minimal — a single dashboard screenshot. Shepherd's streaming architecture (sections 5-9 of this document) is significantly more detailed than what Stripe has shared publicly. This doesn't mean Stripe lacks streaming internals, but it does mean our architecture isn't lagging behind their public disclosure. The designed WebSocket + EventHub + agent-agnostic event schema is a sound approach regardless of what Stripe does internally.
+
+#### 7. CI Integration and Feedback Loops
+
+This is the area where Stripe's architecture is most advanced relative to Shepherd.
+
+Stripe's CI flow:
+```
+Agent implements → Deterministic lint → Push → CI → Autofix → Agent retry → Push → CI → Human
+```
+
+Shepherd's current flow:
+```
+Agent implements + runs tests locally → Hook checks for PR → Report status
+```
+
+Stripe's 3M+ test suite provides a feedback signal that Shepherd delegates to the agent itself ("run tests" is in the prompt). Stripe's deterministic lint node is a structured step; Shepherd relies on CC to lint as part of its agentic loop.
+
+**Assessment**: A CI feedback loop is a valuable future addition for Shepherd. The runner could add deterministic post-agent steps (lint, test) and retry the agent on failure — evolving toward a blueprint-like pattern. This doesn't require changes to the API, event schema, or streaming architecture. The runner is the right boundary for this evolution.
+
+### Summary: Is Shepherd on the Right Path?
+
+**Yes, with caveats.** The comparison shows strong alignment on fundamentals and clear areas where Stripe's scale drives more sophisticated patterns.
+
+**Aligned (same philosophy, validated by Stripe's production experience):**
+
+| Principle | Stripe's Validation | Shepherd's Implementation |
+|-----------|-------------------|--------------------------|
+| Isolation-first security | Devbox sandbox, full permissions inside | K8s pod sandbox, full CC permissions inside |
+| Agent wrapping over forking | Forked Goose, custom orchestration around it | CC subprocess, agent-agnostic API layer |
+| File-based context management | Cursor rule files, scoped to directories | CLAUDE.md + task-context.md, three-tier model |
+| Curated tool sets | "Smaller box" with ~500 tools curated per task | 6 CC built-in tools, all-or-nothing for now |
+| Human review before merge | All 1,300+ PRs/week are human-reviewed | PR created by agent, reviewed by humans |
+| Deterministic git operations | Blueprint nodes for push/branch | Runner creates `shepherd/{taskID}` branch deterministically |
+| Ephemeral, cattle-not-pets sandboxes | Pre-warmed devbox pool, parallelizable | On-demand K8s pods via SandboxClaim |
+
+**Divergent but appropriate for stage:**
+
+| Area | Stripe (Scale Optimization) | Shepherd (Foundation Building) | When to Evolve |
+|------|-----------------------------|-------------------------------|----------------|
+| Orchestration | Blueprint state machine (deterministic + agentic nodes) | Linear runner pipeline | When token/CI costs justify structured retries |
+| CI feedback | 2 structured CI iterations with autofix | Agent runs tests locally, no structured retry | When adding CI-aware tasks or enterprise repos |
+| Tool ecosystem | ~500 MCP tools via Toolshed | 6 CC built-in tools | When agents need access to external systems (docs, tickets, builds) |
+| Pre-warming | Devbox warm pool (10s startup) | On-demand pod creation | When task latency SLOs become important |
+| Monitoring UI | Devbox dashboard (basic) | Designed WebSocket + EventHub (not built) | Next implementation phase |
+
+**Shepherd advantages over Stripe's disclosed architecture:**
+
+1. **Agent-agnostic API** — Shepherd's runner→API boundary is cleaner for agent swapping than Stripe's deep Goose fork
+2. **Streaming architecture plan** — Shepherd has a more detailed visibility design than what Stripe has publicly shared
+3. **K8s-native portability** — Runs on any K8s cluster; Stripe's devboxes are AWS-specific infrastructure
+4. **Simpler operational model** — No warm pool to manage, no devbox fleet to provision
+
+**What Stripe validates about Shepherd's planned streaming architecture:**
+
+The Part 2 blog's silence on streaming is notable. Stripe's Part 1 mentioned "monitoring decisions and actions through a web interface" but Part 2 provides no implementation details. This suggests either: (a) their streaming infrastructure is considered proprietary enough to omit, or (b) it's less central to their architecture than the orchestration, tooling, and infrastructure pillars. Either way, Shepherd's WebSocket + EventHub + agent-agnostic event schema is well-designed for the visibility use case and doesn't need to mirror Stripe's (undisclosed) approach.
+
+### New Open Questions (from Part 2 comparison)
+
+10. **Blueprint-like orchestration**: Should Shepherd's runner evolve toward a state machine with deterministic pre/post steps? The runner already has deterministic pre-steps (clone, branch, config staging). Adding post-steps (lint check, test run, retry) would move toward Stripe's blueprint pattern without requiring API changes. When should this be prioritized?
+
+11. **MCP Toolshed equivalent**: Stripe's Toolshed gives agents access to internal systems via MCP. If Shepherd tasks need information beyond the codebase (documentation, ticket details, build status), should the runner configure MCP servers for the agent? CC supports MCP natively.
+
+12. **Rule file scoping**: Stripe standardized on Cursor's rule format for subdirectory-scoped instructions. CC supports both CLAUDE.md and `.claude/` directory rules. Should Shepherd recommend or enforce a convention for repository maintainers to scope agent instructions to subdirectories?
+
+13. **CI feedback loop**: Stripe's 2-iteration max with deterministic autofix between iterations is a well-validated pattern. Should Shepherd add a structured post-agent CI check and retry? This is purely a runner-side change — no API, operator, or adapter modifications needed.
+
+### Related Research (updated)
+
+- [Stripe Minions Part 2: Technical Architecture Deep Dive](https://stripe.dev/blog/minions-stripes-one-shot-end-to-end-coding-agents-part-2) — Blueprints, Toolshed, devbox infrastructure
