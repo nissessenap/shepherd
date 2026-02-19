@@ -850,20 +850,20 @@ This is the most significant architectural divergence.
 
 Stripe's key insight: *"Writing code to deterministically accomplish small decisions we can anticipate—such as 'always lint changes at the end of a run'—saves tokens (and CI costs) at scale."* And: *"Putting LLMs into contained boxes compounds into system-wide reliability upside."*
 
-**Assessment**: Shepherd's linear runner is appropriate for its current stage. The blueprint pattern is an optimization for scale — Stripe processes 1,300+ PRs/week where token and CI costs compound. Shepherd could evolve toward a blueprint-like state machine later by adding pre/post deterministic steps to the GoRunner without changing the API or event architecture. The runner is the natural place for this evolution.
+**Assessment**: Shepherd's linear runner is the right design. The blueprint pattern makes sense for Stripe because they control the entire environment and want to enforce deterministic quality gates at the orchestrator level. Shepherd is deliberately unopinionated — the cloned repo's own CLAUDE.md and Claude Code hooks (`PreToolUse`, `PostToolUse`, `Stop`) are the right place for linting, testing, and validation. A repo owner who configures a `Stop` hook to run `make lint` or a `PostToolUse` hook to validate edits gets those quality gates automatically when Shepherd runs their task. Shepherd adding its own deterministic steps would duplicate this and force opinions on repos that may have their own conventions. The orchestrator should stay agent- and repo-agnostic; quality gates belong in the repo.
 
 #### 2. Tool Ecosystem: Toolshed vs CC Built-in Tools
 
 | Aspect | Stripe Minions | Shepherd |
 |--------|---------------|----------|
-| Tool count | ~500 MCP tools via centralized "Toolshed" | 6 CC built-in tools (Bash, Read, Edit, Write, Glob, Grep) |
-| Tool discovery | Automatic via Toolshed, tools "discoverable to agentic systems" | Static — tools defined in `build/runner/settings.json` |
-| Tool curation | "Intentionally small subset by default" with per-user expansion | All 6 tools always available with wildcard permissions |
-| Tool sharing | Toolshed serves CLI agents, Slack bots, custom agents, no-code builder | CC-specific permissions only |
+| Tool count | ~500 MCP tools via centralized "Toolshed" | All CC built-in tools (unrestricted via `--dangerously-skip-permissions`) |
+| Tool discovery | Automatic via Toolshed, tools "discoverable to agentic systems" | CC's native tool set — no curation by Shepherd |
+| Tool curation | "Intentionally small subset by default" with per-user expansion | No curation — CC decides which tools to use based on the task |
+| Tool sharing | Toolshed serves CLI agents, Slack bots, custom agents, no-code builder | CC-specific; MCP servers configurable per-repo via CLAUDE.md |
 
 Stripe's insight: *"Agents perform best when given a 'smaller box' with a tastefully curated set of tools."*
 
-**Assessment**: Shepherd already follows the "smaller box" principle — CC gets 6 well-defined tools, not hundreds. The difference is that Stripe's agents need MCP tools for internal systems (documentation, ticket details, build statuses, code intelligence) because they operate at enterprise scale. Shepherd's agents interact with the codebase directly; external information flows through the task context and CLAUDE.md files. MCP integration is a natural extension point if Shepherd needs to give agents access to external systems later.
+**Assessment**: These are different approaches driven by different agent models. Stripe curates tools at the orchestrator level because Goose relies on external MCP tools for code intelligence, documentation, and internal systems. CC has capable built-in tools (Read, Edit, Bash, Glob, Grep, Write, Task, WebSearch, etc.) and the `--dangerously-skip-permissions` flag gives it unrestricted access to all of them. Shepherd doesn't curate CC's tools — CC itself decides which tools to use based on the task and its training. Additionally, repos can configure MCP servers in their own CLAUDE.md files, letting repo owners extend the agent's tool set without Shepherd needing to manage a centralized tool registry. MCP integration at the Shepherd orchestrator level would only become relevant if agents need access to systems outside the repo (internal docs, ticket trackers, build dashboards).
 
 #### 3. Context Management: Rule Files vs CLAUDE.md
 
@@ -928,7 +928,7 @@ Agent implements + runs tests locally → Hook checks for PR → Report status
 
 Stripe's 3M+ test suite provides a feedback signal that Shepherd delegates to the agent itself ("run tests" is in the prompt). Stripe's deterministic lint node is a structured step; Shepherd relies on CC to lint as part of its agentic loop.
 
-**Assessment**: A CI feedback loop is a valuable future addition for Shepherd. The runner could add deterministic post-agent steps (lint, test) and retry the agent on failure — evolving toward a blueprint-like pattern. This doesn't require changes to the API, event schema, or streaming architecture. The runner is the right boundary for this evolution.
+**Assessment**: Stripe's CI feedback loop is driven by their 3M+ test suite and monorepo scale. For Shepherd, CI feedback is the repo's responsibility — CC is instructed to run tests locally, and repos can configure Claude Code hooks to enforce post-agent validation. Shepherd adding its own CI loop would be opinionated and potentially conflict with repo-specific CI configurations. If a repo wants structured CI retries, that logic belongs in the repo's hooks or GitHub Actions workflow, not in the Shepherd orchestrator.
 
 ### Summary: Is Shepherd on the Right Path?
 
@@ -941,7 +941,7 @@ Stripe's 3M+ test suite provides a feedback signal that Shepherd delegates to th
 | Isolation-first security | Devbox sandbox, full permissions inside | K8s pod sandbox, full CC permissions inside |
 | Agent wrapping over forking | Forked Goose, custom orchestration around it | CC subprocess, agent-agnostic API layer |
 | File-based context management | Cursor rule files, scoped to directories | CLAUDE.md + task-context.md, three-tier model |
-| Curated tool sets | "Smaller box" with ~500 tools curated per task | 6 CC built-in tools, all-or-nothing for now |
+| Agent tool access | "Smaller box" with ~500 MCP tools curated per task | All CC built-in tools unrestricted; repos can add MCP servers via CLAUDE.md |
 | Human review before merge | All 1,300+ PRs/week are human-reviewed | PR created by agent, reviewed by humans |
 | Deterministic git operations | Blueprint nodes for push/branch | Runner creates `shepherd/{taskID}` branch deterministically |
 | Ephemeral, cattle-not-pets sandboxes | Pre-warmed devbox pool, parallelizable | On-demand K8s pods via SandboxClaim |
@@ -950,9 +950,9 @@ Stripe's 3M+ test suite provides a feedback signal that Shepherd delegates to th
 
 | Area | Stripe (Scale Optimization) | Shepherd (Foundation Building) | When to Evolve |
 |------|-----------------------------|-------------------------------|----------------|
-| Orchestration | Blueprint state machine (deterministic + agentic nodes) | Linear runner pipeline | When token/CI costs justify structured retries |
-| CI feedback | 2 structured CI iterations with autofix | Agent runs tests locally, no structured retry | When adding CI-aware tasks or enterprise repos |
-| Tool ecosystem | ~500 MCP tools via Toolshed | 6 CC built-in tools | When agents need access to external systems (docs, tickets, builds) |
+| Orchestration | Blueprint state machine (deterministic + agentic nodes) | Linear runner, quality gates delegated to repo hooks/CLAUDE.md | Deliberate — Shepherd stays unopinionated, repos own their conventions |
+| CI feedback | 2 structured CI iterations with autofix | Agent runs tests locally per prompt instructions | Repo hooks can enforce post-agent validation; orchestrator stays neutral |
+| Tool ecosystem | ~500 MCP tools via centralized Toolshed | All CC built-in tools unrestricted; repos can add MCP via CLAUDE.md | When agents need access to systems outside the repo |
 | Pre-warming | Devbox warm pool (10s startup) | On-demand pod creation | When task latency SLOs become important |
 | Monitoring UI | Devbox dashboard (basic) | Designed WebSocket + EventHub (not built) | Next implementation phase |
 
@@ -969,13 +969,11 @@ The Part 2 blog's silence on streaming is notable. Stripe's Part 1 mentioned "mo
 
 ### New Open Questions (from Part 2 comparison)
 
-10. **Blueprint-like orchestration**: Should Shepherd's runner evolve toward a state machine with deterministic pre/post steps? The runner already has deterministic pre-steps (clone, branch, config staging). Adding post-steps (lint check, test run, retry) would move toward Stripe's blueprint pattern without requiring API changes. When should this be prioritized?
+10. **MCP for external systems**: Stripe's Toolshed gives agents access to internal systems (docs, tickets, builds) via MCP. Repos can already configure MCP servers in their CLAUDE.md. Should Shepherd ever provide MCP servers at the orchestrator level (e.g., a Shepherd MCP server that exposes task metadata, sibling task status, or org-wide documentation)? Or should all tool extension remain repo-owned?
 
-11. **MCP Toolshed equivalent**: Stripe's Toolshed gives agents access to internal systems via MCP. If Shepherd tasks need information beyond the codebase (documentation, ticket details, build status), should the runner configure MCP servers for the agent? CC supports MCP natively.
+11. **Rule file conventions**: Stripe standardized on Cursor's rule format for subdirectory-scoped instructions. CC supports both CLAUDE.md and `.claude/` directory rules natively. Should Shepherd document best practices for repo owners on structuring agent instructions, or stay completely hands-off?
 
-12. **Rule file scoping**: Stripe standardized on Cursor's rule format for subdirectory-scoped instructions. CC supports both CLAUDE.md and `.claude/` directory rules. Should Shepherd recommend or enforce a convention for repository maintainers to scope agent instructions to subdirectories?
-
-13. **CI feedback loop**: Stripe's 2-iteration max with deterministic autofix between iterations is a well-validated pattern. Should Shepherd add a structured post-agent CI check and retry? This is purely a runner-side change — no API, operator, or adapter modifications needed.
+12. **Hook-based quality gates**: Repos can use CC hooks (`PreToolUse`, `PostToolUse`, `Stop`) for quality gates. Should Shepherd document recommended hook patterns (e.g., "use a Stop hook to run linters") without enforcing them? Or is that the repo owner's domain entirely?
 
 ### Related Research (updated)
 
