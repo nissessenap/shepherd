@@ -4,8 +4,8 @@ researcher: claude
 git_commit: 5b3621d70eda7ab55683baf79aa95e37cacb94cc
 branch: stripe_minons
 repository: NissesSenap/shepherd_init
-topic: "Svelte 5 Claude Code rules, TanStack Query evaluation for WebSocket-first app"
-tags: [research, frontend, svelte, svelte5, runes, tanstack-query, websocket, claude-code-rules]
+topic: "Svelte 5 .claude/rules/ for monorepo, TanStack Query evaluation for WebSocket-first app"
+tags: [research, frontend, svelte, svelte5, runes, tanstack-query, websocket, claude-rules]
 status: complete
 last_updated: 2026-02-24
 last_updated_by: claude
@@ -120,291 +120,56 @@ Both classes are ~20 lines, zero dependencies, fully typed, and work natively wi
 
 ## Svelte 5 Claude Code Rules
 
-### Rule File Placement
+### Why `.claude/rules/` Instead of CLAUDE.md
 
-Place rules in the frontend project's CLAUDE.md so they're automatically picked up when CC works in that directory:
+The project is a monorepo with Go backend and Svelte frontend in `web/`. The root `CLAUDE.md` contains Go-specific instructions (build commands, linting, testing patterns). Putting Svelte rules in the same file would pollute the Go context and vice versa.
+
+Claude Code's `.claude/rules/` system solves this with `paths` frontmatter — rules scoped to `web/**/*.svelte` only activate when CC works on Svelte files. This keeps each rule file focused and avoids cross-contamination.
+
+### Rule File Structure
 
 ```
-web/
-├── CLAUDE.md          ← Svelte 5 rules here
-├── src/
-├── package.json
-└── svelte.config.js
+.claude/
+├── rules/
+│   └── frontend/
+│       ├── svelte5-runes.md    ← Svelte 5 syntax (scoped to web/**/*.svelte, web/**/*.svelte.ts)
+│       └── sveltekit.md        ← SvelteKit conventions, data fetching (scoped to web/**/*.svelte, web/**/*.ts)
 ```
 
-### Proposed CLAUDE.md for Frontend
+Rules use YAML frontmatter with `paths` to scope activation:
 
-```markdown
-# Shepherd Web UI
-
-SvelteKit app with Svelte 5. TypeScript required for all files.
-
-## Svelte 5 Rules — MANDATORY
-
-This project uses Svelte 5 runes. NEVER use Svelte 4 syntax.
-Every .svelte and .svelte.ts file uses runes mode.
-
-### State: use `$state`, NEVER plain `let` for reactive variables
-
-```svelte
-<!-- WRONG: plain let is not reactive in runes mode -->
-<script lang="ts">
-  let count = 0
-</script>
-
-<!-- CORRECT -->
-<script lang="ts">
-  let count = $state(0)
-</script>
+```yaml
+---
+paths:
+  - "web/**/*.svelte"
+  - "web/**/*.svelte.ts"
+---
 ```
 
-Arrays and objects get deep reactivity — mutations work directly:
+### What the Rules Cover
 
-```svelte
-<script lang="ts">
-  let items = $state(['a', 'b'])
-  // items.push('c') works — no dummy reassignment needed
-</script>
-```
+**`svelte5-runes.md`** — The 8 critical Svelte 4→5 syntax changes with wrong/correct examples:
+1. `$state` vs plain `let`
+2. `$derived` vs `$:`
+3. `$effect` vs `$:` side effects
+4. `$props()` vs `export let`
+5. `$bindable()` for two-way binding
+6. `onclick` vs `on:click` (including modifier replacements)
+7. Callback props vs `createEventDispatcher`
+8. Snippets/`{@render}` vs slots
 
-### Derived values: use `$derived`, NEVER `$:`
+**`sveltekit.md`** — SvelteKit and data fetching conventions:
+1. `$app/state` vs `$app/stores`
+2. TypeScript required
+3. `$state` classes for data fetching (no TanStack Query)
+4. WebSocket pattern with `$effect` cleanup
+5. SvelteKit 2 error/redirect changes
 
-```svelte
-<!-- WRONG -->
-$: doubled = count * 2
+## Code References
 
-<!-- CORRECT -->
-const doubled = $derived(count * 2)
-
-<!-- For multi-line derivations -->
-const total = $derived.by(() => {
-  let sum = 0
-  for (const n of numbers) sum += n
-  return sum
-})
-```
-
-### Side effects: use `$effect`, NEVER `$:` for side effects
-
-```svelte
-<!-- WRONG -->
-$: console.log(count)
-
-<!-- CORRECT -->
-$effect(() => {
-  console.log(count)
-})
-```
-
-Return a cleanup function from `$effect` when needed:
-
-```svelte
-$effect(() => {
-  const interval = setInterval(() => tick(), 1000)
-  return () => clearInterval(interval)
-})
-```
-
-NEVER update `$state` inside `$derived`. Use `$effect` for side effects, `$derived` for pure computations only.
-
-### Props: use `$props()`, NEVER `export let`
-
-```svelte
-<!-- WRONG -->
-<script lang="ts">
-  export let name: string
-  export let count = 0
-</script>
-
-<!-- CORRECT -->
-<script lang="ts">
-  let { name, count = 0 }: { name: string; count?: number } = $props()
-</script>
-```
-
-For rest props (replaces `$$restProps`):
-
-```svelte
-<script lang="ts">
-  let { value, ...rest } = $props()
-</script>
-<input {value} {...rest} />
-```
-
-### Events: use `onclick`, NEVER `on:click`
-
-```svelte
-<!-- WRONG: directive syntax -->
-<button on:click={handler}>Click</button>
-<button on:click|preventDefault={handler}>Submit</button>
-
-<!-- CORRECT: property syntax -->
-<button onclick={handler}>Click</button>
-<button onclick={(e) => { e.preventDefault(); handler(e) }}>Submit</button>
-```
-
-Shorthand when function name matches event:
-
-```svelte
-<script lang="ts">
-  function onclick() { /* ... */ }
-</script>
-<button {onclick}>Click</button>
-```
-
-### Component events: use callback props, NEVER `createEventDispatcher`
-
-```svelte
-<!-- WRONG -->
-<script lang="ts">
-  import { createEventDispatcher } from 'svelte'
-  const dispatch = createEventDispatcher()
-</script>
-
-<!-- CORRECT: pass callbacks as props -->
-<script lang="ts">
-  let { onsubmit }: { onsubmit?: (data: FormData) => void } = $props()
-</script>
-<button onclick={() => onsubmit?.(formData)}>Submit</button>
-```
-
-### Content: use snippets, NEVER slots
-
-```svelte
-<!-- WRONG: slot syntax -->
-<div class="card">
-  <slot />
-</div>
-
-<!-- CORRECT: children snippet -->
-<script lang="ts">
-  import type { Snippet } from 'svelte'
-  let { children }: { children: Snippet } = $props()
-</script>
-<div class="card">
-  {@render children()}
-</div>
-```
-
-Named snippets replace named slots:
-
-```svelte
-<!-- Component definition -->
-<script lang="ts">
-  import type { Snippet } from 'svelte'
-  let { header, children }: { header?: Snippet; children: Snippet } = $props()
-</script>
-<header>{@render header?.()}</header>
-<main>{@render children()}</main>
-
-<!-- Usage -->
-<Layout>
-  {#snippet header()}
-    <h1>Title</h1>
-  {/snippet}
-  <p>Main content</p>
-</Layout>
-```
-
-### SvelteKit: use `$app/state`, NEVER `$app/stores`
-
-```svelte
-<!-- WRONG -->
-<script lang="ts">
-  import { page } from '$app/stores'
-</script>
-<p>{$page.url.pathname}</p>
-
-<!-- CORRECT -->
-<script lang="ts">
-  import { page } from '$app/state'
-</script>
-<p>{page.url.pathname}</p>
-```
-
-### Shared state: use `$state` in `.svelte.ts` files, avoid writable/readable stores
-
-```typescript
-// WRONG: Svelte 4 store pattern
-import { writable } from 'svelte/store'
-export const count = writable(0)
-
-// CORRECT: Svelte 5 $state in .svelte.ts file
-// counter.svelte.ts
-export const counter = $state({ count: 0 })
-export function increment() { counter.count++ }
-```
-
-For shared state across components, prefer class-based pattern:
-
-```typescript
-// task-store.svelte.ts
-export class TaskStore {
-  data: Task[] = $state([])
-  loading = $state(false)
-  error: string | null = $state(null)
-
-  async load() { /* ... */ }
-}
-```
-
-Use `setContext`/`getContext` for SSR-safe shared state (not module-level singletons).
-
-### Bindable props: use `$bindable()` explicitly
-
-```svelte
-<!-- Props are NOT bindable by default in Svelte 5 -->
-<script lang="ts">
-  let { value = $bindable('') }: { value: string } = $props()
-</script>
-<input bind:value />
-```
-
-## Tech stack
-
-- SvelteKit (Svelte 5), TypeScript, Vite
-- No TanStack Query — use `$state` classes for data fetching
-- WebSocket for real-time event streaming, plain fetch for REST
-
-## Patterns
-
-- All state management via `$state` classes in `.svelte.ts` files
-- WebSocket connection managed via `$effect` cleanup in layout
-- Context API (`setContext`/`getContext`) for sharing state down the component tree
-- URL-driven filters via SvelteKit's `page.url.searchParams`
-```
-
-## Syntax Quick Reference
-
-For embedding in the CLAUDE.md or as a separate reference:
-
-| Svelte 4 (NEVER use) | Svelte 5 (ALWAYS use) |
-|---|---|
-| `let count = 0` | `let count = $state(0)` |
-| `$: doubled = count * 2` | `const doubled = $derived(count * 2)` |
-| `$: { sideEffect() }` | `$effect(() => { sideEffect() })` |
-| `export let name` | `let { name } = $props()` |
-| `$$restProps` | `let { ...rest } = $props()` |
-| `on:click={fn}` | `onclick={fn}` |
-| `on:click\|preventDefault` | `(e) => { e.preventDefault(); fn(e) }` |
-| `createEventDispatcher()` | callback props via `$props()` |
-| `<slot />` | `{@render children()}` |
-| `<slot name="x" />` | `{@render x()}` with `{#snippet x()}...{/snippet}` |
-| `beforeUpdate` / `afterUpdate` | `$effect.pre` / `$effect` |
-| `import { page } from '$app/stores'` | `import { page } from '$app/state'` |
-| `writable()` / `readable()` | `$state()` in `.svelte.ts` files |
-| `items = items` (reactivity hack) | `items.push(x)` (deep reactivity) |
-
-## Compiler Errors to Know
-
-These fire when Svelte 4 syntax leaks into a runes-mode component:
-
-| Error | Cause | Fix |
-|---|---|---|
-| `legacy_export_invalid` | `export let x` | `let { x } = $props()` |
-| `legacy_reactive_statement_invalid` | `$: x = ...` | `$derived(...)` or `$effect(...)` |
-| `legacy_props_invalid` | `$$props` | `$props()` |
-| `legacy_rest_props_invalid` | `$$restProps` | `let { ...rest } = $props()` |
+The rules files that implement the Svelte 5 conventions:
+- `.claude/rules/frontend/svelte5-runes.md` — Svelte 5 runes syntax (scoped to `web/**/*.svelte`, `web/**/*.svelte.ts`)
+- `.claude/rules/frontend/sveltekit.md` — SvelteKit conventions and data fetching patterns (scoped to `web/**/*.svelte`, `web/**/*.ts`)
 
 ## Historical Context
 
