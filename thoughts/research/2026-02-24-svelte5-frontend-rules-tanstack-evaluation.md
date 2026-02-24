@@ -176,10 +176,10 @@ The rules files that implement the Svelte 5 conventions:
 - `thoughts/research/2026-02-19-shepherd-frontend-design.md` — Original frontend design document recommending React. The project owner has since leaned toward Svelte 5 for its no-virtual-DOM approach.
 - `thoughts/research/2026-02-18-agent-visibility-streaming-architecture.md` — WebSocket streaming architecture design. The `TaskEvent` schema and WebSocket endpoint (`GET /api/v1/tasks/{taskID}/events`) defined there are what the frontend consumes.
 
-## Open Questions
+## Decisions
 
-1. **SvelteKit vs plain Svelte + Vite**: SvelteKit provides file-based routing, SSR (which we'd disable), and `$app/state`. For a 2-page SPA, is SvelteKit overhead justified, or is plain Svelte + a lightweight router (like `svelte-spa-router`) sufficient?
+1. **SvelteKit with `adapter-static`**: SvelteKit is the official way to build Svelte apps. For a 2-page SPA the overhead is near zero — it's file conventions, not runtime bloat. We get `$app/state`, `$app/navigation`, file-based routing, and the conventional project structure out of the box. `adapter-static` disables SSR and produces a plain SPA. Going plain Svelte + Vite would mean giving up those built-ins and picking a third-party router for what SvelteKit provides for free.
 
-2. **CSS approach**: Tailwind CSS, plain CSS with Svelte's scoped styles, or a component library? The dark-mode-first developer tool aesthetic from the design doc needs a decision.
+2. **Svelte scoped styles with CSS custom properties for theming**: Zero dependencies. Svelte's `<style>` blocks are already scoped to the component — one of its headline features. CSS custom properties handle dark mode cleanly: define variables on `:root`, reference in components. The app is 2 pages with a developer-tool aesthetic (monospace, dense, dark) — straightforward CSS, not a design system problem. Tailwind adds a dependency and a different mental model for a Go team; for this surface area it doesn't pay back. Component libraries add opinions we'd fight for a custom monitoring UI.
 
-3. **Monorepo structure**: Should the frontend live in `web/` at the repo root, or in a separate repo? If in-repo, the CLAUDE.md rules activate automatically when CC works in that directory.
+3. **Monorepo**: Frontend lives in `web/` at the repo root. The `.claude/rules/frontend/` rules activate automatically when CC works on `web/**` files. Monorepo simplifies CI (contract tests run on the same PR) and keeps the Go API types and frontend TypeScript types in sync.
