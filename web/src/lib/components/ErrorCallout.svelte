@@ -9,11 +9,15 @@ const { error, lastAction }: Props = $props();
 let copied = $state(false);
 
 async function copyError() {
-	await navigator.clipboard.writeText(error);
-	copied = true;
-	setTimeout(() => {
-		copied = false;
-	}, 2000);
+	try {
+		await navigator.clipboard.writeText(error);
+		copied = true;
+		setTimeout(() => {
+			copied = false;
+		}, 2000);
+	} catch {
+		// Clipboard API may fail in insecure contexts or when denied
+	}
 }
 </script>
 

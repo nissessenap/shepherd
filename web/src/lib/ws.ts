@@ -8,6 +8,7 @@ export interface WSClientOptions<T> {
 	url: string;
 	onMessage: (msg: T) => void;
 	onStateChange: (state: ConnectionState) => void;
+	getReconnectAfter?: () => number | undefined;
 	maxRetries?: number;
 }
 
@@ -47,7 +48,7 @@ export class WSClient<T> {
 	private readonly opts: Required<WSClientOptions<T>>;
 
 	constructor(opts: WSClientOptions<T>) {
-		this.opts = { maxRetries: 5, ...opts };
+		this.opts = { maxRetries: 5, getReconnectAfter: () => undefined, ...opts };
 	}
 
 	connect(afterSequence?: number): void {
@@ -97,7 +98,7 @@ export class WSClient<T> {
 				this.opts.onStateChange("disconnected");
 				return;
 			}
-			this.scheduleReconnect(afterSequence);
+			this.scheduleReconnect();
 		};
 
 		this.ws.onerror = () => {
@@ -105,7 +106,7 @@ export class WSClient<T> {
 		};
 	}
 
-	private scheduleReconnect(afterSequence?: number): void {
+	private scheduleReconnect(): void {
 		if (this.closed) return;
 		if (this.retryCount >= this.opts.maxRetries) {
 			this.opts.onStateChange("disconnected");
@@ -115,7 +116,7 @@ export class WSClient<T> {
 		const delay = backoffDelay(this.retryCount);
 		this.retryCount++;
 		this.retryTimer = setTimeout(() => {
-			this.open(afterSequence);
+			this.open(this.opts.getReconnectAfter());
 		}, delay);
 	}
 

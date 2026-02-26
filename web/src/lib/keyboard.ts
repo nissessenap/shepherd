@@ -36,6 +36,7 @@ export function registerKeyboardShortcuts(opts: {
 				break;
 			case "Escape":
 			case "Backspace":
+				e.preventDefault();
 				opts.onBack?.();
 				break;
 			case "e":
