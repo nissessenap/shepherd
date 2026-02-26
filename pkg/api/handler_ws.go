@@ -60,9 +60,7 @@ func (h *taskHandler) streamEvents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Accept WebSocket upgrade
-	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		InsecureSkipVerify: true, // Allow any origin for MVP
-	})
+	conn, err := websocket.Accept(w, r, nil)
 	if err != nil {
 		log.Error(err, "failed to accept websocket", "taskID", taskID)
 		return
@@ -121,7 +119,17 @@ func (h *taskHandler) streamEvents(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Channel closed — task completed. Re-fetch task to get terminal status.
+	// Channel closed — determine whether it closed because the task completed
+	// (Complete() was called) or because this subscriber was evicted for being
+	// too slow (Publish() drops slow consumers). Only send task_complete in the
+	// former case; otherwise close with a policy violation status.
+	if !h.eventHub.IsStreamDone(taskID) {
+		// Slow consumer eviction: do not send a false task_complete message.
+		_ = conn.Close(websocket.StatusPolicyViolation, "slow consumer evicted")
+		return
+	}
+
+	// Re-fetch task to get terminal status.
 	var freshTask toolkitv1alpha1.AgentTask
 	if err := h.client.Get(ctx, key, &freshTask); err != nil {
 		log.Error(err, "failed to get task for completion", "taskID", taskID)

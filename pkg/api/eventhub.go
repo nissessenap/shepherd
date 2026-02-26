@@ -158,8 +158,26 @@ func (h *EventHub) Complete(taskID string) {
 	}
 }
 
+// IsStreamDone reports whether the given task stream has been completed via Complete().
+// Returns false if the stream does not exist or has not been completed.
+func (h *EventHub) IsStreamDone(taskID string) bool {
+	h.mu.RLock()
+	ts, ok := h.tasks[taskID]
+	h.mu.RUnlock()
+	if !ok {
+		return false
+	}
+	ts.mu.RLock()
+	defer ts.mu.RUnlock()
+	return ts.done
+}
+
 // Cleanup removes a task stream entirely.
+// It calls Complete first to close any subscriber channels so that goroutines
+// blocked on "for e := range ch" are not leaked.
 func (h *EventHub) Cleanup(taskID string) {
+	h.Complete(taskID)
+
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	delete(h.tasks, taskID)

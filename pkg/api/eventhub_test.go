@@ -206,6 +206,69 @@ func TestEventHub_CompleteNonexistentTask(t *testing.T) {
 	hub.Complete("nonexistent")
 }
 
+func TestEventHub_SlowSubscriberEviction(t *testing.T) {
+	hub := NewEventHub()
+	taskID := "task-slow"
+
+	// Subscribe before publishing so the channel is registered
+	_, ch, unsub := hub.Subscribe(taskID, 0)
+	defer unsub()
+
+	require.NotNil(t, ch)
+
+	// Publish more than the subscriber channel capacity (64) without reading,
+	// so Publish() hits the default branch and closes the slow subscriber's channel.
+	events := make([]TaskEvent, 65)
+	for i := range events {
+		events[i] = TaskEvent{
+			Sequence:  int64(i + 1),
+			Timestamp: "2026-01-01T00:00:00Z",
+			Type:      EventTypeThinking,
+			Summary:   "Slow event",
+		}
+	}
+	hub.Publish(taskID, events)
+
+	// Drain the channel until we observe it closed (ok=false).
+	// The first 64 events fill the buffer; the 65th triggers eviction and close().
+	// We must read past the buffered values to reach the close signal.
+	deadline := time.After(time.Second)
+	closed := false
+	for !closed {
+		select {
+		case _, ok := <-ch:
+			if !ok {
+				closed = true
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for channel close after eviction")
+		}
+	}
+
+	// IsStreamDone should be false — eviction is not the same as task completion
+	assert.False(t, hub.IsStreamDone(taskID), "stream should NOT be marked done after slow-subscriber eviction")
+}
+
+func TestEventHub_CleanupWithActiveSubscriber(t *testing.T) {
+	hub := NewEventHub()
+
+	_, ch, unsub := hub.Subscribe("task-cleanup-active", 0)
+	defer unsub()
+
+	require.NotNil(t, ch)
+
+	// Cleanup calls Complete internally, which must close subscriber channels
+	hub.Cleanup("task-cleanup-active")
+
+	// The subscriber's channel should be closed so a goroutine ranging over it can exit
+	select {
+	case _, ok := <-ch:
+		assert.False(t, ok, "channel should be closed after Cleanup")
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for channel close after Cleanup")
+	}
+}
+
 func TestEventHub_ConcurrentPublishSubscribe(t *testing.T) {
 	hub := NewEventHub()
 	taskID := "task-concurrent"

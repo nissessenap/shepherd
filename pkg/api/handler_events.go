@@ -19,6 +19,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -63,10 +64,22 @@ func (h *taskHandler) postEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Known event types matching the OpenAPI spec enum.
+	validEventTypes := map[TaskEventType]bool{
+		EventTypeThinking:   true,
+		EventTypeToolCall:   true,
+		EventTypeToolResult: true,
+		EventTypeError:      true,
+	}
+
 	// Validate each event
 	for i, e := range req.Events {
 		if e.Type == "" {
 			writeError(w, http.StatusBadRequest, "event type is required", "")
+			return
+		}
+		if !validEventTypes[e.Type] {
+			writeError(w, http.StatusBadRequest, "invalid event type", "must be one of: thinking, tool_call, tool_result, error")
 			return
 		}
 		if e.Summary == "" {
@@ -75,6 +88,10 @@ func (h *taskHandler) postEvents(w http.ResponseWriter, r *http.Request) {
 		}
 		if e.Sequence <= 0 {
 			writeError(w, http.StatusBadRequest, "event sequence must be positive", "")
+			return
+		}
+		if _, err := time.Parse(time.RFC3339, e.Timestamp); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid event timestamp", "must be RFC3339 date-time format")
 			return
 		}
 		_ = i // validated

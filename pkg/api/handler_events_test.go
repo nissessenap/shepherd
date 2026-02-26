@@ -219,3 +219,84 @@ func TestPostEvents_InvalidSequence(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &errResp))
 	assert.Equal(t, "event sequence must be positive", errResp.Error)
 }
+
+func TestPostEvents_NegativeSequence(t *testing.T) {
+	task := newTask("task-negseq", nil, []metav1.Condition{
+		{
+			Type:   toolkitv1alpha1.ConditionSucceeded,
+			Status: metav1.ConditionUnknown,
+			Reason: toolkitv1alpha1.ReasonRunning,
+		},
+	})
+
+	h := newTestHandler(task)
+	router := testRouter(h)
+
+	req := PostEventRequest{
+		Events: []TaskEvent{
+			{Sequence: -1, Timestamp: "2026-01-01T00:00:00Z", Type: EventTypeThinking, Summary: "Negative seq"},
+		},
+	}
+
+	w := postJSON(t, router, "/api/v1/tasks/task-negseq/events", req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	var errResp ErrorResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &errResp))
+	assert.Equal(t, "event sequence must be positive", errResp.Error)
+}
+
+func TestPostEvents_InvalidTimestamp(t *testing.T) {
+	task := newTask("task-badts", nil, []metav1.Condition{
+		{
+			Type:   toolkitv1alpha1.ConditionSucceeded,
+			Status: metav1.ConditionUnknown,
+			Reason: toolkitv1alpha1.ReasonRunning,
+		},
+	})
+
+	h := newTestHandler(task)
+	router := testRouter(h)
+
+	req := PostEventRequest{
+		Events: []TaskEvent{
+			{Sequence: 1, Timestamp: "not-a-timestamp", Type: EventTypeThinking, Summary: "Bad timestamp"},
+		},
+	}
+
+	w := postJSON(t, router, "/api/v1/tasks/task-badts/events", req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	var errResp ErrorResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &errResp))
+	assert.Equal(t, "invalid event timestamp", errResp.Error)
+}
+
+func TestPostEvents_UnknownEventType(t *testing.T) {
+	task := newTask("task-badtype", nil, []metav1.Condition{
+		{
+			Type:   toolkitv1alpha1.ConditionSucceeded,
+			Status: metav1.ConditionUnknown,
+			Reason: toolkitv1alpha1.ReasonRunning,
+		},
+	})
+
+	h := newTestHandler(task)
+	router := testRouter(h)
+
+	req := PostEventRequest{
+		Events: []TaskEvent{
+			{Sequence: 1, Timestamp: "2026-01-01T00:00:00Z", Type: "unknown_type", Summary: "Unknown type"},
+		},
+	}
+
+	w := postJSON(t, router, "/api/v1/tasks/task-badtype/events", req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	var errResp ErrorResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &errResp))
+	assert.Equal(t, "invalid event type", errResp.Error)
+}

@@ -230,3 +230,21 @@ func TestStreamEvents_TaskNotFound(t *testing.T) {
 	w := doGet(t, router, "/api/v1/tasks/nonexistent/events")
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
+
+func TestStreamEvents_InvalidAfterParameter(t *testing.T) {
+	task := newTask("task-badafter", nil, []metav1.Condition{
+		{
+			Type:   toolkitv1alpha1.ConditionSucceeded,
+			Status: metav1.ConditionUnknown,
+			Reason: toolkitv1alpha1.ReasonRunning,
+		},
+	})
+
+	h := newTestHandler(task)
+	router := testRouter(h)
+
+	// A plain HTTP GET (no WebSocket upgrade) with a non-numeric ?after value
+	// must be rejected with 400 before the WebSocket upgrade is attempted.
+	w := doGet(t, router, "/api/v1/tasks/task-badafter/events?after=not-a-number")
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}

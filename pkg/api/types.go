@@ -29,7 +29,7 @@ type CreateTaskRequest struct {
 	Repo     RepoRequest       `json:"repo"`
 	Task     TaskRequest       `json:"task"`
 	Callback string            `json:"callbackURL"`
-	Runner   *RunnerConfig     `json:"runner,omitempty"`
+	Runner   *RunnerConfig     `json:"runner"`
 	Labels   map[string]string `json:"labels,omitempty"`
 }
 
