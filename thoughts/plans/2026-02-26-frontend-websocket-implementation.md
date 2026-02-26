@@ -851,9 +851,9 @@ client.PostEvents(ctx, taskID, events)
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `make test` passes — new stream parser tests + existing runner tests
-- [ ] `make lint-fix` passes
-- [ ] `make build` succeeds
+- [x] `make test` passes — new stream parser tests + existing runner tests
+- [x] `make lint-fix` passes
+- [x] `make build` succeeds
 
 #### Manual Verification:
 - [ ] Run the runner locally against a real task and observe events being POSTed to the API

@@ -93,6 +93,11 @@ type statusUpdateRequest struct {
 	Details map[string]any `json:"details,omitempty"`
 }
 
+// postEventRequest mirrors pkg/api.PostEventRequest for JSON encoding.
+type postEventRequest struct {
+	Events any `json:"events"`
+}
+
 // FetchTaskData retrieves task details from the API.
 func (c *Client) FetchTaskData(ctx context.Context, taskID string) (*TaskData, error) {
 	url := c.baseURL + "/api/v1/tasks/" + taskID + "/data"
@@ -179,6 +184,37 @@ func (c *Client) FetchToken(ctx context.Context, taskID string) (string, time.Ti
 	}
 
 	return tok.Token, expiresAt, nil
+}
+
+// PostEvents sends agent events to the API. This is best-effort: callers should
+// log errors but not fail the task if event posting fails.
+func (c *Client) PostEvents(ctx context.Context, taskID string, events any) error {
+	url := c.baseURL + "/api/v1/tasks/" + taskID + "/events"
+
+	payload := postEventRequest{Events: events}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshaling events: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("creating request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("posting events: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxStatusResponseSize))
+		return &HTTPStatusError{StatusCode: resp.StatusCode, Body: string(respBody)}
+	}
+
+	return nil
 }
 
 // ReportStatus sends a status update to the API.
