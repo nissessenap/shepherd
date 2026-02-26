@@ -39,22 +39,29 @@ All `.ts` and `.svelte.ts` files must have proper types. Avoid `any`.
 
 ## Data fetching: plain `$state` classes, no TanStack Query
 
-Use `$state` classes in `.svelte.ts` files for data fetching:
+Use `$state` classes in `.svelte.ts` files for data fetching with the typed `openapi-fetch` client:
 
 ```typescript
-// lib/stores/tasks.svelte.ts
+// lib/tasks.svelte.ts
+import { api } from "$lib/client.js";
+import type { components } from "$lib/api.js";
+
+type TaskResponse = components["schemas"]["TaskResponse"];
+
 export class TasksStore {
-  data: Task[] = $state([])
+  data: TaskResponse[] = $state([])
   loading = $state(false)
   error: string | null = $state(null)
 
-  async load() {
+  async load(params?: { repo?: string }) {
     this.loading = true
     this.error = null
     try {
-      const res = await fetch('/api/v1/tasks')
-      if (!res.ok) throw new Error(res.statusText)
-      this.data = await res.json()
+      const { data, response } = await api.GET("/api/v1/tasks", {
+        params: { query: params },
+      })
+      if (!response.ok) throw new Error(`${response.status}`)
+      this.data = data ?? []
     } catch (e) {
       this.error = (e as Error).message
     } finally {
@@ -67,7 +74,7 @@ export class TasksStore {
 ## WebSocket: `$state` class with `$effect` cleanup
 
 ```typescript
-// lib/stores/task-stream.svelte.ts
+// lib/task-stream.svelte.ts
 export class TaskStream {
   events: TaskEvent[] = $state([])
   connected = $state(false)
@@ -89,7 +96,7 @@ Connect via `$effect` in a layout:
 ```svelte
 <script lang="ts">
   import { setContext } from 'svelte'
-  import { TaskStream } from '$lib/stores/task-stream.svelte'
+  import { TaskStream } from '$lib/task-stream.svelte'
 
   const stream = new TaskStream()
   setContext('task-stream', stream)
@@ -99,6 +106,66 @@ Connect via `$effect` in a layout:
     return () => stream.disconnect()
   })
 </script>
+```
+
+## Testability: extract logic from `.svelte.ts` into plain `.ts`
+
+Complex logic in `$state` classes (state machines, parsers, classification) should be extracted to plain `.ts` files so Vitest can test them without Svelte compilation. Keep `.svelte.ts` files thin — they wire reactive state to pure functions, not contain the logic itself.
+
+```typescript
+// BAD: logic coupled to $state in task-stream.svelte.ts
+export class TaskStream {
+  handleMessage(msg: WSMessage): void {
+    // 30 lines of sequence/gap/dedup logic...
+  }
+}
+
+// GOOD: logic extracted to stream-logic.ts (pure, testable)
+export function classifyMessage(msg: WSMessage, lastSeq: number): MessageAction { ... }
+
+// task-stream.svelte.ts (thin reactive wrapper)
+import { classifyMessage } from "./stream-logic.js";
+export class TaskStream {
+  handleMessage(msg: WSMessage): void {
+    const result = classifyMessage(msg, this.lastSequence);
+    // apply result to $state...
+  }
+}
+```
+
+## Data fetching: use `openapi-fetch` typed client
+
+Use the typed `openapi-fetch` client from `$lib/client.js`, not raw `fetch`:
+
+```typescript
+// WRONG
+const res = await fetch('/api/v1/tasks')
+const data = await res.json()
+
+// CORRECT
+import { api } from "$lib/client.js";
+const { data, response } = await api.GET("/api/v1/tasks", {
+  params: { query: filters },
+});
+if (!response.ok) throw new Error(`${response.status}`);
+```
+
+For generated API types in components and stores:
+
+```typescript
+import type { components } from "$lib/api.js";
+type TaskEvent = components["schemas"]["TaskEvent"];
+```
+
+## File organization
+
+```
+web/src/lib/
+├── components/     Svelte components (.svelte)
+├── *.svelte.ts     Reactive stores ($state classes)
+├── *.ts            Pure logic, utilities, types
+├── client.ts       openapi-fetch API client
+└── api.d.ts        Generated types from OpenAPI spec (do not edit)
 ```
 
 ## Error/redirect: no `throw` needed (SvelteKit 2)

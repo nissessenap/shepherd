@@ -244,3 +244,24 @@ export const counter = $state({ count: 0 })
 ```
 
 Use `setContext`/`getContext` for SSR-safe shared state.
+
+## Reactive subscriptions without value usage: `void expr`
+
+Use `void expr` to subscribe to a `$state` value for re-computation without using its value directly. This is idiomatic Svelte 5 — do NOT remove `void` reads, they are intentional reactive dependencies.
+
+```svelte
+<script lang="ts">
+  let now = $state(Date.now())
+  const duration = $derived.by(() => {
+    if (isRunning) void now  // re-evaluate every tick
+    return formatDuration(start, end)
+  })
+</script>
+```
+
+## `$derived` vs `$derived.by`
+
+- `$derived(expr)` — single expression, no braces needed: `const doubled = $derived(count * 2)`
+- `$derived.by(() => { ... })` — multi-statement, local variables, conditionals, loops
+
+Use the simpler form when possible.
