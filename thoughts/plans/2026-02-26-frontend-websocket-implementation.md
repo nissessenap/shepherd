@@ -1141,11 +1141,111 @@ This proxies `/api/*` requests from the browser to the Go API service, including
 ## Phase 9: E2E Tests (Playwright)
 
 ### Overview
-Set up Playwright for browser-based E2E tests that run against the full stack deployed in kind. Tests verify the critical user flows.
+Update the E2E stub runner to POST fake events (so the full WebSocket pipeline is exercised), set up Playwright for browser-based E2E tests, and run them against the full stack deployed in kind.
+
+The current stub runner at `test/e2e/testrunner/main.go` fetches task data, sleeps 5 seconds, and reports `"completed"`. It posts **zero events**, which means the WebSocket streaming path is never tested end-to-end. The stub runner must be updated to POST a realistic sequence of fake events during its work simulation so Playwright can verify the full pipeline: stub runner → `POST /events` → EventHub → WebSocket → browser.
 
 ### Changes Required:
 
-#### 1. Playwright Setup
+#### 1. Update Stub Runner to POST Events
+**File**: `test/e2e/testrunner/main.go`
+**Changes**: Add event posting during the `executeTask()` function. Replace the 5-second sleep with a scripted sequence of events interspersed with short delays:
+
+```go
+func executeTask(ctx context.Context, ta TaskAssignment) error {
+    client := &http.Client{Timeout: 30 * time.Second}
+
+    // 1. Fetch task data (existing)
+    // ...
+
+    // 2. Report started status (existing)
+    if err := reportStatus(ctx, ta, "started", "cloning repository"); err != nil {
+        return err
+    }
+
+    // 3. POST a realistic sequence of fake events
+    events := []event{
+        {Seq: 1, Type: "thinking",    Summary: "Analyzing the codebase structure to understand the project layout..."},
+        {Seq: 2, Type: "tool_call",   Summary: "Reading src/main.go", Tool: "Read", Input: map[string]any{"file_path": "src/main.go"}},
+        {Seq: 3, Type: "tool_result", Summary: "package main\n\nfunc main() {...}", Tool: "Read", Success: true},
+        {Seq: 4, Type: "tool_call",   Summary: "Editing src/main.go", Tool: "Edit", Input: map[string]any{"file_path": "src/main.go"}},
+        {Seq: 5, Type: "tool_result", Summary: "Modified lines 10-15 (+3/-1)", Tool: "Edit", Success: true},
+        {Seq: 6, Type: "thinking",    Summary: "Running tests to verify the changes..."},
+        {Seq: 7, Type: "tool_call",   Summary: "go test ./...", Tool: "Bash", Input: map[string]any{"command": "go test ./..."}},
+        {Seq: 8, Type: "tool_result", Summary: "PASS\nok  \tproject/pkg\t0.42s", Tool: "Bash", Success: true},
+    }
+
+    for _, e := range events {
+        if err := postEvent(ctx, client, ta, e); err != nil {
+            slog.Warn("failed to post event", "seq", e.Seq, "error", err)
+            // Best-effort — don't fail the task if event posting fails
+        }
+        // Small delay between events so Playwright can observe them arriving
+        select {
+        case <-time.After(500 * time.Millisecond):
+        case <-ctx.Done():
+            return ctx.Err()
+        }
+    }
+
+    // 4. Report completed status with a fake PR URL
+    return reportStatus(ctx, ta, "completed", "stub runner completed successfully",
+        map[string]any{"pr_url": "https://github.com/test-org/test-repo/pull/42"})
+}
+
+func postEvent(ctx context.Context, client *http.Client, ta TaskAssignment, e event) error {
+    eventsURL := ta.APIURL + "/api/v1/tasks/" + ta.TaskID + "/events"
+    payload, _ := json.Marshal(map[string]any{
+        "events": []map[string]any{{
+            "sequence":  e.Seq,
+            "timestamp": time.Now().UTC().Format(time.RFC3339Nano),
+            "type":      e.Type,
+            "summary":   e.Summary,
+            "tool":      e.Tool,
+            "input":     e.Input,
+            "output":    &map[string]any{"success": e.Success, "summary": e.Summary},
+        }},
+    })
+    req, err := http.NewRequestWithContext(ctx, http.MethodPost, eventsURL, bytes.NewReader(payload))
+    if err != nil {
+        return err
+    }
+    req.Header.Set("Content-Type", "application/json")
+    resp, err := client.Do(req)
+    if err != nil {
+        return err
+    }
+    defer resp.Body.Close()
+    if resp.StatusCode != http.StatusOK {
+        body, _ := io.ReadAll(resp.Body)
+        return fmt.Errorf("event POST returned %d: %s", resp.StatusCode, body)
+    }
+    return nil
+}
+```
+
+This gives Playwright a realistic event stream: thinking events (rendered muted), tool calls with different tool types (Read=blue, Edit=blue, Bash=amber), tool results with success indicators, and a completed status with a PR URL.
+
+The total time is ~4 seconds (8 events × 500ms), replacing the old 5-second sleep. The existing Go E2E tests that `Eventually` poll for the Running→Succeeded transition continue to work because the timing is similar.
+
+#### 2. Update reportStatus to Support Details
+**File**: `test/e2e/testrunner/main.go`
+**Changes**: The existing `reportStatus()` only sends `event` and `message`. Update it to accept an optional `details` map so the completed event can include `pr_url`:
+
+```go
+func reportStatus(ctx context.Context, ta TaskAssignment, event, message string, details ...map[string]any) error {
+    payload := map[string]any{
+        "event":   event,
+        "message": message,
+    }
+    if len(details) > 0 {
+        payload["details"] = details[0]
+    }
+    // ... rest unchanged
+}
+```
+
+#### 3. Playwright Setup
 **File**: `web/package.json`
 **Changes**: Add dev dependency: `@playwright/test`
 
@@ -1165,7 +1265,7 @@ export default defineConfig({
 });
 ```
 
-#### 2. Test Helper for API Seeding
+#### 4. Test Helper for API Seeding
 **File**: `web/e2e/helpers.ts` (new)
 
 ```typescript
@@ -1185,44 +1285,116 @@ export async function createTask(opts: { repo: string; description: string }): P
   const data = await res.json();
   return data.id;
 }
+
+export async function waitForTaskPhase(taskId: string, phase: string, timeoutMs = 120_000): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const res = await fetch(`${API_URL}/api/v1/tasks/${taskId}`);
+    const task = await res.json();
+    if (task.status.phase === phase) return;
+    await new Promise(r => setTimeout(r, 1000));
+  }
+  throw new Error(`Task ${taskId} did not reach phase ${phase} within ${timeoutMs}ms`);
+}
 ```
 
-#### 3. E2E Test Scenarios
+#### 5. E2E Test Scenarios — Task List
 **File**: `web/e2e/task-list.spec.ts`
 
 ```typescript
-test('task list loads and displays tasks', async ({ page }) => { ... });
-test('clicking a task navigates to detail view', async ({ page }) => { ... });
-test('filtering tasks by repository updates URL', async ({ page }) => { ... });
-test('empty state shows helpful message', async ({ page }) => { ... });
-test('browser back button preserves filter state', async ({ page }) => { ... });
+test('task list loads and displays tasks', async ({ page }) => {
+  // Seed: create a task via API, wait for it to complete
+  // Navigate to /tasks
+  // Verify task appears with correct status badge, repo, description
+});
+
+test('clicking a task navigates to detail view', async ({ page }) => {
+  // Seed: create completed task
+  // Click the task row
+  // Verify URL changes to /tasks/{taskID}
+  // Verify task detail page renders
+});
+
+test('filtering tasks by repository updates URL', async ({ page }) => {
+  // Seed: create tasks with different repos
+  // Apply repo filter
+  // Verify URL contains ?repo= parameter
+  // Verify only matching tasks shown
+});
+
+test('empty state shows helpful message', async ({ page }) => {
+  // Navigate to /tasks with a filter that matches nothing
+  // Verify "No tasks match your filters" message
+});
+
+test('browser back button preserves filter state', async ({ page }) => {
+  // Apply filter → navigate to detail → press back
+  // Verify filter is still applied in URL and UI
+});
 ```
 
+#### 6. E2E Test Scenarios — Task Detail (Full Stack WebSocket)
 **File**: `web/e2e/task-detail.spec.ts`
 
-```typescript
-test('task detail shows metadata for completed task', async ({ page }) => { ... });
-test('deep link to a specific task works', async ({ page }) => { ... });
-```
-
-**File**: `web/e2e/websocket.spec.ts`
-Uses Playwright's `page.routeWebSocket()` for deterministic WebSocket testing:
+These tests exercise the **real** WebSocket pipeline end-to-end (stub runner → API EventHub → WebSocket → browser). No mocking.
 
 ```typescript
 test('live events stream during running task', async ({ page }) => {
-  // Use page.routeWebSocket() to intercept WS and send scripted events
-  // Verify events render in order with correct tool badges
+  // 1. Create task via API
+  // 2. Navigate to /tasks/{taskID} immediately (before stub runner finishes)
+  // 3. Verify "LIVE" indicator appears
+  // 4. Wait for events to appear in the event stream
+  // 5. Verify at least one thinking event (muted text)
+  // 6. Verify at least one tool_call event (tool badge visible)
+  // 7. Verify at least one tool_result event (success indicator)
 });
 
 test('task completes and shows PR link', async ({ page }) => {
-  // Send task_complete message via mocked WS
-  // Verify PR card appears
+  // 1. Create task via API
+  // 2. Navigate to task detail
+  // 3. Wait for task to reach Succeeded phase
+  // 4. Verify PR card appears with "Open in GitHub" link
+  // 5. Verify PR URL matches the fake URL from stub runner
+});
+
+test('completed task shows event history', async ({ page }) => {
+  // 1. Create task, wait for completion
+  // 2. Navigate to task detail
+  // 3. Verify event log shows historical events (from EventHub buffer)
+  // 4. Verify events are in sequence order
+});
+
+test('task detail shows metadata', async ({ page }) => {
+  // Verify: status badge, repo name, task description, duration
+});
+
+test('deep link to a specific task works', async ({ page }) => {
+  // Navigate directly to /tasks/{taskID} via URL
+  // Verify page loads correctly
 });
 ```
 
-Note: WebSocket tests use Playwright's route interception for deterministic behavior. The full-stack E2E tests that test the real Go WebSocket endpoint are in `web/e2e/task-detail.spec.ts`.
+#### 7. E2E Test Scenarios — WebSocket Behavior (Mocked for Determinism)
+**File**: `web/e2e/websocket-behavior.spec.ts`
 
-#### 4. Makefile Targets
+These tests use Playwright's `page.routeWebSocket()` to test WebSocket edge cases deterministically (reconnection, disconnection) without depending on real server timing:
+
+```typescript
+test('reconnects after WebSocket disconnect', async ({ page }) => {
+  // Use page.routeWebSocket() to intercept WS connection
+  // Send a few events, then close the connection abnormally
+  // Verify "Reconnecting..." indicator appears
+  // Accept the reconnection, send more events
+  // Verify events continue streaming without gaps
+});
+
+test('shows disconnected state after max retries', async ({ page }) => {
+  // Intercept WS, reject all reconnection attempts
+  // Verify "Disconnected" indicator appears after max retries
+});
+```
+
+#### 8. Makefile Targets
 **File**: `Makefile`
 ```makefile
 .PHONY: web-e2e
@@ -1234,24 +1406,30 @@ web-e2e-install: ## Install Playwright browsers.
 	npx --prefix web playwright install chromium
 ```
 
-#### 5. Test Execution in Kind
-The E2E tests run against the kind-deployed stack:
-1. `make test-e2e` already deploys the API
-2. Phase 8 adds the frontend to the deployment
-3. Playwright tests hit `http://localhost:30081` (frontend) which proxies to `http://localhost:30080` (API via nginx)
+#### 9. Full E2E Target (Kind + Playwright)
+**File**: `Makefile`
 
-For CI, extend `test-e2e` or add a new target:
+For CI, a single target that stands up the full stack and runs all E2E tests:
 ```makefile
 .PHONY: test-e2e-frontend
-test-e2e-frontend: kind-create ko-build-kind install-agent-sandbox install deploy-test deploy-e2e-fixtures web-e2e-install
+test-e2e-frontend: kind-create ko-build-kind install-agent-sandbox install deploy-test deploy-e2e-fixtures web-e2e-install ## Full frontend E2E: kind cluster + Playwright.
 	npx --prefix web playwright test
 	$(MAKE) kind-delete
 ```
 
+The flow:
+1. `kind-create` — creates kind cluster with port mappings (30080 API, 30081 frontend)
+2. `ko-build-kind` — builds all 3 images (API, stub runner, frontend), loads into kind
+3. `install-agent-sandbox` + `install` + `deploy-test` — deploys the full stack
+4. `deploy-e2e-fixtures` — deploys the SandboxTemplate (stub runner uses `e2e-runner` template)
+5. Playwright tests create tasks via the API, the stub runner picks them up, POSTs events, and Playwright observes the results in the browser
+
 ### Success Criteria:
 
 #### Automated Verification:
+- [ ] `make test-e2e` still passes — existing Go E2E tests unbroken by stub runner changes
 - [ ] `make web-e2e` passes all Playwright tests against the kind-deployed stack
+- [ ] The "live events stream" test observes real events flowing through the full pipeline
 - [ ] Test report generated at `web/playwright-report/`
 - [ ] Tests complete within 5 minutes
 
