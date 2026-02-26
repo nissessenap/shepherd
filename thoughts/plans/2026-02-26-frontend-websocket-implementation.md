@@ -752,9 +752,9 @@ Only active when no input/textarea is focused.
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `make web-build` succeeds
-- [ ] `make web-check` passes TypeScript checking
-- [ ] `make web-lint` passes
+- [x] `make web-build` succeeds
+- [x] `make web-check` passes TypeScript checking
+- [x] `make web-lint` passes
 
 #### Manual Verification:
 - [ ] Navigate to a running task and see live events streaming

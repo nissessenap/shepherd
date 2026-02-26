@@ -21,7 +21,10 @@ export function buildFilters(searchParams: URLSearchParams): TaskFilters {
 /**
  * Client-side search filter over tasks by description, repo URL, or ID.
  */
-export function filterTasks(tasks: TaskResponse[], query: string): TaskResponse[] {
+export function filterTasks(
+	tasks: TaskResponse[],
+	query: string,
+): TaskResponse[] {
 	if (!query) return tasks;
 	const q = query.toLowerCase();
 	return tasks.filter(
@@ -43,7 +46,10 @@ export interface StatusConfig {
 export function getStatusConfig(status: string): StatusConfig {
 	switch (status) {
 		case "Pending":
-			return { color: "text-attention-fg bg-attention-fg/10", label: "Pending" };
+			return {
+				color: "text-attention-fg bg-attention-fg/10",
+				label: "Pending",
+			};
 		case "Running":
 			return { color: "text-info-fg bg-info-fg/10", label: "Running" };
 		case "Succeeded":
@@ -51,7 +57,10 @@ export function getStatusConfig(status: string): StatusConfig {
 		case "Failed":
 			return { color: "text-danger-fg bg-danger-fg/10", label: "Failed" };
 		case "TimedOut":
-			return { color: "text-attention-fg bg-attention-fg/10", label: "Timed Out" };
+			return {
+				color: "text-attention-fg bg-attention-fg/10",
+				label: "Timed Out",
+			};
 		case "Cancelled":
 			return { color: "text-fg-muted bg-fg-muted/10", label: "Cancelled" };
 		default:

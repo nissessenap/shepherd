@@ -27,9 +27,7 @@ describe("formatDuration", () => {
 		});
 
 		it("returns Xh YYm with zero-padded minutes", () => {
-			expect(formatDuration(BASE, endAfter(2 * 3600 + 5 * 60))).toBe(
-				"2h 05m",
-			);
+			expect(formatDuration(BASE, endAfter(2 * 3600 + 5 * 60))).toBe("2h 05m");
 		});
 
 		it("falls back to Date.now() when endTime is null", () => {
@@ -53,9 +51,7 @@ describe("formatDuration", () => {
 		});
 
 		it('clamps negative duration to "0s" when end is before start', () => {
-			const before = new Date(
-				new Date(BASE).getTime() - 5000,
-			).toISOString();
+			const before = new Date(new Date(BASE).getTime() - 5000).toISOString();
 			expect(formatDuration(BASE, before)).toBe("0s");
 		});
 
@@ -144,9 +140,7 @@ describe("formatTimestamp", () => {
 describe("extractRepoName", () => {
 	describe("happy paths", () => {
 		it("extracts org/repo from a GitHub URL", () => {
-			expect(extractRepoName("https://github.com/org/repo")).toBe(
-				"org/repo",
-			);
+			expect(extractRepoName("https://github.com/org/repo")).toBe("org/repo");
 		});
 
 		it("strips .git suffix", () => {
@@ -166,15 +160,13 @@ describe("extractRepoName", () => {
 		});
 
 		it("preserves trailing slash in the path", () => {
-			expect(extractRepoName("https://github.com/org/repo/")).toBe(
-				"org/repo/",
-			);
+			expect(extractRepoName("https://github.com/org/repo/")).toBe("org/repo/");
 		});
 
 		it("preserves deep paths", () => {
-			expect(
-				extractRepoName("https://github.com/org/repo/tree/main/src"),
-			).toBe("org/repo/tree/main/src");
+			expect(extractRepoName("https://github.com/org/repo/tree/main/src")).toBe(
+				"org/repo/tree/main/src",
+			);
 		});
 
 		it("handles non-GitHub URLs the same way", () => {
