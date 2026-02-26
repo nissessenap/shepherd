@@ -136,6 +136,84 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/v1/tasks/{taskID}/events:
+    post:
+      operationId: postEvents
+      summary: Post agent events for a task (runner → API)
+      tags: [internal]
+      parameters:
+        - $ref: "#/components/parameters/taskID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PostEventRequest"
+      responses:
+        "200":
+          description: Events accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusAcceptedResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Task not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "410":
+          description: Task is terminal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "415":
+          description: Content-Type must be application/json
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    get:
+      operationId: streamEvents
+      summary: Stream task events via WebSocket
+      description: |
+        Upgrades to a WebSocket connection for real-time event streaming.
+        The server sends JSON messages of type WSMessage with "task_event"
+        or "task_complete" types. Use the ?after query parameter to resume
+        from a specific sequence number after reconnection.
+      tags: [tasks]
+      parameters:
+        - $ref: "#/components/parameters/taskID"
+        - name: after
+          in: query
+          description: Only return events with sequence > this value (for reconnection)
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "101":
+          description: WebSocket upgrade
+        "400":
+          description: Invalid after parameter
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Task not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/v1/tasks/{taskID}/status:
     post:
       operationId: updateTaskStatus
@@ -382,6 +460,52 @@ components:
         expiresAt:
           type: string
           format: date-time
+
+    PostEventRequest:
+      type: object
+      required: [events]
+      properties:
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/TaskEvent"
+          minItems: 1
+
+    TaskEvent:
+      type: object
+      required: [sequence, timestamp, type, summary]
+      properties:
+        sequence:
+          type: integer
+          format: int64
+          minimum: 1
+        timestamp:
+          type: string
+          format: date-time
+        type:
+          type: string
+          enum: [thinking, tool_call, tool_result, error]
+        summary:
+          type: string
+        tool:
+          type: string
+        input:
+          type: object
+          additionalProperties: true
+        output:
+          $ref: "#/components/schemas/TaskEventOutput"
+        metadata:
+          type: object
+          additionalProperties: true
+
+    TaskEventOutput:
+      type: object
+      required: [success]
+      properties:
+        success:
+          type: boolean
+        summary:
+          type: string
 
     ErrorResponse:
       type: object

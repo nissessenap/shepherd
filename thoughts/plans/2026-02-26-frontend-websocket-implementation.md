@@ -513,9 +513,9 @@ func (h *taskHandler) streamEvents(w http.ResponseWriter, r *http.Request) {
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `make test` passes — all new tests plus existing tests with contract validation
-- [ ] `make lint-fix` passes
-- [ ] New routes appear in dual-port routing tests
+- [x] `make test` passes — all new tests plus existing tests with contract validation
+- [x] `make lint-fix` passes
+- [x] New routes appear in dual-port routing tests
 
 #### Manual Verification:
 - [ ] Can POST events to `localhost:8081/api/v1/tasks/{id}/events` and receive them via WebSocket at `localhost:8080/api/v1/tasks/{id}/events` using `websocat` or similar tool

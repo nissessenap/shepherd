@@ -110,3 +110,50 @@ type ErrorResponse struct {
 	Error   string `json:"error"`
 	Details string `json:"details,omitempty"`
 }
+
+// TaskEvent types for streaming agent activity.
+type TaskEventType string
+
+const (
+	EventTypeThinking   TaskEventType = "thinking"
+	EventTypeToolCall   TaskEventType = "tool_call"
+	EventTypeToolResult TaskEventType = "tool_result"
+	EventTypeError      TaskEventType = "error"
+)
+
+// TaskEvent represents a single agent activity event.
+type TaskEvent struct {
+	Sequence  int64            `json:"sequence"`
+	Timestamp string           `json:"timestamp"`
+	Type      TaskEventType    `json:"type"`
+	Summary   string           `json:"summary"`
+	Tool      string           `json:"tool,omitempty"`
+	Input     map[string]any   `json:"input,omitempty"`
+	Output    *TaskEventOutput `json:"output,omitempty"`
+	Metadata  map[string]any   `json:"metadata,omitempty"`
+}
+
+// TaskEventOutput contains the result of a tool execution.
+type TaskEventOutput struct {
+	Success bool   `json:"success"`
+	Summary string `json:"summary,omitempty"`
+}
+
+// WSMessage is a WebSocket message envelope (server → client).
+type WSMessage struct {
+	Type string `json:"type"` // "task_event" or "task_complete"
+	Data any    `json:"data"`
+}
+
+// TaskCompleteData is sent when a task reaches a terminal state.
+type TaskCompleteData struct {
+	TaskID string `json:"taskID"`
+	Status string `json:"status"`
+	PRURL  string `json:"prURL,omitempty"`
+	Error  string `json:"error,omitempty"`
+}
+
+// PostEventRequest is the JSON body for POST /api/v1/tasks/{taskID}/events.
+type PostEventRequest struct {
+	Events []TaskEvent `json:"events"`
+}

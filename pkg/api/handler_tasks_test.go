@@ -56,6 +56,7 @@ func newTestHandler(objs ...client.Object) *taskHandler {
 		client:    c,
 		namespace: "default",
 		callback:  newCallbackSender(""),
+		eventHub:  NewEventHub(),
 	}
 }
 
@@ -65,7 +66,9 @@ func testRouter(h *taskHandler) *chi.Mux {
 		r.Post("/tasks", h.createTask)
 		r.Get("/tasks", h.listTasks)
 		r.Get("/tasks/{taskID}", h.getTask)
+		r.Get("/tasks/{taskID}/events", h.streamEvents)
 		r.Post("/tasks/{taskID}/status", h.updateTaskStatus)
+		r.Post("/tasks/{taskID}/events", h.postEvents)
 		r.Get("/tasks/{taskID}/data", h.getTaskData)
 		r.Get("/tasks/{taskID}/token", h.getTaskToken)
 	})
