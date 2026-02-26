@@ -52,7 +52,7 @@ function onSearchInput(e: Event) {
 }
 
 function onActiveToggle(value: string) {
-	updateFilter("active", value === "true" ? "true" : "");
+	updateFilter("active", value);
 }
 
 function onRepoChange(e: Event) {

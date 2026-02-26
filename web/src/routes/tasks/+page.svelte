@@ -3,35 +3,18 @@ import { page } from "$app/state";
 import FilterBar from "$lib/components/FilterBar.svelte";
 import SummaryStats from "$lib/components/SummaryStats.svelte";
 import TaskCard from "$lib/components/TaskCard.svelte";
-import { type TaskFilters, TasksStore } from "$lib/tasks.svelte.js";
+import { buildFilters, filterTasks } from "$lib/filters.js";
+import { TasksStore } from "$lib/tasks.svelte.js";
 
 const store = new TasksStore();
 
-const filters = $derived.by((): TaskFilters => {
-	const params = page.url.searchParams;
-	const f: TaskFilters = {};
-	const repo = params.get("repo");
-	const fleet = params.get("fleet");
-	const active = params.get("active");
-	if (repo) f.repo = repo;
-	if (fleet) f.fleet = fleet;
-	f.active = active === "true" || active === null ? "true" : undefined;
-	return f;
-});
+const filters = $derived(buildFilters(page.url.searchParams));
 
 const searchQuery = $derived(
 	page.url.searchParams.get("q")?.toLowerCase() ?? "",
 );
 
-const filteredTasks = $derived.by(() => {
-	if (!searchQuery) return store.data;
-	return store.data.filter(
-		(task) =>
-			task.task.description.toLowerCase().includes(searchQuery) ||
-			task.repo.url.toLowerCase().includes(searchQuery) ||
-			task.id.toLowerCase().includes(searchQuery),
-	);
-});
+const filteredTasks = $derived(filterTasks(store.data, searchQuery));
 
 // Fetch on mount and when filters change
 $effect(() => {

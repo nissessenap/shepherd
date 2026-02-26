@@ -1,5 +1,6 @@
 <script lang="ts">
 import type { components } from "$lib/api.js";
+import { computeStats } from "$lib/filters.js";
 
 type TaskResponse = components["schemas"]["TaskResponse"];
 
@@ -9,22 +10,7 @@ interface Props {
 
 const { tasks }: Props = $props();
 
-const stats = $derived.by(() => {
-	let active = 0;
-	let pending = 0;
-	let succeeded = 0;
-	let failed = 0;
-
-	for (const task of tasks) {
-		const phase = task.status.phase;
-		if (phase === "Running") active++;
-		else if (phase === "Pending") pending++;
-		else if (phase === "Succeeded") succeeded++;
-		else if (phase === "Failed" || phase === "TimedOut") failed++;
-	}
-
-	return { active, pending, succeeded, failed, total: tasks.length };
-});
+const stats = $derived(computeStats(tasks));
 </script>
 
 <div class="flex gap-3 text-sm">
