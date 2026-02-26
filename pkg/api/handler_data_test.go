@@ -19,6 +19,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -56,6 +57,11 @@ func TestGetTaskData_ReturnsDecompressedContext(t *testing.T) {
 	w := doGet(t, router, "/api/v1/tasks/task-data-1/data")
 
 	assert.Equal(t, http.StatusOK, w.Code)
+
+	// Contract validation
+	doc := loadSpec(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tasks/task-data-1/data", nil)
+	validateResponse(t, doc, req, w)
 
 	var resp TaskDataResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))

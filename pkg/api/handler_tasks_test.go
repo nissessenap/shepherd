@@ -116,6 +116,12 @@ func TestCreateTask_Valid(t *testing.T) {
 
 	assert.Equal(t, http.StatusCreated, w.Code)
 
+	// Contract validation
+	doc := loadSpec(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks", nil)
+	req.Header.Set("Content-Type", "application/json")
+	validateResponse(t, doc, req, w)
+
 	var resp TaskResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.True(t, strings.HasPrefix(resp.ID, "task-"), "task ID should start with 'task-'")
@@ -552,6 +558,11 @@ func TestListTasks_EmptyReturnsEmptyArray(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
 
+	// Contract validation
+	doc := loadSpec(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tasks", nil)
+	validateResponse(t, doc, req, w)
+
 	var tasks []TaskResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &tasks))
 	assert.Empty(t, tasks)
@@ -727,6 +738,11 @@ func TestGetTask_ReturnsTaskDetails(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
+	// Contract validation
+	doc := loadSpec(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tasks/task-detail", nil)
+	validateResponse(t, doc, req, w)
+
 	var resp TaskResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, "task-detail", resp.ID)
@@ -743,6 +759,11 @@ func TestGetTask_NotFound(t *testing.T) {
 	w := doGet(t, router, "/api/v1/tasks/nonexistent")
 
 	assert.Equal(t, http.StatusNotFound, w.Code)
+
+	// Contract validation
+	doc := loadSpec(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tasks/nonexistent", nil)
+	validateResponse(t, doc, req, w)
 
 	var errResp ErrorResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &errResp))

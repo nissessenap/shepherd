@@ -95,6 +95,13 @@ func TestUpdateTaskStatus_StartedEvent(t *testing.T) {
 	})
 
 	assert.Equal(t, http.StatusOK, w.Code)
+
+	// Contract validation
+	doc := loadSpec(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks/task-abc/status", nil)
+	req.Header.Set("Content-Type", "application/json")
+	validateResponse(t, doc, req, w)
+
 	var resp map[string]string
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, "accepted", resp["status"])

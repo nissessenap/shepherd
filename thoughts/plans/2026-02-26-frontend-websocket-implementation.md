@@ -138,9 +138,9 @@ func TestCreateTask_Valid(t *testing.T) {
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `api/openapi.yaml` is valid OpenAPI 3.0.3: `go test ./pkg/api/ -run TestOpenAPISpecIsValid`
-- [ ] `make test` passes — contract validation confirms all happy-path responses match the spec
-- [ ] `make lint-fix` passes
+- [x] `api/openapi.yaml` is valid OpenAPI 3.0.3: `go test ./pkg/api/ -run TestOpenAPISpecIsValid`
+- [x] `make test` passes — contract validation confirms all happy-path responses match the spec
+- [x] `make lint-fix` passes
 
 #### Manual Verification:
 - [ ] Review `api/openapi.yaml` for completeness against the actual API routes in `pkg/api/server.go:175-200`
