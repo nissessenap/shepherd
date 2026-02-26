@@ -105,6 +105,7 @@ The project owner's instinct about minimizing dependencies is validated by 2025-
 - **January 2026**: Six zero-day vulnerabilities in npm, pnpm, and Bun package manager runtimes themselves.
 
 **Practical defenses:**
+
 - Lock files + hash verification (commit `package-lock.json`)
 - `npm install --ignore-scripts` in CI
 - Pin exact versions, don't auto-update same-day
@@ -115,12 +116,14 @@ The project owner's instinct about minimizing dependencies is validated by 2025-
 #### User Personas
 
 **Alex -- Individual Developer**
+
 - Triggered `@shepherd fix the null pointer` on a GitHub issue
 - Wants to know: Is it running? What is it doing? Did it create a PR?
 - Mental model: "I asked for help, I want to check on progress"
 - Primary flow: open Shepherd UI → find my task → watch it work → click PR link
 
 **Sam -- Platform/SRE Team Lead**
+
 - Manages Shepherd deployment across the org
 - Wants to know: How many tasks are running? Any failures? Resource usage?
 - Mental model: "Dashboard for the fleet of agents"
@@ -136,6 +139,7 @@ Two pages. That's it.
 ```
 
 Every meaningful state is encoded in the URL:
+
 ```
 /tasks                              → All tasks, default sort
 /tasks?active=true                  → Active tasks only
@@ -152,6 +156,7 @@ No separate "dashboard" page for Sam. The task list with summary stats at the to
 #### Core User Flows
 
 **Flow 1: Developer checks on triggered task**
+
 ```
 1. Developer opens /tasks (bookmark or Slack link)
 2. Default filter: active=true (show running/pending tasks)
@@ -163,6 +168,7 @@ No separate "dashboard" page for Sam. The task list with summary stats at the to
 ```
 
 **Flow 2: Developer monitors a running agent in real-time**
+
 ```
 1. Task detail page loads, REST fetch gets task metadata
 2. Phase is "Running" → WebSocket connection established
@@ -180,6 +186,7 @@ No separate "dashboard" page for Sam. The task list with summary stats at the to
 ```
 
 **Flow 3: Platform team reviews all tasks**
+
 ```
 1. Sam opens /tasks (no filters)
 2. Summary stats bar shows: 12 active, 3 pending, 47 completed today, 2 failed
@@ -191,6 +198,7 @@ No separate "dashboard" page for Sam. The task list with summary stats at the to
 ```
 
 **Flow 4: User investigates a failed task**
+
 ```
 1. Task detail shows red "Failed" or "TimedOut" badge
 2. Error callout box at top: "Task timed out after 30m0s"
@@ -296,6 +304,7 @@ Breakpoints: 768px (mobile), 1024px (tablet), 1200px (desktop)
 ```
 
 **Design notes:**
+
 - Summary stats bar at top provides Sam's (SRE) at-a-glance view
 - Status uses both icon AND color: Running (blue dot), Pending (half dot, amber), Succeeded (green check), Failed (red X)
 - Task description truncated to one line. Full text on hover and detail page
@@ -358,6 +367,7 @@ Breakpoints: 768px (mobile), 1024px (tablet), 1200px (desktop)
 ```
 
 **Design notes:**
+
 - "LIVE" indicator with pulsing dot makes it obvious this is real-time
 - 70/30 split: event stream (left) is the hero, metadata panel (right) is sticky
 - Timestamps left-aligned, creating a timeline feel
@@ -405,6 +415,7 @@ Breakpoints: 768px (mobile), 1024px (tablet), 1200px (desktop)
 ```
 
 **Design notes:**
+
 - PR card is the hero element -- impossible to miss, "Open in GitHub" is primary CTA
 - `+32 -8 across 3 files` gives quick sense of PR size
 - Event log present but middle portion collapsed for completed tasks
@@ -453,6 +464,7 @@ Breakpoints: 768px (mobile), 1024px (tablet), 1200px (desktop)
 ```
 
 **Design notes:**
+
 - Error callout uses red/danger color scheme (red left border, light red background)
 - "Last agent action" gives immediate debugging context without scrolling
 - Event log defaults to showing LAST events for failed tasks
@@ -628,6 +640,7 @@ App
 | `error` | Red background tint, red border, error icon | Expanded always |
 
 Tool calls color-coded by category:
+
 - **File operations** (Read, Edit, Write): blue
 - **Shell operations** (Bash): amber/yellow
 - **Search operations** (Grep, Glob): green
@@ -698,6 +711,7 @@ error → RETRY_REQUESTED → connecting (manual retry resets backoff)
 #### Unit Testing Priorities
 
 **Highest priority** (most critical, hardest to debug in production):
+
 1. WebSocket reconnection: backoff timer, retry counter, `?after=` parameter calculation
 2. Event sequence validation: gap detection, deduplication, ordering
 3. Status derivation: maps CRD condition reasons to UI phases (mirrors Go `extractStatus`)
@@ -785,6 +799,7 @@ Stage 2 (serve):  caddy:2-alpine, copy built assets to /srv
 ```
 
 Caddyfile (~5 lines):
+
 ```
 :8080
 root * /srv
@@ -877,6 +892,7 @@ The frontend can be built before these exist. The REST-only task detail view wor
 ## Open Questions
 
 1. **React vs Svelte final decision**: This document recommends React based on ecosystem alignment, but Svelte's DX advantages are real. The project owner should try both (scaffold a simple task list page in each) before committing.
+Svelte, [see](./2026-02-24-svelte5-frontend-rules-tanstack-evaluation.md).
 
 2. **Tailwind vs CSS Modules**: Both work. Tailwind adds one dependency but reduces context-switching between files. CSS Modules add zero dependencies. Try both approaches on 2-3 components and see what the team prefers.
 
@@ -885,7 +901,11 @@ The frontend can be built before these exist. The REST-only task detail view wor
 4. **Monorepo vs separate repo**: Should the frontend live in the same repo as the Go backend (monorepo) or a separate repo? Monorepo simplifies CI (contract tests run on same PR) but mixes Go and Node tooling.
 
 5. **Cost/token display**: The streaming architecture research mentions `total_cost_usd` in the result message. Should this be shown in the UI? Where? This is valuable for FinOps but may need to be behind a feature flag.
+We can add it later
 
 6. **Multi-task monitoring view**: The streaming architecture research (section 12) describes a future CLI with multi-task progress bars. Should the web UI have a similar view? This would be a third page type.
+You can't have a progress bar since we don't know how long an LLM will take. We can only have an status bar, in-progress, waiting to start running, completed, failed (maybe some other).
+An overview of all the jobs would be nice, but I think that is already planned.
 
 7. **Event persistence**: Currently events are in-memory only (lost on API restart). Should completed task events be persisted for post-mortem analysis? This is an API-side decision that affects whether the frontend can show historical events.
+Yes, In the long run but for the MVP we can keep everything in memory.
