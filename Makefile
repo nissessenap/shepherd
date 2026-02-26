@@ -80,6 +80,36 @@ lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
 lint-config: golangci-lint ## Verify golangci-lint linter configuration
 	"$(GOLANGCI_LINT)" config verify
 
+##@ Frontend
+
+.PHONY: web-install
+web-install: ## Install frontend dependencies.
+	npm ci --prefix web
+
+.PHONY: web-dev
+web-dev: ## Start frontend dev server with API proxy.
+	npm run dev --prefix web
+
+.PHONY: web-build
+web-build: web-install ## Build frontend for production.
+	npm run build --prefix web
+
+.PHONY: web-check
+web-check: ## Run svelte-check type checking.
+	npm run check --prefix web
+
+.PHONY: web-gen-types
+web-gen-types: ## Generate TypeScript types from OpenAPI spec.
+	npm run gen:api --prefix web
+
+.PHONY: web-lint
+web-lint: ## Run Biome linter on frontend code.
+	cd web && npx biome check src/
+
+.PHONY: web-lint-fix
+web-lint-fix: ## Run Biome linter with auto-fix.
+	cd web && npx biome check --write src/
+
 ##@ E2E Testing
 
 .PHONY: test-e2e

@@ -330,11 +330,11 @@ build/
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `make web-install` completes without errors
-- [ ] `make web-build` produces files in `web/build/`
-- [ ] `make web-check` passes TypeScript checking
-- [ ] `make web-gen-types` generates `web/src/lib/api.d.ts` from the OpenAPI spec
-- [ ] `make web-lint` passes
+- [x] `make web-install` completes without errors
+- [x] `make web-build` produces files in `web/build/`
+- [x] `make web-check` passes TypeScript checking
+- [x] `make web-gen-types` generates `web/src/lib/api.d.ts` from the OpenAPI spec
+- [x] `make web-lint` passes
 - [ ] `make web-dev` starts dev server and proxies `/api` to `localhost:8080`
 
 #### Manual Verification:
