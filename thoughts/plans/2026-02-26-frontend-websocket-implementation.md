@@ -605,9 +605,9 @@ export class TasksStore {
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `make web-build` succeeds
-- [ ] `make web-check` passes TypeScript checking
-- [ ] `make web-lint` passes
+- [x] `make web-build` succeeds
+- [x] `make web-check` passes TypeScript checking
+- [x] `make web-lint` passes
 
 #### Manual Verification:
 - [ ] Task list displays tasks from a running Go API (via `make web-dev` with `make run` in another terminal)
