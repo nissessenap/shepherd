@@ -1124,7 +1124,7 @@ This proxies `/api/*` requests from the browser to the Go API service, including
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `make docker-build-web` builds the frontend image successfully
+- [x] `make docker-build-web` builds the frontend image successfully
 - [ ] `make ko-build-kind` loads all three images into kind
 - [ ] `kubectl get pods -n shepherd-system` shows shepherd-web pod running after `make deploy-test`
 - [ ] `curl http://localhost:30081/` returns the SPA HTML

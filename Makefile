@@ -1,6 +1,7 @@
 # Image URL to use all building/pushing image targets
 IMG ?= shepherd:latest
 RUNNER_IMG ?= shepherd-runner:latest
+FRONTEND_IMG ?= shepherd-web:latest
 
 # Kind cluster name used by kind-create / kind-delete / ko-build-kind
 KIND_CLUSTER_NAME ?= shepherd
@@ -165,17 +166,22 @@ ko-build-runner-local: ko ## Build runner stub image locally with ko (sets RUNNE
 docker-build-runner: ## Build shepherd-runner Docker image locally.
 	docker build -f build/runner/Dockerfile -t $(RUNNER_IMG) .
 
+.PHONY: docker-build-web
+docker-build-web: web-build ## Build frontend Docker image.
+	docker build -f build/web/Dockerfile -t $(FRONTEND_IMG) .
+
 .PHONY: build-smoke
 build-smoke: ko-build-local ko-build-runner-local manifests kustomize ## Verify ko builds + kustomize render.
 	"$(KUSTOMIZE)" build config/default > /dev/null
 	@echo "Build smoke test passed: ko images built, kustomize renders cleanly"
 
 .PHONY: ko-build-kind
-ko-build-kind: ko-build-local ko-build-runner-local ## Build images and load them into the kind cluster.
+ko-build-kind: ko-build-local ko-build-runner-local docker-build-web ## Build images and load them into the kind cluster.
 	docker tag "$(IMG)" shepherd:latest
 	docker tag "$(RUNNER_IMG)" shepherd-runner:latest
 	kind load docker-image shepherd:latest --name "$(KIND_CLUSTER_NAME)"
 	kind load docker-image shepherd-runner:latest --name "$(KIND_CLUSTER_NAME)"
+	kind load docker-image $(FRONTEND_IMG) --name "$(KIND_CLUSTER_NAME)"
 
 ##@ Kind
 
