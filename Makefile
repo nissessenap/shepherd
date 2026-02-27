@@ -106,6 +106,10 @@ web-gen-types: ## Generate TypeScript types from OpenAPI spec.
 web-test: web-install ## Run frontend unit and component tests.
 	npm test --prefix web
 
+.PHONY: web-coverage
+web-coverage: web-install ## Run frontend tests with coverage report.
+	cd web && npx vitest run --coverage
+
 .PHONY: web-lint
 web-lint: ## Run Biome linter on frontend code.
 	cd web && npx biome check src/
