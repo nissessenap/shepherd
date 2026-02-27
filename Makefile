@@ -119,6 +119,14 @@ web-lint: ## Run Biome linter on frontend code.
 web-lint-fix: ## Run Biome linter with auto-fix.
 	cd web && npx biome check --write src/
 
+.PHONY: web-e2e
+web-e2e: ## Run Playwright E2E tests against deployed stack.
+	cd web && npx playwright test
+
+.PHONY: web-e2e-install
+web-e2e-install: ## Install Playwright browsers.
+	cd web && npx playwright install chromium
+
 ##@ E2E Testing
 
 .PHONY: test-e2e
@@ -140,6 +148,11 @@ test-e2e-interactive: ## Run e2e tests, keeping the Kind cluster alive for debug
 .PHONY: test-e2e-existing
 test-e2e-existing: install-agent-sandbox install deploy-test deploy-e2e-fixtures ## Run e2e tests against an already-running cluster.
 	go test ./test/e2e/ -tags e2e -v -count=1 -timeout 10m
+
+.PHONY: test-e2e-frontend
+test-e2e-frontend: kind-create ko-build-kind install-agent-sandbox install deploy-test deploy-e2e-fixtures web-e2e-install ## Full frontend E2E: kind cluster + Playwright.
+	cd web && npx playwright test
+	$(MAKE) kind-delete
 
 ##@ Build
 

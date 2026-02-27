@@ -24,6 +24,16 @@ type TaskAssignment struct {
 	APIURL string `json:"apiURL"`
 }
 
+// event represents a single agent activity event to POST to the API.
+type event struct {
+	Seq     int64
+	Type    string
+	Summary string
+	Tool    string
+	Input   map[string]any
+	Success bool
+}
+
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -47,7 +57,7 @@ func main() {
 		slog.Info("task assigned", "taskID", ta.TaskID, "apiURL", ta.APIURL)
 		if err := executeTask(ctx, ta); err != nil {
 			slog.Error("task execution failed, reporting failure", "error", err)
-			_ = reportStatus(ctx, ta, "failed", err.Error())
+			_ = reportStatus(ctx, ta, "failed", err.Error(), nil)
 		}
 	case <-ctx.Done():
 		slog.Info("shutting down")
@@ -76,27 +86,89 @@ func executeTask(ctx context.Context, ta TaskAssignment) error {
 	}
 	slog.Info("task data fetched", "taskID", ta.TaskID)
 
-	// 2. Simulate work (gives e2e tests time to observe Running state)
-	slog.Info("simulating work", "taskID", ta.TaskID, "duration", "5s")
-	select {
-	case <-time.After(5 * time.Second):
-	case <-ctx.Done():
-		return ctx.Err()
+	// 2. POST a realistic sequence of fake events
+	readInput := map[string]any{"file_path": "src/main.go"}
+	editInput := map[string]any{"file_path": "src/main.go"}
+	bashInput := map[string]any{"command": "go test ./..."}
+
+	events := []event{
+		{Seq: 1, Type: "thinking", Summary: "Analyzing the codebase structure..."},
+		{Seq: 2, Type: "tool_call", Summary: "Reading src/main.go",
+			Tool: "Read", Input: readInput},
+		{Seq: 3, Type: "tool_result", Summary: "package main\\nfunc main() {...}",
+			Tool: "Read", Success: true},
+		{Seq: 4, Type: "tool_call", Summary: "Editing src/main.go",
+			Tool: "Edit", Input: editInput},
+		{Seq: 5, Type: "tool_result", Summary: "Modified lines 10-15 (+3/-1)",
+			Tool: "Edit", Success: true},
+		{Seq: 6, Type: "thinking", Summary: "Running tests to verify the changes..."},
+		{Seq: 7, Type: "tool_call", Summary: "go test ./...",
+			Tool: "Bash", Input: bashInput},
+		{Seq: 8, Type: "tool_result", Summary: "PASS\\nok  project/pkg 0.42s",
+			Tool: "Bash", Success: true},
 	}
 
-	// 3. Report completed status
-	return reportStatus(ctx, ta, "completed", "stub runner completed successfully")
+	for _, e := range events {
+		if postErr := postEvent(ctx, client, ta, e); postErr != nil {
+			slog.Warn("failed to post event", "seq", e.Seq, "error", postErr)
+			// Best-effort — don't fail the task if event posting fails
+		}
+		// Small delay between events so observers can see them arriving
+		select {
+		case <-time.After(500 * time.Millisecond):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+
+	// 3. Report completed status with a fake PR URL
+	return reportStatus(ctx, ta, "completed", "stub runner completed successfully",
+		map[string]any{"pr_url": "https://github.com/test-org/test-repo/pull/42"})
 }
 
-func reportStatus(ctx context.Context, ta TaskAssignment, event, message string) error {
+func postEvent(ctx context.Context, client *http.Client, ta TaskAssignment, e event) error {
+	eventsURL := ta.APIURL + "/api/v1/tasks/" + ta.TaskID + "/events"
+	payload, _ := json.Marshal(map[string]any{
+		"events": []map[string]any{{
+			"sequence":  e.Seq,
+			"timestamp": time.Now().UTC().Format(time.RFC3339Nano),
+			"type":      e.Type,
+			"summary":   e.Summary,
+			"tool":      e.Tool,
+			"input":     e.Input,
+			"output":    map[string]any{"success": e.Success, "summary": e.Summary},
+		}},
+	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, eventsURL, bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("event POST returned %d: %s", resp.StatusCode, respBody)
+	}
+	return nil
+}
+
+func reportStatus(ctx context.Context, ta TaskAssignment, statusEvent, message string, details map[string]any) error {
 	client := &http.Client{Timeout: 30 * time.Second}
 
 	statusURL := ta.APIURL + "/api/v1/tasks/" + ta.TaskID + "/status"
-	payload, _ := json.Marshal(map[string]string{
-		"event":   event,
+	payload := map[string]any{
+		"event":   statusEvent,
 		"message": message,
-	})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, statusURL, bytes.NewReader(payload))
+	}
+	if details != nil {
+		payload["details"] = details
+	}
+	payloadBytes, _ := json.Marshal(payload)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, statusURL, bytes.NewReader(payloadBytes))
 	if err != nil {
 		return fmt.Errorf("creating status request: %w", err)
 	}
@@ -110,7 +182,7 @@ func reportStatus(ctx context.Context, ta TaskAssignment, event, message string)
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("unexpected status response: %d %s", resp.StatusCode, string(body))
 	}
-	slog.Info("status reported", "taskID", ta.TaskID, "event", event)
+	slog.Info("status reported", "taskID", ta.TaskID, "event", statusEvent)
 	return nil
 }
 
