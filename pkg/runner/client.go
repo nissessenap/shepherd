@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
+
+	"github.com/NissesSenap/shepherd/pkg/api"
 )
 
 const (
@@ -95,7 +97,7 @@ type statusUpdateRequest struct {
 
 // postEventRequest mirrors pkg/api.PostEventRequest for JSON encoding.
 type postEventRequest struct {
-	Events any `json:"events"`
+	Events []api.TaskEvent `json:"events"`
 }
 
 // FetchTaskData retrieves task details from the API.
@@ -188,7 +190,7 @@ func (c *Client) FetchToken(ctx context.Context, taskID string) (string, time.Ti
 
 // PostEvents sends agent events to the API. This is best-effort: callers should
 // log errors but not fail the task if event posting fails.
-func (c *Client) PostEvents(ctx context.Context, taskID string, events any) error {
+func (c *Client) PostEvents(ctx context.Context, taskID string, events []api.TaskEvent) error {
 	url := c.baseURL + "/api/v1/tasks/" + taskID + "/events"
 
 	payload := postEventRequest{Events: events}

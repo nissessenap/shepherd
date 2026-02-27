@@ -14,6 +14,7 @@ import (
 
 	"github.com/go-logr/logr"
 
+	"github.com/NissesSenap/shepherd/pkg/api"
 	"github.com/NissesSenap/shepherd/pkg/runner"
 )
 
@@ -78,6 +79,9 @@ func (e *osExecutor) Run(ctx context.Context, name string, args []string, opts E
 			stdout.Write(line)
 			stdout.WriteByte('\n')
 		}
+		if scanErr := scanner.Err(); scanErr != nil {
+			stderr.WriteString("stdout scanner error: " + scanErr.Error() + "\n")
+		}
 
 		err = cmd.Wait()
 		result := &ExecResult{
@@ -120,7 +124,7 @@ func (e *osExecutor) Run(ctx context.Context, name string, args []string, opts E
 
 // EventPoster posts agent events to the API. Implemented by runner.Client.
 type EventPoster interface {
-	PostEvents(ctx context.Context, taskID string, events any) error
+	PostEvents(ctx context.Context, taskID string, events []api.TaskEvent) error
 }
 
 // GoRunner implements runner.TaskRunner for coding tasks.

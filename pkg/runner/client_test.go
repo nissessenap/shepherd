@@ -10,6 +10,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/NissesSenap/shepherd/pkg/api"
 )
 
 func TestFetchTaskData(t *testing.T) {
@@ -130,8 +132,8 @@ func TestPostEvents(t *testing.T) {
 		defer srv.Close()
 
 		c := NewClient(srv.URL)
-		events := []map[string]any{
-			{"sequence": 1, "type": "thinking", "summary": "analyzing code"},
+		events := []api.TaskEvent{
+			{Sequence: 1, Type: api.EventTypeThinking, Summary: "analyzing code"},
 		}
 		err := c.PostEvents(context.Background(), "task-1", events)
 		require.NoError(t, err)
@@ -145,7 +147,7 @@ func TestPostEvents(t *testing.T) {
 		defer srv.Close()
 
 		c := NewClient(srv.URL)
-		err := c.PostEvents(context.Background(), "task-missing", []map[string]any{})
+		err := c.PostEvents(context.Background(), "task-missing", []api.TaskEvent{})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "404")
 	})
@@ -157,7 +159,7 @@ func TestPostEvents(t *testing.T) {
 		defer srv.Close()
 
 		c := NewClient(srv.URL)
-		err := c.PostEvents(context.Background(), "task-1", []map[string]any{})
+		err := c.PostEvents(context.Background(), "task-1", []api.TaskEvent{})
 		require.NoError(t, err)
 	})
 }

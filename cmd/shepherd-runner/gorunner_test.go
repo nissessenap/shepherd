@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/NissesSenap/shepherd/pkg/api"
 	"github.com/NissesSenap/shepherd/pkg/runner"
 )
 
@@ -253,10 +254,10 @@ func TestRunCommandExecutorError(t *testing.T) {
 
 // mockEventPoster records PostEvents calls for testing.
 type mockEventPoster struct {
-	calls []any
+	calls [][]api.TaskEvent
 }
 
-func (m *mockEventPoster) PostEvents(_ context.Context, _ string, events any) error {
+func (m *mockEventPoster) PostEvents(_ context.Context, _ string, events []api.TaskEvent) error {
 	m.calls = append(m.calls, events)
 	return nil
 }
