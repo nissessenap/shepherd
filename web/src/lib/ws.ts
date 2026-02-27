@@ -10,6 +10,8 @@ export interface WSClientOptions<T> {
 	onStateChange: (state: ConnectionState) => void;
 	getReconnectAfter?: () => number | undefined;
 	maxRetries?: number;
+	/** @internal Test seam — override WebSocket constructor */
+	createWebSocket?: (url: string) => WebSocket;
 }
 
 const BASE_DELAY_MS = 1000;
@@ -48,7 +50,12 @@ export class WSClient<T> {
 	private readonly opts: Required<WSClientOptions<T>>;
 
 	constructor(opts: WSClientOptions<T>) {
-		this.opts = { maxRetries: 5, getReconnectAfter: () => undefined, ...opts };
+		this.opts = {
+			maxRetries: 5,
+			getReconnectAfter: () => undefined,
+			createWebSocket: (url) => new WebSocket(url),
+			...opts,
+		};
 	}
 
 	connect(afterSequence?: number): void {
@@ -75,7 +82,7 @@ export class WSClient<T> {
 		const state = this.retryCount === 0 ? "connecting" : "reconnecting";
 		this.opts.onStateChange(state);
 
-		this.ws = new WebSocket(url);
+		this.ws = this.opts.createWebSocket(url);
 
 		this.ws.onopen = () => {
 			this.retryCount = 0;

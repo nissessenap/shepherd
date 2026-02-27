@@ -154,11 +154,6 @@ describe("getStatusConfig", () => {
 		expect(getStatusConfig(status).label).toBe(expectedLabel);
 	});
 
-	it("returns 'Timed Out' with a space for TimedOut", () => {
-		const config = getStatusConfig("TimedOut");
-		expect(config.label).toBe("Timed Out");
-	});
-
 	it("returns the raw status as label for unknown statuses", () => {
 		const config = getStatusConfig("SomeUnknown");
 		expect(config.label).toBe("SomeUnknown");

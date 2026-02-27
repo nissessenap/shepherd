@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { registerKeyboardShortcuts } from "./keyboard.js";
 
@@ -140,6 +139,16 @@ describe("registerKeyboardShortcuts", () => {
 		const cleanup = registerKeyboardShortcuts({ onNavigate });
 
 		fireKey("j", { tagName: "TEXTAREA", isContentEditable: false });
+		expect(onNavigate).not.toHaveBeenCalled();
+
+		cleanup();
+	});
+
+	it('pressing "j" does NOT call callback when <select> is focused', () => {
+		const onNavigate = vi.fn();
+		const cleanup = registerKeyboardShortcuts({ onNavigate });
+
+		fireKey("j", { tagName: "SELECT", isContentEditable: false });
 		expect(onNavigate).not.toHaveBeenCalled();
 
 		cleanup();

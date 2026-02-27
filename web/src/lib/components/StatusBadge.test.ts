@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { render } from "@testing-library/svelte";
 import { describe, expect, it } from "vitest";
 import StatusBadge from "./StatusBadge.svelte";

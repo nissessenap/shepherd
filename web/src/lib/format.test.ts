@@ -70,6 +70,12 @@ describe("formatDuration", () => {
 		it('returns "1h 00m" at exactly 3600 seconds', () => {
 			expect(formatDuration(BASE, endAfter(3600))).toBe("1h 00m");
 		});
+
+		it("returns NaN-based result for invalid start date", () => {
+			const result = formatDuration("not-a-date", "2024-01-01T00:00:00Z");
+			// NaN propagates through Math.max(0, NaN) and all arithmetic
+			expect(result).toBe("NaNm NaNs");
+		});
 	});
 });
 
@@ -134,6 +140,11 @@ describe("formatTimestamp", () => {
 	it("formats midnight as HH:MM:SS pattern", () => {
 		const result = formatTimestamp("2024-01-01T00:00:00Z");
 		expect(result).toMatch(/^\d{2}:\d{2}:\d{2}$/);
+	});
+
+	it("returns 'Invalid Date' for garbage input", () => {
+		const result = formatTimestamp("garbage");
+		expect(result).toContain("Invalid");
 	});
 });
 
