@@ -938,9 +938,9 @@ web-test: web-install ## Run frontend unit and component tests.
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `make web-test` passes all tests
-- [ ] Test coverage for ws.ts, task-stream.svelte.ts, and format.ts > 80%
-- [ ] `make web-build` still succeeds
+- [x] `make web-test` passes all tests
+- [x] Test coverage for ws.ts, task-stream.svelte.ts, and format.ts > 80%
+- [x] `make web-build` still succeeds
 
 #### Manual Verification:
 - [ ] None required — this phase is fully automated

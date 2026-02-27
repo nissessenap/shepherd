@@ -102,6 +102,10 @@ web-check: ## Run svelte-check type checking.
 web-gen-types: ## Generate TypeScript types from OpenAPI spec.
 	npm run gen:api --prefix web
 
+.PHONY: web-test
+web-test: web-install ## Run frontend unit and component tests.
+	npm test --prefix web
+
 .PHONY: web-lint
 web-lint: ## Run Biome linter on frontend code.
 	cd web && npx biome check src/

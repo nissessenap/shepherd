@@ -1,8 +1,8 @@
 import tailwindcss from '@tailwindcss/vite';
 import { sveltekit } from '@sveltejs/kit/vite';
-import { defineConfig } from 'vite';
+import { defineConfig } from 'vitest/config';
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
 	plugins: [tailwindcss(), sveltekit()],
 	server: {
 		proxy: {
@@ -11,5 +11,10 @@ export default defineConfig({
 				ws: true,
 			},
 		}
+	},
+	resolve: mode === 'test' ? { conditions: ['browser'] } : undefined,
+	test: {
+		environment: 'jsdom',
+		include: ['src/**/*.test.ts'],
 	}
-});
+}));
