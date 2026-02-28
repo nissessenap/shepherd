@@ -149,10 +149,23 @@ test-e2e-interactive: ## Run e2e tests, keeping the Kind cluster alive for debug
 test-e2e-existing: install-agent-sandbox install deploy-test deploy-e2e-fixtures ## Run e2e tests against an already-running cluster.
 	go test ./test/e2e/ -tags e2e -v -count=1 -timeout 10m
 
-.PHONY: test-e2e-frontend
-test-e2e-frontend: kind-create ko-build-kind install-agent-sandbox install deploy-test deploy-e2e-fixtures web-e2e-install ## Full frontend E2E: kind cluster + Playwright.
+.PHONY: test-e2e-all
+test-e2e-all: kind-create ko-build-kind install-agent-sandbox install deploy-test deploy-e2e-fixtures web-e2e-install ## Full E2E: Go tests then Playwright, tears down cluster.
+	E2E_SKIP_TEARDOWN=true go test ./test/e2e/ -tags e2e -v -count=1 -timeout 10m
 	cd web && npx playwright test
 	$(MAKE) kind-delete
+
+.PHONY: test-e2e-all-interactive
+test-e2e-all-interactive: ## Run Go + Playwright E2E tests, keeping Kind cluster alive.
+	@if kind get clusters 2>/dev/null | grep -q "^$(KIND_CLUSTER_NAME)$$"; then \
+		echo "Reusing existing cluster: $(KIND_CLUSTER_NAME)"; \
+	else \
+		echo "Creating new cluster: $(KIND_CLUSTER_NAME)"; \
+		$(MAKE) kind-create; \
+	fi
+	$(MAKE) ko-build-kind install-agent-sandbox install deploy-test deploy-e2e-fixtures web-e2e-install
+	E2E_SKIP_TEARDOWN=true go test ./test/e2e/ -tags e2e -v -count=1 -timeout 10m
+	cd web && npx playwright test
 
 ##@ Build
 
