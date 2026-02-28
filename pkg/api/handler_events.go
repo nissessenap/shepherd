@@ -90,7 +90,7 @@ func (h *taskHandler) postEvents(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "event sequence must be positive", "")
 			return
 		}
-		if _, err := time.Parse(time.RFC3339, e.Timestamp); err != nil {
+		if _, err := time.Parse(time.RFC3339Nano, e.Timestamp); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid event timestamp", "must be RFC3339 date-time format")
 			return
 		}

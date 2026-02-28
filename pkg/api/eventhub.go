@@ -87,6 +87,7 @@ func (h *EventHub) Publish(taskID string, events []TaskEvent) {
 
 	// Fan out to subscribers
 	for id, ch := range ts.subscribers {
+	events:
 		for _, e := range events {
 			select {
 			case ch <- e:
@@ -94,6 +95,7 @@ func (h *EventHub) Publish(taskID string, events []TaskEvent) {
 				// Subscriber too slow — drop and remove
 				close(ch)
 				delete(ts.subscribers, id)
+				break events
 			}
 		}
 	}

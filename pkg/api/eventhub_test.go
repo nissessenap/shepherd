@@ -249,6 +249,44 @@ func TestEventHub_SlowSubscriberEviction(t *testing.T) {
 	assert.False(t, hub.IsStreamDone(taskID), "stream should NOT be marked done after slow-subscriber eviction")
 }
 
+func TestEventHub_SlowSubscriberEvictionMidBatch(t *testing.T) {
+	hub := NewEventHub()
+	taskID := "task-slow-mid"
+
+	// Subscribe so the channel is registered (capacity 64)
+	_, ch, unsub := hub.Subscribe(taskID, 0)
+	defer unsub()
+	require.NotNil(t, ch)
+
+	// Publish 128 events without reading. Eviction happens at event 65,
+	// leaving 63 more events in the batch. Before the fix, these remaining
+	// sends on the closed channel would panic.
+	events := make([]TaskEvent, 128)
+	for i := range events {
+		events[i] = TaskEvent{
+			Sequence:  int64(i + 1),
+			Timestamp: "2026-01-01T00:00:00Z",
+			Type:      EventTypeThinking,
+			Summary:   "Mid-batch event",
+		}
+	}
+	// This must not panic
+	hub.Publish(taskID, events)
+
+	// Drain and verify the channel was closed
+	deadline := time.After(time.Second)
+	for {
+		select {
+		case _, ok := <-ch:
+			if !ok {
+				return // success
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for channel close after mid-batch eviction")
+		}
+	}
+}
+
 func TestEventHub_CleanupWithActiveSubscriber(t *testing.T) {
 	hub := NewEventHub()
 
