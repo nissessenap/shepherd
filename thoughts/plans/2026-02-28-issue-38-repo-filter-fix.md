@@ -268,13 +268,13 @@ Run: `make test` → all tests pass (including existing `TestListTasks_FilterByR
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `make test` — all handler_tasks tests pass
-- [ ] `make lint-fix` — clean
-- [ ] Existing `TestListTasks_FilterByRepoLabel` still passes (backward compatible)
-- [ ] `TestListTasks_RepoFilterNormalizesFullURL` passes
-- [ ] `TestListTasks_RepoFilterRejectsInvalidValue` passes
-- [ ] `TestListTasks_InvalidIssueLabelValue` passes
-- [ ] `TestListTasks_InvalidFleetLabelValue` passes
+- [x] `make test` — all handler_tasks tests pass
+- [x] `make lint-fix` — clean
+- [x] Existing `TestListTasks_FilterByRepoLabel` still passes (backward compatible)
+- [x] `TestListTasks_RepoFilterNormalizesFullURL` passes
+- [x] `TestListTasks_RepoFilterRejectsInvalidValue` passes
+- [x] `TestListTasks_InvalidIssueLabelValue` passes
+- [x] `TestListTasks_InvalidFleetLabelValue` passes
 
 **Implementation Note**: After completing this phase and all automated verification passes, pause here for manual confirmation before proceeding to the frontend phase.
 

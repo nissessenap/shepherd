@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -815,6 +816,57 @@ func TestListTasks_K8sClientError(t *testing.T) {
 	var errResp ErrorResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &errResp))
 	assert.Equal(t, "failed to list tasks", errResp.Error)
+}
+
+func TestListTasks_RepoFilterNormalizesFullURL(t *testing.T) {
+	task := newTask("task-aaa", map[string]string{"shepherd.io/repo": "test-org-test-repo"}, nil)
+	h := newTestHandler(task)
+	router := testRouter(h)
+
+	// Send full URL — handler should normalize to label form and match
+	w := doGet(t, router, "/api/v1/tasks?repo="+url.QueryEscape("https://github.com/test-org/test-repo"))
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var tasks []TaskResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &tasks))
+	assert.Len(t, tasks, 1)
+	assert.Equal(t, "task-aaa", tasks[0].ID)
+}
+
+func TestListTasks_RepoFilterRejectsInvalidValue(t *testing.T) {
+	h := newTestHandler()
+	router := testRouter(h)
+
+	w := doGet(t, router, "/api/v1/tasks?repo="+url.QueryEscape("$$invalid$$"))
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	var errResp ErrorResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &errResp))
+	assert.Contains(t, errResp.Error, "invalid repo filter")
+}
+
+func TestListTasks_InvalidIssueLabelValue(t *testing.T) {
+	h := newTestHandler()
+	router := testRouter(h)
+
+	w := doGet(t, router, "/api/v1/tasks?issue="+url.QueryEscape("not/valid/label"))
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	var errResp ErrorResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &errResp))
+	assert.Contains(t, errResp.Error, "invalid issue filter")
+}
+
+func TestListTasks_InvalidFleetLabelValue(t *testing.T) {
+	h := newTestHandler()
+	router := testRouter(h)
+
+	w := doGet(t, router, "/api/v1/tasks?fleet="+url.QueryEscape("not/valid/label"))
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	var errResp ErrorResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &errResp))
+	assert.Contains(t, errResp.Error, "invalid fleet filter")
 }
 
 func TestNormalizeRepoFilter(t *testing.T) {

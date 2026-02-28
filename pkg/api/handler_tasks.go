@@ -270,12 +270,25 @@ func (h *taskHandler) listTasks(w http.ResponseWriter, r *http.Request) {
 	// Build label selector from query params
 	labelSelector := map[string]string{}
 	if repo := r.URL.Query().Get("repo"); repo != "" {
-		labelSelector["shepherd.io/repo"] = repo
+		normalized, err := normalizeRepoFilter(repo)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid repo filter", err.Error())
+			return
+		}
+		labelSelector["shepherd.io/repo"] = normalized
 	}
 	if issue := r.URL.Query().Get("issue"); issue != "" {
+		if err := validateLabelValue(issue); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid issue filter", err.Error())
+			return
+		}
 		labelSelector["shepherd.io/issue"] = issue
 	}
 	if fleet := r.URL.Query().Get("fleet"); fleet != "" {
+		if err := validateLabelValue(fleet); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid fleet filter", err.Error())
+			return
+		}
 		labelSelector["shepherd.io/fleet"] = fleet
 	}
 	if len(labelSelector) > 0 {
