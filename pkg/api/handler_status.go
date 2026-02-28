@@ -151,6 +151,15 @@ func (h *taskHandler) updateTaskStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Notify EventHub subscribers that the task is complete (terminal events only)
+	if isTerminal && h.eventHub != nil {
+		h.eventHub.Complete(taskID)
+		go func() {
+			time.Sleep(5 * time.Minute)
+			h.eventHub.Cleanup(taskID)
+		}()
+	}
+
 	// Forward callback to adapter (after successful status update)
 	callbackURL := task.Spec.Callback.URL
 	payload := CallbackPayload{

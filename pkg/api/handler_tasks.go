@@ -59,6 +59,7 @@ type taskHandler struct {
 	namespace    string
 	callback     *callbackSender
 	githubClient TokenProvider // nil if GitHub App not configured
+	eventHub     *EventHub
 }
 
 // createTask handles POST /api/v1/tasks.

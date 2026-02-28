@@ -1,8 +1,8 @@
 package main
 
 import (
+	"bufio"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,14 +14,16 @@ import (
 
 	"github.com/go-logr/logr"
 
+	"github.com/NissesSenap/shepherd/pkg/api"
 	"github.com/NissesSenap/shepherd/pkg/runner"
 )
 
 // ExecOptions configures command execution.
 type ExecOptions struct {
-	Dir   string   // Working directory
-	Env   []string // Environment variables (KEY=VALUE)
-	Stdin io.Reader
+	Dir          string   // Working directory
+	Env          []string // Environment variables (KEY=VALUE)
+	Stdin        io.Reader
+	StreamStdout func(line []byte) // If set, called for each stdout line instead of buffering
 }
 
 // ExecResult holds the outcome of a command execution.
@@ -53,9 +55,53 @@ func (e *osExecutor) Run(ctx context.Context, name string, args []string, opts E
 		cmd.Stdin = opts.Stdin
 	}
 
-	var stdout, stderr strings.Builder
-	cmd.Stdout = &stdout
+	var stderr strings.Builder
 	cmd.Stderr = &stderr
+
+	// When StreamStdout is set, pipe stdout through a scanner for line-by-line processing.
+	// All lines are still collected for the result's Stdout field.
+	if opts.StreamStdout != nil {
+		stdoutPipe, err := cmd.StdoutPipe()
+		if err != nil {
+			return nil, fmt.Errorf("creating stdout pipe: %w", err)
+		}
+
+		if err := cmd.Start(); err != nil {
+			return nil, err
+		}
+
+		var stdout strings.Builder
+		scanner := bufio.NewScanner(stdoutPipe)
+		scanner.Buffer(make([]byte, 0, 1<<20), 1<<20) // 1MB line buffer for large JSON lines
+		for scanner.Scan() {
+			line := scanner.Bytes()
+			opts.StreamStdout(line)
+			stdout.Write(line)
+			stdout.WriteByte('\n')
+		}
+		if scanErr := scanner.Err(); scanErr != nil {
+			stderr.WriteString("stdout scanner error: " + scanErr.Error() + "\n")
+		}
+
+		err = cmd.Wait()
+		result := &ExecResult{
+			Stdout: []byte(stdout.String()),
+			Stderr: []byte(stderr.String()),
+		}
+
+		if err != nil {
+			var exitErr *exec.ExitError
+			if errors.As(err, &exitErr) {
+				result.ExitCode = exitErr.ExitCode()
+				return result, nil
+			}
+			return nil, err
+		}
+		return result, nil
+	}
+
+	var stdout strings.Builder
+	cmd.Stdout = &stdout
 
 	err := cmd.Run()
 	result := &ExecResult{
@@ -76,24 +122,28 @@ func (e *osExecutor) Run(ctx context.Context, name string, args []string, opts E
 	return result, nil
 }
 
-// GoRunner implements runner.TaskRunner for coding tasks.
-type GoRunner struct {
-	workDir   string // e.g., /workspace
-	configDir string // e.g., /etc/shepherd (baked-in CC config)
-	logger    logr.Logger
-	execCmd   CommandExecutor
+// EventPoster posts agent events to the API. Implemented by runner.Client.
+type EventPoster interface {
+	PostEvents(ctx context.Context, taskID string, events []api.TaskEvent) error
 }
 
-// ccOutput is the JSON output from `claude -p --output-format json`.
-type ccOutput struct {
-	SessionID    string  `json:"session_id"`
-	NumTurns     int     `json:"num_turns"`
-	TotalCostUSD float64 `json:"total_cost_usd"`
-	Result       string  `json:"result"`
+// GoRunner implements runner.TaskRunner for coding tasks.
+type GoRunner struct {
+	workDir     string // e.g., /workspace
+	configDir   string // e.g., /etc/shepherd (baked-in CC config)
+	logger      logr.Logger
+	execCmd     CommandExecutor
+	eventPoster EventPoster // optional; if nil, event streaming is skipped
 }
 
 func (r *GoRunner) Run(ctx context.Context, task runner.TaskData, token string) (*runner.Result, error) {
 	log := r.logger.WithValues("taskID", task.TaskID)
+
+	// Create event poster from task's API URL if not already set (e.g., in tests)
+	eventPoster := r.eventPoster
+	if eventPoster == nil && task.APIURL != "" {
+		eventPoster = runner.NewClient(task.APIURL, runner.WithClientLogger(log))
+	}
 
 	// 0. Copy baked-in CC config from configDir to ~/.claude/
 	if err := r.stageConfig(); err != nil {
@@ -140,36 +190,47 @@ func (r *GoRunner) Run(ctx context.Context, task runner.TaskData, token string) 
 	// 5. Build prompt
 	prompt := buildPrompt(task)
 
-	// 6. Invoke Claude Code
+	// 6. Invoke Claude Code with stream-json for real-time event extraction
 	log.Info("invoking claude code")
+	parser := NewStreamParser()
 	ccArgs := []string{
 		"-p", prompt,
 		"--dangerously-skip-permissions",
-		"--output-format", "json",
+		"--output-format", "stream-json",
 		"--max-turns", "50",
 		"--max-budget-usd", "10.00",
 	}
 	res, err = r.execCmd.Run(ctx, "claude", ccArgs, ExecOptions{
 		Dir: repoDir,
 		Env: env,
+		StreamStdout: func(line []byte) {
+			events := parser.ParseLine(line)
+			if len(events) == 0 {
+				return
+			}
+			if eventPoster == nil {
+				return
+			}
+			// Best-effort: log errors but don't fail the task
+			if postErr := eventPoster.PostEvents(ctx, task.TaskID, events); postErr != nil {
+				log.Info("failed to post events", "error", postErr)
+			}
+		},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("invoking claude: %w", err)
 	}
 
-	// 7. Parse JSON output and log metrics
+	// 7. Log metrics from the result message (parsed by StreamParser)
 	if res.ExitCode != 0 {
 		return nil, fmt.Errorf("claude exited with code %d: %s", res.ExitCode, string(res.Stderr))
 	}
 
-	var output ccOutput
-	if err := json.Unmarshal(res.Stdout, &output); err != nil {
-		log.Info("could not parse claude output as JSON", "error", err)
-	} else {
+	if metrics := parser.LastResult(); metrics != nil {
 		log.Info("claude finished",
-			"sessionID", output.SessionID,
-			"numTurns", output.NumTurns,
-			"totalCostUSD", output.TotalCostUSD,
+			"sessionID", metrics.SessionID,
+			"numTurns", metrics.NumTurns,
+			"totalCostUSD", metrics.TotalCostUSD,
 		)
 	}
 

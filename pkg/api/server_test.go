@@ -53,6 +53,7 @@ func buildTestRouters(h *taskHandler) (publicRouter, internalRouter *chi.Mux) {
 		r.Post("/tasks", h.createTask)
 		r.Get("/tasks", h.listTasks)
 		r.Get("/tasks/{taskID}", h.getTask)
+		r.Get("/tasks/{taskID}/events", h.streamEvents)
 	})
 
 	// Internal router (port 8081) - runner-only API (NetworkPolicy protected)
@@ -65,6 +66,7 @@ func buildTestRouters(h *taskHandler) (publicRouter, internalRouter *chi.Mux) {
 	internalRouter.Route("/api/v1", func(r chi.Router) {
 		r.Use(contentTypeMiddleware)
 		r.Post("/tasks/{taskID}/status", h.updateTaskStatus)
+		r.Post("/tasks/{taskID}/events", h.postEvents)
 		r.Get("/tasks/{taskID}/data", h.getTaskData)
 		r.Get("/tasks/{taskID}/token", h.getTaskToken)
 	})
@@ -92,12 +94,16 @@ func TestDualPortRouting(t *testing.T) {
 		{"public: GET /tasks/{id} available", publicRouter, http.MethodGet, "/api/v1/tasks/test-task", http.StatusNotFound, false},
 		{"public: GET /healthz available", publicRouter, http.MethodGet, "/healthz", http.StatusOK, false},
 		{"public: GET /readyz available", publicRouter, http.MethodGet, "/readyz", http.StatusOK, false},
+		// Public router - WebSocket endpoint (returns error without upgrade, but route exists)
+		{"public: GET /tasks/{id}/events available", publicRouter, http.MethodGet, "/api/v1/tasks/test-task/events", http.StatusNotFound, false},
 		// Public router - routes that should NOT be available (internal-only)
 		{"public: POST /tasks/{id}/status not available", publicRouter, http.MethodPost, "/api/v1/tasks/test-task/status", 0, true},
+		{"public: POST /tasks/{id}/events not available", publicRouter, http.MethodPost, "/api/v1/tasks/test-task/events", 0, true},
 		{"public: GET /tasks/{id}/data not available", publicRouter, http.MethodGet, "/api/v1/tasks/test-task/data", 0, true},
 		{"public: GET /tasks/{id}/token not available", publicRouter, http.MethodGet, "/api/v1/tasks/test-task/token", 0, true},
 		// Internal router - routes that SHOULD be available
 		{"internal: POST /tasks/{id}/status available", internalRouter, http.MethodPost, "/api/v1/tasks/test-task/status", http.StatusBadRequest, false},
+		{"internal: POST /tasks/{id}/events available", internalRouter, http.MethodPost, "/api/v1/tasks/test-task/events", http.StatusNotFound, false},
 		{"internal: GET /tasks/{id}/data available", internalRouter, http.MethodGet, "/api/v1/tasks/test-task/data", http.StatusNotFound, false},
 		{"internal: GET /tasks/{id}/token available", internalRouter, http.MethodGet, "/api/v1/tasks/test-task/token", http.StatusNotFound, false},
 		{"internal: GET /healthz available", internalRouter, http.MethodGet, "/healthz", http.StatusOK, false},
@@ -106,6 +112,7 @@ func TestDualPortRouting(t *testing.T) {
 		{"internal: POST /tasks not available", internalRouter, http.MethodPost, "/api/v1/tasks", 0, true},
 		{"internal: GET /tasks not available", internalRouter, http.MethodGet, "/api/v1/tasks", 0, true},
 		{"internal: GET /tasks/{id} not available", internalRouter, http.MethodGet, "/api/v1/tasks/test-task", 0, true},
+		{"internal: GET /tasks/{id}/events not available", internalRouter, http.MethodGet, "/api/v1/tasks/test-task/events", 0, true},
 	}
 
 	for _, tt := range tests {

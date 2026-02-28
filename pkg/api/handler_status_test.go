@@ -25,6 +25,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -50,6 +51,7 @@ func newTestHandlerWithCallback(secret string, objs ...client.Object) *taskHandl
 		client:    c,
 		namespace: "default",
 		callback:  newCallbackSender(secret),
+		eventHub:  NewEventHub(),
 	}
 }
 
@@ -95,6 +97,13 @@ func TestUpdateTaskStatus_StartedEvent(t *testing.T) {
 	})
 
 	assert.Equal(t, http.StatusOK, w.Code)
+
+	// Contract validation
+	doc := loadSpec(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks/task-abc/status", nil)
+	req.Header.Set("Content-Type", "application/json")
+	validateResponse(t, doc, req, w)
+
 	var resp map[string]string
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, "accepted", resp["status"])
@@ -497,6 +506,36 @@ func TestUpdateTaskStatus_TwoPhaseCondition_CallbackSuccess(t *testing.T) {
 	assert.Equal(t, metav1.ConditionTrue, notified.Status, "final status should be True after successful callback")
 	assert.Equal(t, toolkitv1alpha1.ReasonCallbackSent, notified.Reason)
 	assert.Contains(t, notified.Message, "completed")
+}
+
+func TestUpdateTaskStatus_TerminalEventCompletesEventHub(t *testing.T) {
+	adapter := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer adapter.Close()
+
+	task := statusTask("task-hub", adapter.URL, nil)
+	h := newTestHandlerWithCallback("test-secret", task)
+	router := testRouter(h)
+
+	// Subscribe to the event hub before sending the terminal status.
+	_, ch, unsub := h.eventHub.Subscribe("task-hub", 0)
+	defer unsub()
+	require.NotNil(t, ch, "should receive a live channel before task completes")
+
+	w := postJSON(t, router, "/api/v1/tasks/task-hub/status", StatusUpdateRequest{
+		Event:   "completed",
+		Message: "all done",
+	})
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	// The hub channel must be closed (Complete was called) within a short window.
+	select {
+	case _, ok := <-ch:
+		assert.False(t, ok, "event hub channel should be closed after terminal status")
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for event hub channel to close after terminal status")
+	}
 }
 
 func TestUpdateTaskStatus_TwoPhaseCondition_CallbackFailure(t *testing.T) {

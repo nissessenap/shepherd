@@ -56,6 +56,7 @@ func newTestHandler(objs ...client.Object) *taskHandler {
 		client:    c,
 		namespace: "default",
 		callback:  newCallbackSender(""),
+		eventHub:  NewEventHub(),
 	}
 }
 
@@ -65,7 +66,9 @@ func testRouter(h *taskHandler) *chi.Mux {
 		r.Post("/tasks", h.createTask)
 		r.Get("/tasks", h.listTasks)
 		r.Get("/tasks/{taskID}", h.getTask)
+		r.Get("/tasks/{taskID}/events", h.streamEvents)
 		r.Post("/tasks/{taskID}/status", h.updateTaskStatus)
+		r.Post("/tasks/{taskID}/events", h.postEvents)
 		r.Get("/tasks/{taskID}/data", h.getTaskData)
 		r.Get("/tasks/{taskID}/token", h.getTaskToken)
 	})
@@ -115,6 +118,12 @@ func TestCreateTask_Valid(t *testing.T) {
 	w := postCreateTask(t, router, validCreateRequest())
 
 	assert.Equal(t, http.StatusCreated, w.Code)
+
+	// Contract validation
+	doc := loadSpec(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks", nil)
+	req.Header.Set("Content-Type", "application/json")
+	validateResponse(t, doc, req, w)
 
 	var resp TaskResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
@@ -552,6 +561,11 @@ func TestListTasks_EmptyReturnsEmptyArray(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
 
+	// Contract validation
+	doc := loadSpec(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tasks", nil)
+	validateResponse(t, doc, req, w)
+
 	var tasks []TaskResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &tasks))
 	assert.Empty(t, tasks)
@@ -727,6 +741,11 @@ func TestGetTask_ReturnsTaskDetails(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
+	// Contract validation
+	doc := loadSpec(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tasks/task-detail", nil)
+	validateResponse(t, doc, req, w)
+
 	var resp TaskResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, "task-detail", resp.ID)
@@ -743,6 +762,11 @@ func TestGetTask_NotFound(t *testing.T) {
 	w := doGet(t, router, "/api/v1/tasks/nonexistent")
 
 	assert.Equal(t, http.StatusNotFound, w.Code)
+
+	// Contract validation
+	doc := loadSpec(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tasks/nonexistent", nil)
+	validateResponse(t, doc, req, w)
 
 	var errResp ErrorResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &errResp))

@@ -10,14 +10,19 @@ pkg/api/            HTTP API server (chi router, CRD management, token generatio
 pkg/adapters/github/ GitHub adapter (webhooks, comments, callbacks)
 pkg/operator/       K8s controller (AgentTask reconciliation, sandbox lifecycle)
 api/v1alpha1/       CRD types (AgentTask)
+api/                OpenAPI 3.0 spec (source of truth for API types)
 config/             Kustomize manifests, CRDs, RBAC
+web/                Svelte 5 SPA (SvelteKit, Tailwind v4, openapi-fetch)
 ```
 
 ## Tech stack
 
 - Go 1.25, controller-runtime, chi router, Kong CLI, ghinstallation/v2, go-github/v75
-- Tests: testify + httptest + envtest
-- Linter: golangci-lint v2 via `make lint-fix`
+- Frontend: Svelte 5, SvelteKit (adapter-static), Tailwind v4, openapi-fetch
+- Go tests: testify + httptest + envtest
+- Frontend tests: Vitest (unit) + Playwright (E2E)
+- Go linter: golangci-lint v2 via `make lint-fix`
+- Frontend linter: Biome via `make web-lint-fix`
 
 ## Build and verify
 
@@ -26,9 +31,17 @@ make build       # bin/shepherd
 make test        # unit + envtest (runs fmt/vet/generate first)
 make lint-fix    # golangci-lint with auto-fix
 go vet ./...     # quick check
+
+# Frontend
+make web-build     # production build
+make web-test      # vitest unit tests
+make web-check     # svelte-check type checking
+make web-lint-fix  # biome auto-fix
+make web-gen-types # generate TS types from OpenAPI spec
 ```
 
-Always run `make lint-fix` and `make test` before considering work done.
+Always run `make lint-fix` and `make test` before considering Go work done.
+Always run `make web-lint-fix`, `make web-test`, and `make web-check` before considering frontend work done.
 
 ## Key patterns
 

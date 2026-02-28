@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -92,6 +93,11 @@ func TestGetTaskToken_ReturnsToken(t *testing.T) {
 	w := doGet(t, r, "/api/v1/tasks/task-token-1/token")
 
 	assert.Equal(t, http.StatusOK, w.Code)
+
+	// Contract validation
+	doc := loadSpec(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tasks/task-token-1/token", nil)
+	validateResponse(t, doc, req, w)
 
 	var resp TokenResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))

@@ -10,6 +10,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/NissesSenap/shepherd/pkg/api"
 )
 
 func TestFetchTaskData(t *testing.T) {
@@ -108,6 +110,57 @@ func TestFetchToken(t *testing.T) {
 		_, _, err := c.FetchToken(context.Background(), "task-1")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "non-retriable")
+	})
+}
+
+func TestPostEvents(t *testing.T) {
+	t.Run("happy path", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			assert.Equal(t, "/api/v1/tasks/task-1/events", r.URL.Path)
+			assert.Equal(t, http.MethodPost, r.Method)
+			assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
+
+			body, err := io.ReadAll(r.Body)
+			require.NoError(t, err)
+
+			var req postEventRequest
+			require.NoError(t, json.Unmarshal(body, &req))
+			assert.NotNil(t, req.Events)
+
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer srv.Close()
+
+		c := NewClient(srv.URL)
+		events := []api.TaskEvent{
+			{Sequence: 1, Type: api.EventTypeThinking, Summary: "analyzing code"},
+		}
+		err := c.PostEvents(context.Background(), "task-1", events)
+		require.NoError(t, err)
+	})
+
+	t.Run("server error returns HTTPStatusError", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"task not found"}`))
+		}))
+		defer srv.Close()
+
+		c := NewClient(srv.URL)
+		err := c.PostEvents(context.Background(), "task-missing", []api.TaskEvent{})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "404")
+	})
+
+	t.Run("empty events", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer srv.Close()
+
+		c := NewClient(srv.URL)
+		err := c.PostEvents(context.Background(), "task-1", []api.TaskEvent{})
+		require.NoError(t, err)
 	})
 }
 

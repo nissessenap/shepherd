@@ -1,0 +1,529 @@
+openapi: 3.0.3
+info:
+  title: Shepherd API
+  description: Background coding agent orchestrator on Kubernetes.
+  version: 0.1.0
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+
+paths:
+  /healthz:
+    get:
+      operationId: healthz
+      summary: Liveness probe
+      tags: [health]
+      responses:
+        "200":
+          description: Healthy
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: ok
+
+  /readyz:
+    get:
+      operationId: readyz
+      summary: Readiness probe
+      tags: [health]
+      responses:
+        "200":
+          description: Ready
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: ok
+        "503":
+          description: Not ready
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /api/v1/tasks:
+    post:
+      operationId: createTask
+      summary: Create a new agent task
+      tags: [tasks]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTaskRequest"
+      responses:
+        "201":
+          description: Task created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "413":
+          description: Compressed context exceeds size limit
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "415":
+          description: Content-Type must be application/json
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    get:
+      operationId: listTasks
+      summary: List agent tasks
+      tags: [tasks]
+      parameters:
+        - name: repo
+          in: query
+          description: Filter by shepherd.io/repo label
+          schema:
+            type: string
+        - name: issue
+          in: query
+          description: Filter by shepherd.io/issue label
+          schema:
+            type: string
+        - name: fleet
+          in: query
+          description: Filter by shepherd.io/fleet label
+          schema:
+            type: string
+        - name: active
+          in: query
+          description: If "true", only return non-terminal tasks
+          schema:
+            type: string
+            enum: ["true", "false"]
+      responses:
+        "200":
+          description: List of tasks
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TaskResponse"
+
+  /api/v1/tasks/{taskID}:
+    get:
+      operationId: getTask
+      summary: Get a single task
+      tags: [tasks]
+      parameters:
+        - $ref: "#/components/parameters/taskID"
+      responses:
+        "200":
+          description: Task details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskResponse"
+        "404":
+          description: Task not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/tasks/{taskID}/events:
+    post:
+      operationId: postEvents
+      summary: Post agent events for a task (runner → API)
+      tags: [internal]
+      parameters:
+        - $ref: "#/components/parameters/taskID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PostEventRequest"
+      responses:
+        "200":
+          description: Events accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusAcceptedResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Task not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "410":
+          description: Task is terminal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "415":
+          description: Content-Type must be application/json
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    get:
+      operationId: streamEvents
+      summary: Stream task events via WebSocket
+      description: |
+        Upgrades to a WebSocket connection for real-time event streaming.
+        The server sends JSON messages of type WSMessage with "task_event"
+        or "task_complete" types. Use the ?after query parameter to resume
+        from a specific sequence number after reconnection.
+      tags: [tasks]
+      parameters:
+        - $ref: "#/components/parameters/taskID"
+        - name: after
+          in: query
+          description: Only return events with sequence > this value (for reconnection)
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "101":
+          description: WebSocket upgrade
+        "400":
+          description: Invalid after parameter
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Task not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/tasks/{taskID}/status:
+    post:
+      operationId: updateTaskStatus
+      summary: Update task status (runner callback)
+      tags: [internal]
+      parameters:
+        - $ref: "#/components/parameters/taskID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StatusUpdateRequest"
+      responses:
+        "200":
+          description: Status accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusAcceptedResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Task not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "415":
+          description: Content-Type must be application/json
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/tasks/{taskID}/data:
+    get:
+      operationId: getTaskData
+      summary: Get task data for runner
+      tags: [internal]
+      parameters:
+        - $ref: "#/components/parameters/taskID"
+      responses:
+        "200":
+          description: Task data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskDataResponse"
+        "404":
+          description: Task not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "410":
+          description: Task is terminal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/tasks/{taskID}/token:
+    get:
+      operationId: getTaskToken
+      summary: Get GitHub installation token scoped to task repo
+      tags: [internal]
+      parameters:
+        - $ref: "#/components/parameters/taskID"
+      responses:
+        "200":
+          description: Token generated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenResponse"
+        "404":
+          description: Task not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Token already issued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "410":
+          description: Task is terminal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+components:
+  parameters:
+    taskID:
+      name: taskID
+      in: path
+      required: true
+      schema:
+        type: string
+
+  schemas:
+    CreateTaskRequest:
+      type: object
+      required: [repo, task, callbackURL, runner]
+      properties:
+        repo:
+          $ref: "#/components/schemas/RepoRequest"
+        task:
+          $ref: "#/components/schemas/TaskRequest"
+        callbackURL:
+          type: string
+          format: uri
+        runner:
+          $ref: "#/components/schemas/RunnerConfig"
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+
+    RepoRequest:
+      type: object
+      required: [url]
+      properties:
+        url:
+          type: string
+          format: uri
+        ref:
+          type: string
+
+    TaskRequest:
+      type: object
+      required: [description]
+      properties:
+        description:
+          type: string
+        context:
+          type: string
+        sourceURL:
+          type: string
+        sourceType:
+          type: string
+        sourceID:
+          type: string
+
+    RunnerConfig:
+      type: object
+      required: [sandboxTemplateName]
+      properties:
+        sandboxTemplateName:
+          type: string
+        timeout:
+          type: string
+        serviceAccountName:
+          type: string
+
+    TaskResponse:
+      type: object
+      required: [id, namespace, repo, task, callbackURL, status, createdAt]
+      properties:
+        id:
+          type: string
+        namespace:
+          type: string
+        repo:
+          $ref: "#/components/schemas/RepoRequest"
+        task:
+          $ref: "#/components/schemas/TaskRequest"
+        callbackURL:
+          type: string
+        status:
+          $ref: "#/components/schemas/TaskStatusSummary"
+        createdAt:
+          type: string
+          format: date-time
+        completionTime:
+          type: string
+          format: date-time
+          nullable: true
+
+    TaskStatusSummary:
+      type: object
+      required: [phase, message]
+      properties:
+        phase:
+          type: string
+        message:
+          type: string
+        sandboxClaimName:
+          type: string
+        prURL:
+          type: string
+        error:
+          type: string
+
+    StatusUpdateRequest:
+      type: object
+      required: [event]
+      properties:
+        event:
+          type: string
+          enum: [started, progress, completed, failed]
+        message:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
+
+    StatusAcceptedResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+        note:
+          type: string
+
+    TaskDataResponse:
+      type: object
+      required: [description, context, repo]
+      properties:
+        description:
+          type: string
+        context:
+          type: string
+        sourceURL:
+          type: string
+        repo:
+          $ref: "#/components/schemas/RepoRequest"
+
+    TokenResponse:
+      type: object
+      required: [token, expiresAt]
+      properties:
+        token:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+
+    PostEventRequest:
+      type: object
+      required: [events]
+      properties:
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/TaskEvent"
+          minItems: 1
+
+    TaskEvent:
+      type: object
+      required: [sequence, timestamp, type, summary]
+      properties:
+        sequence:
+          type: integer
+          format: int64
+          minimum: 1
+        timestamp:
+          type: string
+          format: date-time
+        type:
+          type: string
+          enum: [thinking, tool_call, tool_result, error]
+        summary:
+          type: string
+        tool:
+          type: string
+        input:
+          type: object
+          additionalProperties: true
+        output:
+          $ref: "#/components/schemas/TaskEventOutput"
+        metadata:
+          type: object
+          additionalProperties: true
+
+    TaskEventOutput:
+      type: object
+      required: [success]
+      properties:
+        success:
+          type: boolean
+        summary:
+          type: string
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+        details:
+          type: string

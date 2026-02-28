@@ -1,6 +1,10 @@
 # Image URL to use all building/pushing image targets
 IMG ?= shepherd:latest
 RUNNER_IMG ?= shepherd-runner:latest
+FRONTEND_IMG ?= shepherd-web:latest
+
+# Docker cache arguments (used by CI for GHA cache backend)
+DOCKER_CACHE_ARGS ?=
 
 # Kind cluster name used by kind-create / kind-delete / ko-build-kind
 KIND_CLUSTER_NAME ?= shepherd
@@ -80,6 +84,52 @@ lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
 lint-config: golangci-lint ## Verify golangci-lint linter configuration
 	"$(GOLANGCI_LINT)" config verify
 
+##@ Frontend
+
+.PHONY: web-install
+web-install: ## Install frontend dependencies.
+	npm ci --prefix web
+
+.PHONY: web-dev
+web-dev: ## Start frontend dev server with API proxy.
+	npm run dev --prefix web
+
+.PHONY: web-build
+web-build: web-install ## Build frontend for production.
+	npm run build --prefix web
+
+.PHONY: web-check
+web-check: ## Run svelte-check type checking.
+	npm run check --prefix web
+
+.PHONY: web-gen-types
+web-gen-types: ## Generate TypeScript types from OpenAPI spec.
+	npm run gen:api --prefix web
+
+.PHONY: web-test
+web-test: web-install ## Run frontend unit and component tests.
+	npm test --prefix web
+
+.PHONY: web-coverage
+web-coverage: web-install ## Run frontend tests with coverage report.
+	cd web && npx vitest run --coverage
+
+.PHONY: web-lint
+web-lint: ## Run Biome linter on frontend code.
+	cd web && npx biome check src/
+
+.PHONY: web-lint-fix
+web-lint-fix: ## Run Biome linter with auto-fix.
+	cd web && npx biome check --write src/
+
+.PHONY: web-e2e
+web-e2e: ## Run Playwright E2E tests against deployed stack.
+	cd web && npx playwright test
+
+.PHONY: web-e2e-install
+web-e2e-install: ## Install Playwright browsers.
+	cd web && npx playwright install chromium
+
 ##@ E2E Testing
 
 .PHONY: test-e2e
@@ -101,6 +151,24 @@ test-e2e-interactive: ## Run e2e tests, keeping the Kind cluster alive for debug
 .PHONY: test-e2e-existing
 test-e2e-existing: install-agent-sandbox install deploy-test deploy-e2e-fixtures ## Run e2e tests against an already-running cluster.
 	go test ./test/e2e/ -tags e2e -v -count=1 -timeout 10m
+
+.PHONY: test-e2e-all
+test-e2e-all: kind-create ko-build-kind install-agent-sandbox install deploy-test deploy-e2e-fixtures web-e2e-install ## Full E2E: Go tests then Playwright, tears down cluster.
+	E2E_SKIP_TEARDOWN=true go test ./test/e2e/ -tags e2e -v -count=1 -timeout 10m
+	cd web && npx playwright test
+	$(MAKE) kind-delete
+
+.PHONY: test-e2e-all-interactive
+test-e2e-all-interactive: ## Run Go + Playwright E2E tests, keeping Kind cluster alive.
+	@if kind get clusters 2>/dev/null | grep -q "^$(KIND_CLUSTER_NAME)$$"; then \
+		echo "Reusing existing cluster: $(KIND_CLUSTER_NAME)"; \
+	else \
+		echo "Creating new cluster: $(KIND_CLUSTER_NAME)"; \
+		$(MAKE) kind-create; \
+	fi
+	$(MAKE) ko-build-kind install-agent-sandbox install deploy-test deploy-e2e-fixtures web-e2e-install
+	E2E_SKIP_TEARDOWN=true go test ./test/e2e/ -tags e2e -v -count=1 -timeout 10m
+	cd web && npx playwright test
 
 ##@ Build
 
@@ -125,7 +193,11 @@ ko-build-runner-local: ko ## Build runner stub image locally with ko (sets RUNNE
 
 .PHONY: docker-build-runner
 docker-build-runner: ## Build shepherd-runner Docker image locally.
-	docker build -f build/runner/Dockerfile -t $(RUNNER_IMG) .
+	docker buildx build --load $(DOCKER_CACHE_ARGS) -f build/runner/Dockerfile -t $(RUNNER_IMG) .
+
+.PHONY: docker-build-web
+docker-build-web: web-build ## Build frontend Docker image.
+	docker buildx build --load $(DOCKER_CACHE_ARGS) -f build/web/Dockerfile -t $(FRONTEND_IMG) .
 
 .PHONY: build-smoke
 build-smoke: ko-build-local ko-build-runner-local manifests kustomize ## Verify ko builds + kustomize render.
@@ -133,11 +205,12 @@ build-smoke: ko-build-local ko-build-runner-local manifests kustomize ## Verify 
 	@echo "Build smoke test passed: ko images built, kustomize renders cleanly"
 
 .PHONY: ko-build-kind
-ko-build-kind: ko-build-local ko-build-runner-local ## Build images and load them into the kind cluster.
+ko-build-kind: ko-build-local ko-build-runner-local docker-build-web ## Build images and load them into the kind cluster.
 	docker tag "$(IMG)" shepherd:latest
 	docker tag "$(RUNNER_IMG)" shepherd-runner:latest
 	kind load docker-image shepherd:latest --name "$(KIND_CLUSTER_NAME)"
 	kind load docker-image shepherd-runner:latest --name "$(KIND_CLUSTER_NAME)"
+	kind load docker-image $(FRONTEND_IMG) --name "$(KIND_CLUSTER_NAME)"
 
 ##@ Kind
 

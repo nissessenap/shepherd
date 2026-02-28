@@ -104,11 +104,14 @@ func Run(opts Options) error {
 		log.Info("GitHub App configured", "appID", opts.GithubAppID)
 	}
 
+	eventHub := NewEventHub()
+
 	handler := &taskHandler{
 		client:       k8sClient,
 		namespace:    opts.Namespace,
 		callback:     cb,
 		githubClient: githubClient,
+		eventHub:     eventHub,
 	}
 
 	// Health tracking for watcher and cache goroutines
@@ -183,6 +186,7 @@ func Run(opts Options) error {
 		r.Post("/tasks", handler.createTask)
 		r.Get("/tasks", handler.listTasks)
 		r.Get("/tasks/{taskID}", handler.getTask)
+		r.Get("/tasks/{taskID}/events", handler.streamEvents)
 	})
 
 	// Internal router (port 8081) - runner-only API (NetworkPolicy protected)
@@ -195,6 +199,7 @@ func Run(opts Options) error {
 	internalRouter.Route("/api/v1", func(r chi.Router) {
 		r.Use(contentTypeMiddleware)
 		r.Post("/tasks/{taskID}/status", handler.updateTaskStatus)
+		r.Post("/tasks/{taskID}/events", handler.postEvents)
 		r.Get("/tasks/{taskID}/data", handler.getTaskData)
 		r.Get("/tasks/{taskID}/token", handler.getTaskToken)
 	})

@@ -41,6 +41,16 @@ patches:
   target:
     kind: Service
     name: shepherd-shepherd-api
+- patch: |-
+    - op: add
+      path: /spec/type
+      value: NodePort
+    - op: add
+      path: /spec/ports/0/nodePort
+      value: 30081
+  target:
+    kind: Service
+    name: shepherd-shepherd-web
 images:
 - name: controller
   newName: shepherd
