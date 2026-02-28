@@ -396,9 +396,9 @@ This changes the value sent as the `repo` URL parameter from the full URL to the
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `make web-test` — all tests pass
-- [ ] `make web-lint-fix` — clean
-- [ ] `make web-check` — type checking passes
+- [x] `make web-test` — all tests pass
+- [x] `make web-lint-fix` — clean
+- [x] `make web-check` — type checking passes
 
 #### Manual Verification:
 - [ ] Open the task list with 2+ repos
