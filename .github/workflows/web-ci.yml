@@ -1,0 +1,22 @@
+name: Frontend CI
+
+on:
+  pull_request:
+    paths:
+      - 'web/**'
+
+jobs:
+  test:
+    name: Test & Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci --prefix web
+      - run: npm test --prefix web
+      - run: npm run check --prefix web
+      - run: cd web && npx biome check src/

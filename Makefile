@@ -3,6 +3,9 @@ IMG ?= shepherd:latest
 RUNNER_IMG ?= shepherd-runner:latest
 FRONTEND_IMG ?= shepherd-web:latest
 
+# Docker cache arguments (used by CI for GHA cache backend)
+DOCKER_CACHE_ARGS ?=
+
 # Kind cluster name used by kind-create / kind-delete / ko-build-kind
 KIND_CLUSTER_NAME ?= shepherd
 
@@ -190,11 +193,11 @@ ko-build-runner-local: ko ## Build runner stub image locally with ko (sets RUNNE
 
 .PHONY: docker-build-runner
 docker-build-runner: ## Build shepherd-runner Docker image locally.
-	docker build -f build/runner/Dockerfile -t $(RUNNER_IMG) .
+	docker buildx build --load $(DOCKER_CACHE_ARGS) -f build/runner/Dockerfile -t $(RUNNER_IMG) .
 
 .PHONY: docker-build-web
 docker-build-web: web-build ## Build frontend Docker image.
-	docker build -f build/web/Dockerfile -t $(FRONTEND_IMG) .
+	docker buildx build --load $(DOCKER_CACHE_ARGS) -f build/web/Dockerfile -t $(FRONTEND_IMG) .
 
 .PHONY: build-smoke
 build-smoke: ko-build-local ko-build-runner-local manifests kustomize ## Verify ko builds + kustomize render.
