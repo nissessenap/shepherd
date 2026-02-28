@@ -25,7 +25,7 @@ const config = $derived.by(() => {
 });
 </script>
 
-<span class="inline-flex items-center gap-1.5 text-xs font-medium" aria-label="Connection status: {config.label}">
+<span class="inline-flex items-center gap-1.5 text-xs font-medium">
 	<span class="relative flex h-2 w-2">
 		{#if config.pulse}
 			<span class="absolute inline-flex h-full w-full animate-ping rounded-full {config.color} opacity-75"></span>

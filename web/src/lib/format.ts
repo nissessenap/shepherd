@@ -8,6 +8,7 @@ export function formatDuration(
 ): string {
 	const start = new Date(startTime).getTime();
 	const end = endTime ? new Date(endTime).getTime() : Date.now();
+	if (Number.isNaN(start) || Number.isNaN(end)) return "--";
 	const diffMs = Math.max(0, end - start);
 	const totalSeconds = Math.floor(diffMs / 1000);
 
@@ -32,6 +33,7 @@ export function formatDuration(
 export function formatRelativeTime(timestamp: string): string {
 	const now = Date.now();
 	const then = new Date(timestamp).getTime();
+	if (Number.isNaN(then)) return "--";
 	const diffMs = now - then;
 
 	if (diffMs < 0) return "just now";

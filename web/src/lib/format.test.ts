@@ -71,10 +71,9 @@ describe("formatDuration", () => {
 			expect(formatDuration(BASE, endAfter(3600))).toBe("1h 00m");
 		});
 
-		it("returns NaN-based result for invalid start date", () => {
+		it("returns fallback for invalid start date", () => {
 			const result = formatDuration("not-a-date", "2024-01-01T00:00:00Z");
-			// NaN propagates through Math.max(0, NaN) and all arithmetic
-			expect(result).toBe("NaNm NaNs");
+			expect(result).toBe("--");
 		});
 	});
 });
@@ -128,6 +127,10 @@ describe("formatRelativeTime", () => {
 		it('returns "1d ago" at exactly 24 hours', () => {
 			expect(formatRelativeTime(ago(86400))).toBe("1d ago");
 		});
+
+		it("returns fallback for invalid date input", () => {
+			expect(formatRelativeTime("not-a-date")).toBe("--");
+		});
 	});
 });
 
@@ -144,6 +147,11 @@ describe("formatTimestamp", () => {
 
 	it("returns 'Invalid Date' for garbage input", () => {
 		const result = formatTimestamp("garbage");
+		expect(result).toContain("Invalid");
+	});
+
+	it("returns 'Invalid Date' for empty string input", () => {
+		const result = formatTimestamp("");
 		expect(result).toContain("Invalid");
 	});
 });

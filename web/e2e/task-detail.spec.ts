@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import {
+	API_WAIT,
 	createTask,
 	uniqueId,
 	waitForAPI,
@@ -22,10 +23,10 @@ test.beforeAll(async () => {
 test("task completes and shows PR link", async ({ page }) => {
 	await page.goto(`/tasks/${taskId}`);
 
-	await expect(page.getByText("Succeeded")).toBeVisible({ timeout: 10_000 });
+	await expect(page.getByText("Succeeded")).toBeVisible({ timeout: API_WAIT });
 
 	await expect(page.getByText("Pull Request #42")).toBeVisible({
-		timeout: 10_000,
+		timeout: API_WAIT,
 	});
 
 	const githubLink = page.getByRole("link", { name: "Open in GitHub" });
@@ -39,18 +40,9 @@ test("task completes and shows PR link", async ({ page }) => {
 test("task detail shows metadata", async ({ page }) => {
 	await page.goto(`/tasks/${taskId}`);
 
-	await expect(page.getByText("Succeeded")).toBeVisible({ timeout: 10_000 });
+	await expect(page.getByText("Succeeded")).toBeVisible({ timeout: API_WAIT });
 	await expect(
 		page.getByText("test-org/test-repo").first(),
 	).toBeVisible();
 	await expect(page.getByText(description)).toBeVisible();
-});
-
-test("deep link to a specific task works", async ({ page }) => {
-	await page.goto(`/tasks/${taskId}`);
-
-	await expect(page.getByText(description)).toBeVisible({
-		timeout: 10_000,
-	});
-	await expect(page.getByText("Succeeded")).toBeVisible();
 });

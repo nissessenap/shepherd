@@ -1,5 +1,8 @@
 const API_URL = process.env.API_URL ?? "http://localhost:30080";
 
+/** Default timeout for assertions that depend on API data loading. */
+export const API_WAIT = 10_000;
+
 /** Short random suffix to make task descriptions unique per test run. */
 export function uniqueId(): string {
 	return Math.random().toString(36).slice(2, 8);

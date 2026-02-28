@@ -281,6 +281,46 @@ describe("WSClient", () => {
 		expect(sockets[1].url).toBe("ws://test/stream?after=99");
 	});
 
+	it("reconnectFrom() after disconnect() does not create new connections", () => {
+		const { client, sockets } = createHarness();
+
+		client.connect();
+		sockets[0].simulateOpen();
+		client.disconnect();
+
+		// reconnectFrom after disconnect — open() bails because closed=true
+		client.reconnectFrom(10);
+		expect(sockets).toHaveLength(1);
+	});
+
+	it("multiple rapid disconnect() calls do not throw", () => {
+		const { client, sockets } = createHarness();
+
+		client.connect();
+		sockets[0].simulateOpen();
+
+		expect(() => {
+			client.disconnect();
+			client.disconnect();
+			client.disconnect();
+		}).not.toThrow();
+	});
+
+	it("error event alone does not create duplicate reconnections", () => {
+		const { client, sockets } = createHarness();
+
+		client.connect();
+		sockets[0].simulateOpen();
+
+		// Fire error then close (as browsers do)
+		sockets[0].simulateError();
+		sockets[0].simulateClose(1006);
+
+		// Should only schedule one reconnection, not two
+		vi.advanceTimersByTime(60_000);
+		expect(sockets).toHaveLength(2);
+	});
+
 	it("retryCount resets to 0 on successful reconnection", () => {
 		const { client, states, sockets } = createHarness({ maxRetries: 2 });
 

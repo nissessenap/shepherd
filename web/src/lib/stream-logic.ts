@@ -2,10 +2,9 @@ import type { components } from "./api.js";
 
 type TaskEvent = components["schemas"]["TaskEvent"];
 
-export interface WSMessage {
-	type: "task_event" | "task_complete";
-	data: TaskEvent | TaskCompleteData;
-}
+export type WSMessage =
+	| { type: "task_event"; data: TaskEvent }
+	| { type: "task_complete"; data: TaskCompleteData };
 
 export interface TaskCompleteData {
 	taskID: string;
@@ -33,7 +32,7 @@ export function classifyMessage(
 ): { action: MessageAction; newGapReconnectCount: number } {
 	if (msg.type === "task_complete") {
 		return {
-			action: { type: "complete", data: msg.data as TaskCompleteData },
+			action: { type: "complete", data: msg.data },
 			newGapReconnectCount: gapReconnectCount,
 		};
 	}
@@ -45,7 +44,7 @@ export function classifyMessage(
 		};
 	}
 
-	const event = msg.data as TaskEvent;
+	const event = msg.data;
 
 	// Deduplicate: skip events we already have
 	if (event.sequence <= lastSequence) {

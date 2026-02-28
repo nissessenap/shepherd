@@ -103,6 +103,5 @@ function onRepoChange(e: Event) {
 		class="rounded-md border border-border-default bg-canvas-default px-3 py-1.5 text-sm text-fg-default placeholder:text-fg-dim focus:border-accent-fg focus:outline-none"
 		value={searchInput}
 		oninput={onSearchInput}
-		aria-label="Search tasks"
 	/>
 </div>

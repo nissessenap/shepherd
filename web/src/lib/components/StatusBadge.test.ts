@@ -26,4 +26,11 @@ describe("StatusBadge", () => {
 		expect(badge?.textContent?.trim()).toBe("CustomStatus");
 		expect(badge?.className).toContain("text-fg-muted");
 	});
+
+	it("handles null-like status string", () => {
+		const { container } = render(StatusBadge, { props: { status: "null" } });
+		const badge = container.querySelector("span");
+		expect(badge?.textContent?.trim()).toBe("null");
+		expect(badge?.className).toContain("text-fg-muted");
+	});
 });

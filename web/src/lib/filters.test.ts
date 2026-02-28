@@ -137,6 +137,23 @@ describe("filterTasks", () => {
 		const result = filterTasks(tasks, "acme");
 		expect(result).toHaveLength(3);
 	});
+
+	it("handles task with empty description gracefully", () => {
+		const tasks = [makeTask({ task: { description: "" } })];
+		expect(filterTasks(tasks, "anything")).toEqual([]);
+	});
+
+	it("handles task with empty repo URL gracefully", () => {
+		const tasks = [makeTask({ repo: { url: "" } })];
+		expect(filterTasks(tasks, "github")).toEqual([]);
+	});
+
+	it("does not match on fields outside description, repo, and id", () => {
+		const tasks = [
+			makeTask({ status: { phase: "Running", message: "running stuff" } }),
+		];
+		expect(filterTasks(tasks, "running stuff")).toEqual([]);
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -238,5 +255,13 @@ describe("computeStats", () => {
 		expect(stats.succeeded).toBe(0);
 		expect(stats.failed).toBe(0);
 		expect(stats.total).toBe(2);
+	});
+
+	it("does not count Cancelled as failed", () => {
+		const tasks = [makeTask({ status: { phase: "Cancelled", message: "" } })];
+		const stats = computeStats(tasks);
+		expect(stats.failed).toBe(0);
+		expect(stats.active).toBe(0);
+		expect(stats.total).toBe(1);
 	});
 });

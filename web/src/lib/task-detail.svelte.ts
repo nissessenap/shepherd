@@ -7,13 +7,17 @@ export class TaskDetailStore {
 	task: TaskResponse | null = $state(null);
 	loading = $state(false);
 	error: string | null = $state(null);
+	private controller: AbortController | null = null;
 
 	async load(taskId: string): Promise<void> {
+		this.controller?.abort();
+		this.controller = new AbortController();
 		this.loading = true;
 		this.error = null;
 		try {
 			const { data, response } = await api.GET("/api/v1/tasks/{taskID}", {
 				params: { path: { taskID: taskId } },
+				signal: this.controller.signal,
 			});
 			if (!response.ok) {
 				this.error = `Failed to load task (${response.status})`;
@@ -21,6 +25,7 @@ export class TaskDetailStore {
 			}
 			this.task = data ?? null;
 		} catch (e) {
+			if (e instanceof DOMException && e.name === "AbortError") return;
 			this.error = e instanceof Error ? e.message : "Network error";
 		} finally {
 			this.loading = false;

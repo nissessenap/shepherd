@@ -11,6 +11,7 @@ import {
 	formatDuration,
 	formatRelativeTime,
 } from "$lib/format.js";
+import { LiveTick } from "$lib/live-tick.svelte.js";
 import { TaskDetailStore } from "$lib/task-detail.svelte.js";
 import { TaskStream } from "$lib/task-stream.svelte.js";
 
@@ -26,18 +27,11 @@ const isSucceeded = $derived(phase === "Succeeded");
 const isFailed = $derived(phase === "Failed" || phase === "TimedOut");
 
 // Live duration tick for running tasks
-let now = $state(Date.now());
-$effect(() => {
-	if (!isRunning) return;
-	const interval = setInterval(() => {
-		now = Date.now();
-	}, 1000);
-	return () => clearInterval(interval);
-});
+const tick = new LiveTick(() => isRunning);
 
 const duration = $derived.by(() => {
 	if (!task) return "";
-	if (isRunning) void now;
+	if (isRunning) void tick.now;
 	return formatDuration(task.createdAt, task.completionTime);
 });
 
@@ -70,6 +64,8 @@ const lastToolAction = $derived.by(() => {
 		: undefined;
 });
 </script>
+
+<svelte:head><title>{task?.task.description ?? "Task"} - Shepherd</title></svelte:head>
 
 <main class="mx-auto max-w-[1200px] px-4 py-6">
 	<div class="mb-4">

@@ -31,6 +31,8 @@ $effect(() => {
 });
 </script>
 
+<svelte:head><title>Tasks - Shepherd</title></svelte:head>
+
 <main class="mx-auto max-w-[1200px] px-4 py-6">
 	<div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
 		<h1 class="text-xl font-bold text-fg-default">Tasks</h1>
@@ -45,7 +47,15 @@ $effect(() => {
 		<div class="py-12 text-center text-fg-muted">Loading tasks...</div>
 	{:else if store.error}
 		<div class="rounded-md border border-danger-fg/30 bg-danger-fg/5 px-4 py-3 text-sm text-danger-fg">
-			{store.error}
+			<div class="flex items-center justify-between gap-3">
+				<span>{store.error}</span>
+				<button
+					onclick={() => store.load(filters)}
+					class="shrink-0 rounded-md border border-danger-fg/30 px-2 py-1 text-xs hover:bg-danger-fg/10"
+				>
+					Retry
+				</button>
+			</div>
 		</div>
 	{:else if filteredTasks.length === 0}
 		<div class="py-12 text-center text-fg-muted">
