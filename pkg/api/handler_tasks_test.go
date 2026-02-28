@@ -902,6 +902,11 @@ func TestNormalizeRepoFilter(t *testing.T) {
 			want:  "org-repo",
 		},
 		{
+			name:  "HTTP URL (non-TLS)",
+			input: "http://github.com/org/repo",
+			want:  "org-repo",
+		},
+		{
 			name:  "URL with deep path",
 			input: "https://github.com/org/sub/repo",
 			want:  "org-sub-repo",

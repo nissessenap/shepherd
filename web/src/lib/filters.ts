@@ -21,6 +21,7 @@ export function buildFilters(searchParams: URLSearchParams): TaskFilters {
 /**
  * Convert a repo URL or path to a Kubernetes label-compatible value.
  * Strips URL scheme/host, removes trailing .git, and replaces slashes with dashes.
+ * NOTE: keep in sync with pkg/api/handler_tasks.go:normalizeRepoFilter
  *
  * Examples:
  *   "https://github.com/org/repo"     → "org-repo"

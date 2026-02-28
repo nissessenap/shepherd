@@ -57,6 +57,7 @@ func validateLabelValue(value string) error {
 // normalizeRepoFilter converts a repo filter value to a valid Kubernetes label value.
 // It handles full URLs (https://github.com/org/repo), slash forms (org/repo),
 // and already-valid label values (org-repo).
+// NOTE: keep in sync with web/src/lib/filters.ts:repoUrlToLabel
 func normalizeRepoFilter(value string) (string, error) {
 	if strings.HasPrefix(value, "https://") || strings.HasPrefix(value, "http://") {
 		u, err := url.Parse(value)
