@@ -362,9 +362,9 @@ Run: `make web-test` → `repoUrlToLabel` tests pass
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `make web-test` — all filter tests pass
-- [ ] `make web-lint-fix` — clean
-- [ ] `make web-check` — clean
+- [x] `make web-test` — all filter tests pass
+- [x] `make web-lint-fix` — clean
+- [x] `make web-check` — clean
 
 ---
 
