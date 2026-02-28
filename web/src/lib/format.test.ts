@@ -145,14 +145,12 @@ describe("formatTimestamp", () => {
 		expect(result).toMatch(/^\d{2}:\d{2}:\d{2}$/);
 	});
 
-	it("returns 'Invalid Date' for garbage input", () => {
-		const result = formatTimestamp("garbage");
-		expect(result).toContain("Invalid");
+	it("returns fallback for garbage input", () => {
+		expect(formatTimestamp("garbage")).toBe("--");
 	});
 
-	it("returns 'Invalid Date' for empty string input", () => {
-		const result = formatTimestamp("");
-		expect(result).toContain("Invalid");
+	it("returns fallback for empty string input", () => {
+		expect(formatTimestamp("")).toBe("--");
 	});
 });
 

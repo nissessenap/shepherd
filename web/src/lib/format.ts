@@ -56,6 +56,7 @@ export function formatRelativeTime(timestamp: string): string {
  */
 export function formatTimestamp(timestamp: string): string {
 	const date = new Date(timestamp);
+	if (Number.isNaN(date.getTime())) return "--";
 	return date.toLocaleTimeString("en-GB", {
 		hour: "2-digit",
 		minute: "2-digit",

@@ -78,7 +78,15 @@ const lastToolAction = $derived.by(() => {
 		<div
 			class="rounded-md border border-danger-fg/30 bg-danger-fg/5 px-4 py-3 text-sm text-danger-fg"
 		>
-			{detail.error}
+			<div class="flex items-center justify-between gap-3">
+				<span>{detail.error}</span>
+				<button
+					onclick={() => detail.load(taskID)}
+					class="shrink-0 rounded-md border border-danger-fg/30 px-2 py-1 text-xs hover:bg-danger-fg/10"
+				>
+					Retry
+				</button>
+			</div>
 		</div>
 	{:else if task}
 		<!-- Header: status + metadata -->
@@ -126,6 +134,21 @@ const lastToolAction = $derived.by(() => {
 				<div class="text-fg-muted">Waiting for sandbox...</div>
 				<div class="mt-1 text-xs text-fg-dim">
 					The task will start once a runner picks it up.
+				</div>
+			</div>
+		{/if}
+
+		<!-- Stream connection lost -->
+		{#if stream.streamPhase === "error"}
+			<div class="mb-4 rounded-md border border-attention-fg/30 bg-attention-fg/5 px-4 py-3 text-sm text-attention-fg">
+				<div class="flex items-center justify-between gap-3">
+					<span>Connection lost — event stream disconnected after multiple retries.</span>
+					<button
+						onclick={() => window.location.reload()}
+						class="shrink-0 rounded-md border border-attention-fg/30 px-2 py-1 text-xs hover:bg-attention-fg/10"
+					>
+						Reload
+					</button>
 				</div>
 			</div>
 		{/if}

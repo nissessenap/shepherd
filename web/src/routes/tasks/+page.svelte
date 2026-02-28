@@ -43,10 +43,8 @@ $effect(() => {
 		<FilterBar tasks={store.data} />
 	</div>
 
-	{#if store.loading && store.data.length === 0}
-		<div class="py-12 text-center text-fg-muted">Loading tasks...</div>
-	{:else if store.error}
-		<div class="rounded-md border border-danger-fg/30 bg-danger-fg/5 px-4 py-3 text-sm text-danger-fg">
+	{#if store.error}
+		<div class="mb-4 rounded-md border border-danger-fg/30 bg-danger-fg/5 px-4 py-3 text-sm text-danger-fg">
 			<div class="flex items-center justify-between gap-3">
 				<span>{store.error}</span>
 				<button
@@ -57,6 +55,10 @@ $effect(() => {
 				</button>
 			</div>
 		</div>
+	{/if}
+
+	{#if store.loading && store.data.length === 0}
+		<div class="py-12 text-center text-fg-muted">Loading tasks...</div>
 	{:else if filteredTasks.length === 0}
 		<div class="py-12 text-center text-fg-muted">
 			{#if searchQuery || page.url.searchParams.has("repo")}
