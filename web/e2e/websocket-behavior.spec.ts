@@ -144,7 +144,7 @@ test("failed task shows error callout", async ({ page }) => {
 		page.getByText("Process exited with code 1: something went wrong"),
 	).toBeVisible();
 	await expect(page.getByRole("button", { name: "Copy" })).toBeVisible();
-	await expect(page.getByText("Failed")).toBeVisible();
+	await expect(page.getByText("Failed", { exact: true })).toBeVisible();
 });
 
 test("pending task shows waiting message", async ({ page }) => {
@@ -169,7 +169,7 @@ test("pending task shows waiting message", async ({ page }) => {
 	await expect(page.getByText("Waiting for sandbox...")).toBeVisible({
 		timeout: API_WAIT,
 	});
-	await expect(page.getByText("Pending")).toBeVisible();
+	await expect(page.getByText("Pending", { exact: true })).toBeVisible();
 });
 
 test("task list shows error and retry button on API failure", async ({ page }) => {
