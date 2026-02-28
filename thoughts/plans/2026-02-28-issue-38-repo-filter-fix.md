@@ -161,8 +161,8 @@ Run: `make test` → `TestNormalizeRepoFilter` passes
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `make test` — `TestNormalizeRepoFilter` passes
-- [ ] `make lint-fix` — clean
+- [x] `make test` — `TestNormalizeRepoFilter` passes
+- [x] `make lint-fix` — clean
 
 ---
 

@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -51,6 +52,28 @@ func validateLabelValue(value string) error {
 		return fmt.Errorf("label value contains invalid characters or format")
 	}
 	return nil
+}
+
+// normalizeRepoFilter converts a repo filter value to a valid Kubernetes label value.
+// It handles full URLs (https://github.com/org/repo), slash forms (org/repo),
+// and already-valid label values (org-repo).
+func normalizeRepoFilter(value string) (string, error) {
+	if strings.HasPrefix(value, "https://") || strings.HasPrefix(value, "http://") {
+		u, err := url.Parse(value)
+		if err != nil {
+			return "", fmt.Errorf("invalid repo filter URL: %w", err)
+		}
+		value = strings.TrimPrefix(u.Path, "/")
+		value = strings.TrimSuffix(value, ".git")
+	}
+	value = strings.ReplaceAll(value, "/", "-")
+	if value == "" {
+		return "", fmt.Errorf("repo filter is empty after normalization")
+	}
+	if err := validateLabelValue(value); err != nil {
+		return "", fmt.Errorf("repo filter is not a valid label value: %w", err)
+	}
+	return value, nil
 }
 
 // taskHandler holds dependencies for task endpoints.

@@ -817,6 +817,72 @@ func TestListTasks_K8sClientError(t *testing.T) {
 	assert.Equal(t, "failed to list tasks", errResp.Error)
 }
 
+func TestNormalizeRepoFilter(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		want    string
+		wantErr bool
+	}{
+		{
+			name:  "already valid label (dash form)",
+			input: "org-repo",
+			want:  "org-repo",
+		},
+		{
+			name:  "full GitHub HTTPS URL",
+			input: "https://github.com/test-org/test-repo",
+			want:  "test-org-test-repo",
+		},
+		{
+			name:  "full URL with .git suffix",
+			input: "https://github.com/test-org/test-repo.git",
+			want:  "test-org-test-repo",
+		},
+		{
+			name:  "slash form (org/repo)",
+			input: "test-org/test-repo",
+			want:  "test-org-test-repo",
+		},
+		{
+			name:  "non-GitHub URL",
+			input: "https://gitlab.com/org/repo",
+			want:  "org-repo",
+		},
+		{
+			name:  "URL with deep path",
+			input: "https://github.com/org/sub/repo",
+			want:  "org-sub-repo",
+		},
+		{
+			name:    "invalid chars after normalization",
+			input:   "$$invalid$$",
+			wantErr: true,
+		},
+		{
+			name:    "URL with empty path",
+			input:   "https://github.com/",
+			wantErr: true,
+		},
+		{
+			name:    "value exceeds 63 chars after normalization",
+			input:   "https://github.com/" + strings.Repeat("a", 64),
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := normalizeRepoFilter(tt.input)
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
 func TestIsTerminal(t *testing.T) {
 	tests := []struct {
 		name       string
