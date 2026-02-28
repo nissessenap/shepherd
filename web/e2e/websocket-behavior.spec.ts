@@ -110,7 +110,7 @@ test("shows disconnected state after max retries", async ({ page }) => {
 
 	// After max retries (5 attempts with exponential backoff),
 	// the connection indicator should show "Disconnected"
-	await expect(page.getByText("Disconnected")).toBeVisible({
+	await expect(page.getByText("Disconnected", { exact: true })).toBeVisible({
 		timeout: 60_000,
 	});
 });
