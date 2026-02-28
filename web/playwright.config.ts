@@ -2,8 +2,8 @@ import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
 	testDir: "./e2e",
-	baseURL: process.env.BASE_URL ?? "http://localhost:30081",
 	use: {
+		baseURL: process.env.BASE_URL ?? "http://localhost:30081",
 		colorScheme: "dark",
 	},
 	projects: [{ name: "chromium", use: { browserName: "chromium" } }],
