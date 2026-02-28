@@ -16,12 +16,16 @@ const repoFilter = $derived(page.url.searchParams.get("repo") ?? "");
 const searchFilter = $derived(page.url.searchParams.get("q") ?? "");
 
 let searchInput = $state("");
-let debounceTimer: ReturnType<typeof setTimeout> | undefined =
-	$state(undefined);
+let debounceTimer: ReturnType<typeof setTimeout> | undefined;
 
 // Sync search input with URL when it changes externally (e.g., back button)
 $effect(() => {
 	searchInput = searchFilter;
+});
+
+// Clean up debounce timer on unmount
+$effect(() => {
+	return () => clearTimeout(debounceTimer);
 });
 
 const repos = $derived.by(() => {
@@ -99,5 +103,6 @@ function onRepoChange(e: Event) {
 		class="rounded-md border border-border-default bg-canvas-default px-3 py-1.5 text-sm text-fg-default placeholder:text-fg-dim focus:border-accent-fg focus:outline-none"
 		value={searchInput}
 		oninput={onSearchInput}
+		aria-label="Search tasks"
 	/>
 </div>

@@ -23,8 +23,9 @@ $effect(() => {
 
 // 30-second background poll
 $effect(() => {
+	const currentFilters = filters;
 	const interval = setInterval(() => {
-		store.load(filters);
+		store.load(currentFilters);
 	}, 30_000);
 	return () => clearInterval(interval);
 });

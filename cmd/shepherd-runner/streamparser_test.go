@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -313,6 +314,22 @@ func TestTruncation(t *testing.T) {
 		result := truncate(string(long), 200)
 		assert.Len(t, result, 200)
 		assert.Contains(t, result, truncationSuffix)
+	})
+
+	t.Run("multi-byte runes truncated at rune boundary", func(t *testing.T) {
+		// Each emoji is 4 bytes in UTF-8; build a string of 50 emoji (200 bytes).
+		emoji := "😀"
+		var s strings.Builder
+		for range 50 {
+			s.WriteString(emoji)
+		}
+		// Truncate to 20 runes — must not split any multi-byte character.
+		result := truncate(s.String(), 20)
+		runes := []rune(result)
+		assert.LessOrEqual(t, len(runes), 20)
+		assert.Contains(t, result, truncationSuffix)
+		// The result must be valid UTF-8 with no replacement characters.
+		assert.NotContains(t, result, "\uFFFD", "truncation must not produce invalid UTF-8")
 	})
 }
 

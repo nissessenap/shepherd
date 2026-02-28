@@ -302,13 +302,15 @@ func extractToolResultText(content any) string {
 }
 
 func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	runes := []rune(s)
+	if len(runes) <= maxLen {
 		return s
 	}
-	if maxLen <= len(truncationSuffix) {
-		return s[:maxLen]
+	suffixLen := len([]rune(truncationSuffix))
+	if maxLen <= suffixLen {
+		return string(runes[:maxLen])
 	}
-	return s[:maxLen-len(truncationSuffix)] + truncationSuffix
+	return string(runes[:maxLen-suffixLen]) + truncationSuffix
 }
 
 func toStringMap(v any) (map[string]any, bool) {
