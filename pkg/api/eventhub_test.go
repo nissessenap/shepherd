@@ -307,6 +307,29 @@ func TestEventHub_CleanupWithActiveSubscriber(t *testing.T) {
 	}
 }
 
+func TestEventHub_PublishOutOfOrder_SortsBySequence(t *testing.T) {
+	hub := NewEventHub()
+
+	// Simulate out-of-order delivery: sequence 3 arrives before 1 and 2
+	hub.Publish("task-1", []TaskEvent{
+		{Sequence: 3, Timestamp: "2026-01-01T00:00:02Z", Type: EventTypeToolResult, Summary: "Third"},
+	})
+	hub.Publish("task-1", []TaskEvent{
+		{Sequence: 1, Timestamp: "2026-01-01T00:00:00Z", Type: EventTypeThinking, Summary: "First"},
+	})
+	hub.Publish("task-1", []TaskEvent{
+		{Sequence: 2, Timestamp: "2026-01-01T00:00:01Z", Type: EventTypeToolCall, Summary: "Second"},
+	})
+
+	history, _, unsub := hub.Subscribe("task-1", 0)
+	defer unsub()
+
+	require.Len(t, history, 3)
+	assert.Equal(t, int64(1), history[0].Sequence, "events should be sorted by sequence")
+	assert.Equal(t, int64(2), history[1].Sequence)
+	assert.Equal(t, int64(3), history[2].Sequence)
+}
+
 func TestEventHub_ConcurrentPublishSubscribe(t *testing.T) {
 	hub := NewEventHub()
 	taskID := "task-concurrent"

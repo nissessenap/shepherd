@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/go-logr/logr"
@@ -253,12 +254,18 @@ func TestRunCommandExecutorError(t *testing.T) {
 }
 
 // mockEventPoster records PostEvents calls for testing.
+// Thread-safe for use with fire-and-forget goroutines.
 type mockEventPoster struct {
+	mu    sync.Mutex
 	calls [][]api.TaskEvent
+	wg    sync.WaitGroup
 }
 
 func (m *mockEventPoster) PostEvents(_ context.Context, _ string, events []api.TaskEvent) error {
+	defer m.wg.Done()
+	m.mu.Lock()
 	m.calls = append(m.calls, events)
+	m.mu.Unlock()
 	return nil
 }
 
@@ -289,6 +296,9 @@ func TestRunWithEventPosting(t *testing.T) {
 	}
 
 	poster := &mockEventPoster{}
+	// Expect 3 fire-and-forget goroutines: thinking, tool_call, tool_result
+	poster.wg.Add(3)
+
 	gr := &GoRunner{
 		workDir:     workDir,
 		configDir:   configDir,
@@ -302,8 +312,13 @@ func TestRunWithEventPosting(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, result.Success)
 
+	// Wait for async goroutines to complete before asserting
+	poster.wg.Wait()
+
 	// Verify events were posted: thinking, tool_call, tool_result (result message doesn't produce events)
+	poster.mu.Lock()
 	assert.Len(t, poster.calls, 3, "expected 3 event batches: thinking, tool_call, tool_result")
+	poster.mu.Unlock()
 }
 
 func TestBuildPrompt(t *testing.T) {

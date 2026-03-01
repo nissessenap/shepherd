@@ -17,6 +17,7 @@ limitations under the License.
 package api
 
 import (
+	"sort"
 	"sync"
 
 	"k8s.io/apimachinery/pkg/util/rand"
@@ -84,6 +85,11 @@ func (h *EventHub) Publish(taskID string, events []TaskEvent) {
 		}
 		ts.events = append(ts.events, e)
 	}
+
+	// Re-sort by sequence to handle out-of-order delivery from async producers.
+	sort.Slice(ts.events, func(i, j int) bool {
+		return ts.events[i].Sequence < ts.events[j].Sequence
+	})
 
 	// Fan out to subscribers
 	for id, ch := range ts.subscribers {
