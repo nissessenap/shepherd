@@ -353,8 +353,8 @@ Source: Research doc lines 84-98.
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `make docs-build` completes without errors
-- [ ] No broken internal links (Hugo reports link errors during build)
+- [x] `make docs-build` completes without errors
+- [x] No broken internal links (Hugo reports link errors during build)
 
 #### Manual Verification:
 - [ ] Quickstart page is readable and steps are clear
