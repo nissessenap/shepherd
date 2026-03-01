@@ -6,7 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
@@ -315,6 +317,77 @@ func TestBuildPrompt(t *testing.T) {
 	assert.Contains(t, prompt, "~/task-context.md")
 	assert.Contains(t, prompt, "pull request")
 	assert.Contains(t, prompt, "Stay focused")
+}
+
+// firstCallSlowPoster blocks the first PostEvents call long enough for all
+// StreamStdout sends to complete, causing the channel buffer to fill and
+// excess events to be dropped.
+type firstCallSlowPoster struct {
+	mu    sync.Mutex
+	calls [][]api.TaskEvent
+	once  sync.Once
+	delay time.Duration
+}
+
+func (m *firstCallSlowPoster) PostEvents(_ context.Context, _ string, events []api.TaskEvent) error {
+	m.once.Do(func() { time.Sleep(m.delay) })
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.calls = append(m.calls, events)
+	return nil
+}
+
+func TestRunAsyncEventPostingDropsWhenFull(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	configDir := setupConfigDir(t)
+	workDir := t.TempDir()
+
+	repoDir := filepath.Join(workDir, "repo")
+	require.NoError(t, os.MkdirAll(repoDir, 0o755))
+
+	// Generate 40 assistant lines — each produces 1 event batch.
+	lines := make([]string, 0, 41)
+	for i := range 40 {
+		lines = append(lines, fmt.Sprintf(
+			`{"type":"assistant","message":{"content":[{"type":"text","text":"Line %d"}]}}`, i))
+	}
+	lines = append(lines, `{"type":"result","session_id":"s","num_turns":1,"total_cost_usd":0.01}`)
+	ccOutput := strings.Join(lines, "\n")
+
+	mock := &mockExecutor{
+		results: []*ExecResult{
+			{ExitCode: 0},
+			{ExitCode: 0},
+			{ExitCode: 0, Stdout: []byte(ccOutput)},
+		},
+		errs: []error{nil, nil, nil},
+	}
+
+	// The first PostEvents call blocks for 50ms. The mockExecutor fires all
+	// 40 StreamStdout sends in nanoseconds during that time. The channel
+	// buffer (32) fills and the remaining events are dropped.
+	poster := &firstCallSlowPoster{delay: 50 * time.Millisecond}
+	gr := &GoRunner{
+		workDir:     workDir,
+		configDir:   configDir,
+		logger:      logr.Discard(),
+		execCmd:     mock,
+		eventPoster: poster,
+	}
+
+	task := newTestTask()
+	result, err := gr.Run(context.Background(), task, "ghp_test_token")
+	require.NoError(t, err)
+	assert.True(t, result.Success)
+
+	poster.mu.Lock()
+	posted := len(poster.calls)
+	poster.mu.Unlock()
+
+	// 40 events sent. Channel buffer is 32, plus at most 1 in-flight = 33 max.
+	// Depending on goroutine scheduling, 32 or 33 events are posted.
+	assert.Less(t, posted, 40, "expected some events to be dropped")
+	assert.Greater(t, posted, 0, "expected at least some events to be posted")
 }
 
 func TestTokenCloneURL(t *testing.T) {

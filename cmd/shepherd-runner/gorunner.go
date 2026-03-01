@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/go-logr/logr"
 
@@ -200,6 +201,22 @@ func (r *GoRunner) Run(ctx context.Context, task runner.TaskData, token string) 
 		"--max-turns", "50",
 		"--max-budget-usd", "10.00",
 	}
+
+	// Async event posting: decouple pipe reader from HTTP latency.
+	// Buffer up to 32 batches; drop if the poster can't keep up.
+	var eventCh chan []api.TaskEvent
+	var wg sync.WaitGroup
+	if eventPoster != nil {
+		eventCh = make(chan []api.TaskEvent, 32)
+		wg.Go(func() {
+			for events := range eventCh {
+				if postErr := eventPoster.PostEvents(ctx, task.TaskID, events); postErr != nil {
+					log.Info("failed to post events", "error", postErr)
+				}
+			}
+		})
+	}
+
 	res, err = r.execCmd.Run(ctx, "claude", ccArgs, ExecOptions{
 		Dir: repoDir,
 		Env: env,
@@ -208,15 +225,24 @@ func (r *GoRunner) Run(ctx context.Context, task runner.TaskData, token string) 
 			if len(events) == 0 {
 				return
 			}
-			if eventPoster == nil {
+			if eventCh == nil {
 				return
 			}
-			// Best-effort: log errors but don't fail the task
-			if postErr := eventPoster.PostEvents(ctx, task.TaskID, events); postErr != nil {
-				log.Info("failed to post events", "error", postErr)
+			select {
+			case eventCh <- events:
+			default:
+				log.Info("event channel full, dropping events", "count", len(events))
 			}
 		},
 	})
+
+	// Drain the event channel: close signals the goroutine to stop,
+	// wg.Wait ensures all queued events are posted before we return.
+	if eventCh != nil {
+		close(eventCh)
+		wg.Wait()
+	}
+
 	if err != nil {
 		return nil, fmt.Errorf("invoking claude: %w", err)
 	}
