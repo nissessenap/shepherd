@@ -18,7 +18,7 @@ GitHub's [App Manifest flow](https://docs.github.com/en/apps/sharing-github-apps
 All three steps must complete within **1 hour**.
 
 {{< callout type="info" >}}
-Shepherd does not host a `/setup` endpoint for the manifest flow. You'll submit the manifests manually via GitHub's web UI and save the returned credentials.
+The manifest flow requires submitting a **form POST** to GitHub — you cannot simply visit a URL and paste JSON. Shepherd ships a small HTML helper page to make this easy, or you can create the apps manually (see [Manual Setup](#manual-setup-alternative) below).
 {{< /callout >}}
 
 ## Step 1: Create the Trigger App
@@ -49,15 +49,43 @@ Replace `<your-adapter-host>` with your adapter's public URL (e.g., your ngrok U
 
 ### Register
 
-1. Go to one of:
-   - **Personal account**: `https://github.com/settings/apps/new?state=trigger`
-   - **Organization**: `https://github.com/organizations/<ORG>/settings/apps/new?state=trigger`
+The manifest must be submitted as a form POST to GitHub. Save the following as an HTML file (e.g., `register-trigger.html`), edit the `webhookUrl` value, then open it in your browser:
 
-2. Paste the manifest JSON into the **manifest** field (if using the API) or fill in the form fields manually matching the manifest above.
+```html
+<html><body>
+<form action="https://github.com/settings/apps/new?state=trigger" method="post">
+  <input type="hidden" name="manifest" id="manifest">
+  <input type="submit" value="Create Shepherd Trigger App">
+</form>
+<script>
+  // Change this to your adapter's public URL
+  const webhookUrl = "https://XXXX.ngrok-free.app/webhook";
 
-3. Click **Create GitHub App**.
+  document.getElementById("manifest").value = JSON.stringify({
+    name: "Shepherd Trigger",
+    url: "https://github.com/NissesSenap/shepherd",
+    hook_attributes: { url: webhookUrl, active: true },
+    public: false,
+    default_permissions: { issues: "write" },
+    default_events: ["issue_comment"]
+  });
+</script>
+</body></html>
+```
 
-4. GitHub redirects you back. The response contains:
+{{< callout type="tip" >}}
+For an **organization app**, change the form action to `https://github.com/organizations/<ORG>/settings/apps/new?state=trigger`.
+{{< /callout >}}
+
+1. Open the HTML file in your browser and click **Create Shepherd Trigger App**.
+2. GitHub shows the pre-filled app creation form — review and click **Create GitHub App**.
+3. GitHub redirects you back. The response URL contains a `code` parameter. Exchange it:
+
+   ```bash
+   curl -s -X POST https://api.github.com/app-manifests/<CODE>/conversions | jq '{id, pem, webhook_secret}'
+   ```
+
+   This returns:
 
    | Field | Use |
    |-------|-----|
@@ -65,11 +93,11 @@ Replace `<your-adapter-host>` with your adapter's public URL (e.g., your ngrok U
    | `pem` | Private key — save to a file |
    | `webhook_secret` | `SHEPHERD_GITHUB_WEBHOOK_SECRET` |
 
-5. **Save all three values** — you'll need them to create Kubernetes secrets.
+4. **Save all three values** — you'll need them to create Kubernetes secrets.
 
 ## Step 2: Create the Runner App
 
-The Runner App generates repository-scoped tokens for runners to clone repos and create PRs.
+The Runner App generates repository-scoped tokens for runners to clone repos and create PRs. It has **no webhook configuration**.
 
 ### Manifest
 
@@ -86,11 +114,31 @@ The Runner App generates repository-scoped tokens for runners to clone repos and
 }
 ```
 
-Note: the Runner App has **no webhook configuration** — it doesn't receive webhooks.
-
 ### Register
 
-Follow the same registration steps as the Trigger App above. Save the returned `id` and `pem`. The Runner App doesn't have a `webhook_secret` since it doesn't receive webhooks.
+Save this as `register-runner.html` and open it in your browser:
+
+```html
+<html><body>
+<form action="https://github.com/settings/apps/new?state=runner" method="post">
+  <input type="hidden" name="manifest" id="manifest">
+  <input type="submit" value="Create Shepherd Runner App">
+</form>
+<script>
+  document.getElementById("manifest").value = JSON.stringify({
+    name: "Shepherd Runner",
+    url: "https://github.com/NissesSenap/shepherd",
+    public: false,
+    default_permissions: { contents: "write", pull_requests: "write" },
+    default_events: []
+  });
+</script>
+</body></html>
+```
+
+1. Click **Create Shepherd Runner App**, review, and confirm.
+2. Exchange the code: `curl -s -X POST https://api.github.com/app-manifests/<CODE>/conversions | jq '{id, pem}'`
+3. Save the returned `id` and `pem`. The Runner App doesn't have a `webhook_secret`.
 
 ## Step 3: Install Both Apps
 
