@@ -3,7 +3,104 @@ title: Building Custom Runners
 weight: 1
 ---
 
-Shepherd runners are containers that execute tasks inside ephemeral sandboxes. The default runner ships with Claude Code, but you can build your own runner in any language — just implement the 5-step protocol.
+Shepherd runners are containers that execute tasks inside ephemeral sandboxes. The default runner ships with Claude Code, but you can customize it or build your own.
+
+There are two approaches, from easiest to most flexible:
+
+1. **Extend the default runner** — copy the existing `shepherd-runner` Go binary into a new container image with your tools. No code to write.
+2. **Build from scratch** — implement the 5-step runner protocol in any language.
+
+## Approach 1: Extend the Default Runner (Recommended)
+
+The easiest way to create a custom runner is to reuse the existing `shepherd-runner` binary. It's a statically-compiled Go binary that handles the entire protocol — task acceptance, API communication, Git cloning, Claude Code invocation, event streaming, and status reporting. Since it's Go, you don't need a Go runtime in your final image — just copy the binary.
+
+All you need is a Dockerfile that starts from whatever base image has your tools and copies the runner binary in.
+
+### Example: Python + Runner
+
+```dockerfile
+FROM ghcr.io/nissessenap/shepherd-runner:latest AS runner
+
+FROM python:3.13-slim
+
+# Install system tools the runner needs
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git bash ca-certificates jq curl make \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Claude Code native binary (no Node.js required)
+RUN curl -fsSL https://claude.ai/install.sh | bash
+
+# Copy the runner binary from the official image
+COPY --from=runner /usr/local/bin/shepherd-runner /usr/local/bin/shepherd-runner
+
+# Install your Python dependencies
+COPY requirements.txt /tmp/
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
+
+# Set up non-root user
+RUN useradd -m -u 1000 shepherd
+USER shepherd
+WORKDIR /workspace
+
+ENTRYPOINT ["shepherd-runner"]
+```
+
+### Example: Node.js + Runner
+
+```dockerfile
+FROM ghcr.io/nissessenap/shepherd-runner:latest AS runner
+
+FROM node:22-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git bash ca-certificates jq curl make \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL https://claude.ai/install.sh | bash
+
+COPY --from=runner /usr/local/bin/shepherd-runner /usr/local/bin/shepherd-runner
+
+# Install your Node.js dependencies
+COPY package*.json /tmp/
+RUN cd /tmp && npm ci --production && mkdir -p /app && mv node_modules /app/
+
+RUN useradd -m -u 1000 shepherd
+USER shepherd
+WORKDIR /workspace
+
+ENTRYPOINT ["shepherd-runner"]
+```
+
+### Why This Works
+
+The `shepherd-runner` binary is self-contained. It:
+
+- Listens on port 8888 and accepts tasks from the operator
+- Fetches task data and GitHub tokens from the API
+- Clones the repo and creates a feature branch
+- Invokes Claude Code in headless mode with the task description
+- Streams events to the web UI in real time
+- Reports completion or failure back to the API
+
+By placing it in a container that also has Python, Node.js, or any other runtime, Claude Code can use those tools when working on the task. You get the full Shepherd integration for free — no protocol reimplementation needed.
+
+### Building and Using
+
+Build your image and push it:
+
+```bash
+docker build -t ghcr.io/your-org/shepherd-runner-python:latest .
+docker push ghcr.io/your-org/shepherd-runner-python:latest
+```
+
+Then create a SandboxTemplate that references it (see [SandboxTemplate for Custom Runners](#sandboxtemplate-for-custom-runners) below).
+
+---
+
+## Approach 2: Build From Scratch
+
+If you need full control over the runner behavior — for example, to use a different AI model, skip Claude Code entirely, or implement custom task logic — you can build a runner from scratch in any language by implementing the 5-step protocol.
 
 ## Runner Protocol
 
@@ -152,9 +249,9 @@ The `event` field must be one of:
 
 On `completed`, include `details.pr_url` if a pull request was created. On `failed`, include `details.error` with the error message.
 
-## Complete Examples
+### Complete Examples
 
-### Python Runner (Flask)
+#### Python Runner (Flask)
 
 ```python
 from flask import Flask, request, jsonify
@@ -200,7 +297,7 @@ def execute_task(task_id, api_url):
               "details": {"pr_url": "https://github.com/..."}})
 ```
 
-### Node.js Runner (Express)
+#### Node.js Runner (Express)
 
 ```javascript
 import express from 'express';
