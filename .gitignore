@@ -42,3 +42,4 @@ config/crd/external/
 docs/public/
 docs/resources/
 docs/static/openapi.yaml
+docs/.hugo_build.lock
