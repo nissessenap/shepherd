@@ -1,0 +1,35 @@
+baseURL: "https://nissessenap.github.io/shepherd/"
+title: "Shepherd"
+enableGitInfo: true
+
+module:
+  imports:
+    - path: github.com/imfing/hextra
+
+markup:
+  goldmark:
+    renderer:
+      unsafe: true # Required for Swagger UI shortcode
+
+params:
+  navbar:
+    displayTitle: true
+    displayLogo: false
+  theme:
+    default: system
+    displayToggle: true
+  page:
+    width: normal
+  editURL:
+    base: "https://github.com/NissesSenap/shepherd/edit/main/docs/content"
+
+menu:
+  main:
+    - name: Documentation
+      pageRef: /docs
+      weight: 1
+    - name: GitHub
+      url: "https://github.com/NissesSenap/shepherd"
+      weight: 5
+      params:
+        icon: github

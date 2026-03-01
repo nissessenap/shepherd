@@ -37,3 +37,9 @@ test/e2e/testrunner/testrunner
 
 # External CRDs copied from module cache for envtest
 config/crd/external/
+
+# Hugo documentation build artifacts
+docs/public/
+docs/resources/
+docs/static/openapi.yaml
+docs/.hugo_build.lock
