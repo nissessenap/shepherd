@@ -117,6 +117,42 @@ describe("classifyMessage", () => {
 		});
 	});
 
+	it("out-of-order sequence [1, 3, 2]: detects gap on 3, skips 2 as stale", () => {
+		// Event 1 arrives normally
+		const r1 = classifyMessage(taskEvent(1), 0, 0, MAX_GAP);
+		expect(r1.action).toEqual({ type: "append", event: taskEvent(1).data });
+
+		// Event 3 arrives before 2 — gap detected (lastSequence=1, got 3)
+		const r2 = classifyMessage(taskEvent(3), 1, r1.newGapReconnectCount, MAX_GAP);
+		expect(r2.action).toEqual({ type: "reconnect", fromSequence: 1 });
+		expect(r2.newGapReconnectCount).toBe(1);
+
+		// After reconnect fills the gap, lastSequence is now 3.
+		// Late event 2 arrives — already seen, should be skipped
+		const r3 = classifyMessage(taskEvent(2), 3, 0, MAX_GAP);
+		expect(r3.action).toEqual({ type: "skip" });
+	});
+
+	it("out-of-order with exhausted retries: accepts gap and continues", () => {
+		// Simulate repeated out-of-order where reconnects can't fill the gap
+		// After MAX_GAP reconnect attempts, the gap is accepted
+		const r1 = classifyMessage(taskEvent(1), 0, 0, MAX_GAP);
+		expect(r1.action.type).toBe("append");
+
+		// Event 5 arrives (gap of 3), exhaust all reconnect attempts
+		let gapCount = 0;
+		for (let i = 0; i < MAX_GAP; i++) {
+			const r = classifyMessage(taskEvent(5), 1, gapCount, MAX_GAP);
+			expect(r.action).toEqual({ type: "reconnect", fromSequence: 1 });
+			gapCount = r.newGapReconnectCount;
+		}
+		expect(gapCount).toBe(MAX_GAP);
+
+		// Next attempt with exhausted retries — accepts the gap
+		const rFinal = classifyMessage(taskEvent(5), 1, gapCount, MAX_GAP);
+		expect(rFinal.action).toEqual({ type: "append", event: taskEvent(5).data });
+	});
+
 	it("unknown message type -> skip", () => {
 		const msg = { type: "unknown_type", data: {} } as unknown as WSMessage;
 		const { action } = classifyMessage(msg, 0, 0, MAX_GAP);

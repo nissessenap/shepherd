@@ -210,6 +210,11 @@ func (r *GoRunner) Run(ctx context.Context, task runner.TaskData, token string) 
 		eventCh = make(chan []api.TaskEvent, 32)
 		wg.Go(func() {
 			for events := range eventCh {
+				// Skip posting when context is cancelled to avoid
+				// blocking drain for up to 30s per buffered batch.
+				if ctx.Err() != nil {
+					continue
+				}
 				if postErr := eventPoster.PostEvents(ctx, task.TaskID, events); postErr != nil {
 					log.Info("failed to post events", "error", postErr)
 				}
