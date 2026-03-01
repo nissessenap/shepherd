@@ -130,6 +130,22 @@ web-e2e: ## Run Playwright E2E tests against deployed stack.
 web-e2e-install: ## Install Playwright browsers.
 	cd web && npx playwright install chromium
 
+##@ Documentation
+
+.PHONY: docs-serve
+docs-serve: ## Start Hugo dev server for documentation.
+	cd docs && hugo server --buildDrafts --disableFastRender
+
+.PHONY: docs-build
+docs-build: ## Build documentation site for production.
+	cd docs && hugo build --gc --minify
+
+.PHONY: docs-sync-openapi
+docs-sync-openapi: ## Copy OpenAPI spec to docs static directory.
+	@mkdir -p docs/static
+	cp api/openapi.yaml docs/static/openapi.yaml
+	@echo "Synced api/openapi.yaml → docs/static/openapi.yaml"
+
 ##@ E2E Testing
 
 .PHONY: test-e2e

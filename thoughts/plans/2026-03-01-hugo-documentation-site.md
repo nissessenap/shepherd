@@ -252,11 +252,11 @@ jobs:
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `cd docs && hugo mod get` succeeds (theme resolves)
-- [ ] `make docs-build` completes without errors
-- [ ] `make docs-sync-openapi` copies the file successfully
-- [ ] `make help` shows the new `docs-*` targets
-- [ ] `.github/workflows/hugo.yaml` is valid YAML
+- [x] `cd docs && hugo mod get` succeeds (theme resolves)
+- [x] `make docs-build` completes without errors
+- [x] `make docs-sync-openapi` copies the file successfully
+- [x] `make help` shows the new `docs-*` targets
+- [x] `.github/workflows/hugo.yaml` is valid YAML
 
 #### Manual Verification:
 - [ ] `make docs-serve` shows the site at `http://localhost:1313/shepherd/`
