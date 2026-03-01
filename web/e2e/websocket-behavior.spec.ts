@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { API_WAIT } from "./helpers.ts";
 
 /**
  * These tests use Playwright's page.routeWebSocket() to test WebSocket
@@ -68,17 +69,17 @@ test("reconnects after WebSocket disconnect", async ({ page }) => {
 
 	// Verify first event appears
 	await expect(page.getByText("First connection event")).toBeVisible({
-		timeout: 10_000,
+		timeout: API_WAIT,
 	});
 
 	// Verify "Reconnecting..." indicator appears after disconnect
 	await expect(page.getByText("Reconnecting...")).toBeVisible({
-		timeout: 10_000,
+		timeout: API_WAIT,
 	});
 
 	// Verify reconnected event arrives
 	await expect(page.getByText("Reconnected event")).toBeVisible({
-		timeout: 10_000,
+		timeout: API_WAIT,
 	});
 });
 
@@ -109,7 +110,8 @@ test("shows disconnected state after max retries", async ({ page }) => {
 
 	// After max retries (5 attempts with exponential backoff),
 	// the connection indicator should show "Disconnected"
-	await expect(page.getByText("Disconnected")).toBeVisible({
+	await expect(page.getByText("Disconnected", { exact: true })).toBeVisible({
 		timeout: 60_000,
 	});
 });
+

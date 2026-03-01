@@ -5,6 +5,7 @@ import {
 	formatDuration,
 	formatRelativeTime,
 } from "$lib/format.js";
+import { LiveTick } from "$lib/live-tick.svelte.js";
 import StatusBadge from "./StatusBadge.svelte";
 
 type TaskResponse = components["schemas"]["TaskResponse"];
@@ -20,19 +21,11 @@ const isActive = $derived(
 	task.status.phase === "Running" || task.status.phase === "Pending",
 );
 
-let now = $state(Date.now());
-
-$effect(() => {
-	if (!isActive) return;
-	const interval = setInterval(() => {
-		now = Date.now();
-	}, 1000);
-	return () => clearInterval(interval);
-});
+const tick = new LiveTick(() => isActive);
 
 const duration = $derived.by(() => {
-	// Force reactivity on `now` for active tasks
-	if (isActive) void now;
+	// Force reactivity on tick.now for active tasks
+	if (isActive) void tick.now;
 	return formatDuration(task.createdAt, task.completionTime);
 });
 

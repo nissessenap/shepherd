@@ -47,6 +47,11 @@ describe("backoffDelay", () => {
 			}
 		}
 	});
+
+	it("attempt -1 returns a value (does not throw)", () => {
+		const d = backoffDelay(-1);
+		expect(Number.isFinite(d)).toBe(true);
+	});
 });
 
 describe("buildWSUrl", () => {
@@ -74,5 +79,13 @@ describe("buildWSUrl", () => {
 
 	it("handles after=1 (minimum positive value)", () => {
 		expect(buildWSUrl("ws://host/path", 1)).toBe("ws://host/path?after=1");
+	});
+
+	it("handles empty base URL", () => {
+		expect(buildWSUrl("", 5)).toBe("?after=5");
+	});
+
+	it("handles base URL that is just a question mark", () => {
+		expect(buildWSUrl("?", 5)).toBe("?&after=5");
 	});
 });

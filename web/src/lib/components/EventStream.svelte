@@ -69,8 +69,6 @@ function scrollToBottom() {
 		onscroll={onScroll}
 		class="flex-1 overflow-y-auto bg-canvas-inset p-3"
 		style="max-height: 600px;"
-		role="log"
-		aria-live="polite"
 	>
 		{#if events.length === 0}
 			<div class="py-8 text-center text-sm text-fg-dim">

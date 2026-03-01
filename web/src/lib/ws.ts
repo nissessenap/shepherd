@@ -93,8 +93,10 @@ export class WSClient<T> {
 			try {
 				const msg = JSON.parse(ev.data as string) as T;
 				this.opts.onMessage(msg);
-			} catch {
-				// Ignore unparseable messages
+			} catch (e) {
+				if (import.meta.env.DEV) {
+					console.warn("[WSClient] Failed to parse message:", e);
+				}
 			}
 		};
 

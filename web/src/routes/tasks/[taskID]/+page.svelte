@@ -11,6 +11,7 @@ import {
 	formatDuration,
 	formatRelativeTime,
 } from "$lib/format.js";
+import { LiveTick } from "$lib/live-tick.svelte.js";
 import { TaskDetailStore } from "$lib/task-detail.svelte.js";
 import { TaskStream } from "$lib/task-stream.svelte.js";
 
@@ -26,18 +27,11 @@ const isSucceeded = $derived(phase === "Succeeded");
 const isFailed = $derived(phase === "Failed" || phase === "TimedOut");
 
 // Live duration tick for running tasks
-let now = $state(Date.now());
-$effect(() => {
-	if (!isRunning) return;
-	const interval = setInterval(() => {
-		now = Date.now();
-	}, 1000);
-	return () => clearInterval(interval);
-});
+const tick = new LiveTick(() => isRunning);
 
 const duration = $derived.by(() => {
 	if (!task) return "";
-	if (isRunning) void now;
+	if (isRunning) void tick.now;
 	return formatDuration(task.createdAt, task.completionTime);
 });
 
@@ -71,6 +65,8 @@ const lastToolAction = $derived.by(() => {
 });
 </script>
 
+<svelte:head><title>{task?.task.description ?? "Task"} - Shepherd</title></svelte:head>
+
 <main class="mx-auto max-w-[1200px] px-4 py-6">
 	<div class="mb-4">
 		<Breadcrumb {taskID} />
@@ -82,7 +78,15 @@ const lastToolAction = $derived.by(() => {
 		<div
 			class="rounded-md border border-danger-fg/30 bg-danger-fg/5 px-4 py-3 text-sm text-danger-fg"
 		>
-			{detail.error}
+			<div class="flex items-center justify-between gap-3">
+				<span>{detail.error}</span>
+				<button
+					onclick={() => detail.load(taskID)}
+					class="shrink-0 rounded-md border border-danger-fg/30 px-2 py-1 text-xs hover:bg-danger-fg/10"
+				>
+					Retry
+				</button>
+			</div>
 		</div>
 	{:else if task}
 		<!-- Header: status + metadata -->
@@ -130,6 +134,21 @@ const lastToolAction = $derived.by(() => {
 				<div class="text-fg-muted">Waiting for sandbox...</div>
 				<div class="mt-1 text-xs text-fg-dim">
 					The task will start once a runner picks it up.
+				</div>
+			</div>
+		{/if}
+
+		<!-- Stream connection lost -->
+		{#if stream.streamPhase === "error"}
+			<div class="mb-4 rounded-md border border-attention-fg/30 bg-attention-fg/5 px-4 py-3 text-sm text-attention-fg">
+				<div class="flex items-center justify-between gap-3">
+					<span>Connection lost — event stream disconnected after multiple retries.</span>
+					<button
+						onclick={() => window.location.reload()}
+						class="shrink-0 rounded-md border border-attention-fg/30 px-2 py-1 text-xs hover:bg-attention-fg/10"
+					>
+						Reload
+					</button>
 				</div>
 			</div>
 		{/if}
