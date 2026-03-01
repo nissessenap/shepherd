@@ -211,10 +211,14 @@ func (r *GoRunner) Run(ctx context.Context, task runner.TaskData, token string) 
 			if eventPoster == nil {
 				return
 			}
-			// Best-effort: log errors but don't fail the task
-			if postErr := eventPoster.PostEvents(ctx, task.TaskID, events); postErr != nil {
-				log.Info("failed to post events", "error", postErr)
-			}
+			// Fire-and-forget: post events asynchronously to avoid blocking
+			// the stdout pipe. EventHub sorts by sequence on the server side
+			// to handle out-of-order delivery.
+			go func() {
+				if postErr := eventPoster.PostEvents(ctx, task.TaskID, events); postErr != nil {
+					log.Info("failed to post events", "error", postErr)
+				}
+			}()
 		},
 	})
 	if err != nil {
