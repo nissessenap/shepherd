@@ -31,6 +31,7 @@ The Trigger App receives webhooks and posts comments on issues.
 {
   "name": "Shepherd Trigger",
   "url": "https://github.com/NissesSenap/shepherd",
+  "redirect_url": "https://github.com/NissesSenap/shepherd",
   "hook_attributes": {
     "url": "https://<your-adapter-host>/webhook",
     "active": true
@@ -64,6 +65,7 @@ The manifest must be submitted as a form POST to GitHub. Save the following as a
   document.getElementById("manifest").value = JSON.stringify({
     name: "Shepherd Trigger",
     url: "https://github.com/NissesSenap/shepherd",
+    redirect_url: "https://github.com/NissesSenap/shepherd",
     hook_attributes: { url: webhookUrl, active: true },
     public: false,
     default_permissions: { issues: "write" },
@@ -79,7 +81,7 @@ For an **organization app**, change the form action to `https://github.com/organ
 
 1. Open the HTML file in your browser and click **Create Shepherd Trigger App**.
 2. GitHub shows the pre-filled app creation form — review and click **Create GitHub App**.
-3. GitHub redirects you back. The response URL contains a `code` parameter. Exchange it:
+3. GitHub redirects to the `redirect_url` with a `?code=` query parameter in the address bar (e.g., `https://github.com/NissesSenap/shepherd?code=abc123`). Copy the code value and exchange it:
 
    ```bash
    curl -s -X POST https://api.github.com/app-manifests/<CODE>/conversions | jq '{id, pem, webhook_secret}'
@@ -105,6 +107,7 @@ The Runner App generates repository-scoped tokens for runners to clone repos and
 {
   "name": "Shepherd Runner",
   "url": "https://github.com/NissesSenap/shepherd",
+  "redirect_url": "https://github.com/NissesSenap/shepherd",
   "public": false,
   "default_permissions": {
     "contents": "write",
@@ -128,6 +131,7 @@ Save this as `register-runner.html` and open it in your browser:
   document.getElementById("manifest").value = JSON.stringify({
     name: "Shepherd Runner",
     url: "https://github.com/NissesSenap/shepherd",
+    redirect_url: "https://github.com/NissesSenap/shepherd",
     public: false,
     default_permissions: { contents: "write", pull_requests: "write" },
     default_events: []
