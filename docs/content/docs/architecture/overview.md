@@ -204,4 +204,4 @@ The status watcher is a backup callback mechanism that runs inside the API serve
 
 - [GitHub Apps Explained]({{< relref "github-apps" >}}) — why Shepherd uses two GitHub Apps
 - [Quickstart]({{< relref "../getting-started/quickstart" >}}) — get it running locally
-- [Deployment Guide](../setup/deployment/) — production deployment
+- [Deployment Guide](../../setup/deployment/) — production deployment

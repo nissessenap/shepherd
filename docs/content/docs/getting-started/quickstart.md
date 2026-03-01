@@ -170,7 +170,7 @@ smee.io only relays webhooks, which is exactly what you need. The permanent chan
 
 Once your tunnel is running:
 
-1. **Create GitHub Apps** using the manifest flow described in the [GitHub App Setup](../setup/github-app-setup/) guide. Use your ngrok/smee URL + `/webhook` as the webhook URL.
+1. **Create GitHub Apps** using the manifest flow described in the [GitHub App Setup](../../setup/github-app-setup/) guide. Use your ngrok/smee URL + `/webhook` as the webhook URL.
 
 2. **Store credentials** as Kubernetes secrets:
 
@@ -203,5 +203,5 @@ Once your tunnel is running:
 ## Next Steps
 
 - [Architecture Overview]({{< relref "../architecture/overview" >}}) — understand how the components fit together
-- [GitHub App Setup](../setup/github-app-setup/) — detailed guide for creating the two GitHub Apps
-- [Deployment Guide](../setup/deployment/) — production deployment with Kustomize
+- [GitHub App Setup](../../setup/github-app-setup/) — detailed guide for creating the two GitHub Apps
+- [Deployment Guide](../../setup/deployment/) — production deployment with Kustomize

@@ -127,6 +127,6 @@ This ensures that only the API server (or someone with the shared secret) can tr
 
 ## Next Steps
 
-- [GitHub App Setup](../setup/github-app-setup/) — step-by-step guide to creating both apps
+- [GitHub App Setup](../../setup/github-app-setup/) — step-by-step guide to creating both apps
 - [Architecture Overview]({{< relref "overview" >}}) — how all components fit together
-- [Troubleshooting](../troubleshooting/) — common issues with GitHub App configuration
+- [Troubleshooting](../../troubleshooting/) — common issues with GitHub App configuration
