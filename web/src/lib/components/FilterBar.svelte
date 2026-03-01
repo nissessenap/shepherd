@@ -2,6 +2,7 @@
 import { goto } from "$app/navigation";
 import { page } from "$app/state";
 import type { components } from "$lib/api.js";
+import { repoUrlToLabel } from "$lib/filters.js";
 
 type TaskResponse = components["schemas"]["TaskResponse"];
 
@@ -92,7 +93,7 @@ function onRepoChange(e: Event) {
 		>
 			<option value="">All repos</option>
 			{#each repos as repo}
-				<option value={repo}>{repo.replace(/^https:\/\/github\.com\//, "")}</option>
+				<option value={repoUrlToLabel(repo)}>{repo.replace(/^https:\/\/github\.com\//, "")}</option>
 			{/each}
 		</select>
 	{/if}

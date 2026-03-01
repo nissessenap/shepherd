@@ -19,6 +19,28 @@ export function buildFilters(searchParams: URLSearchParams): TaskFilters {
 }
 
 /**
+ * Convert a repo URL or path to a Kubernetes label-compatible value.
+ * Strips URL scheme/host, removes trailing .git, and replaces slashes with dashes.
+ * NOTE: keep in sync with pkg/api/handler_tasks.go:normalizeRepoFilter
+ *
+ * Examples:
+ *   "https://github.com/org/repo"     → "org-repo"
+ *   "https://github.com/org/repo.git" → "org-repo"
+ *   "org/repo"                        → "org-repo"
+ *   "org-repo"                        → "org-repo"
+ */
+export function repoUrlToLabel(url: string): string {
+	let value: string;
+	try {
+		const parsed = new URL(url);
+		value = parsed.pathname.replace(/^\//, "").replace(/\.git$/, "");
+	} catch {
+		value = url;
+	}
+	return value.replace(/\//g, "-");
+}
+
+/**
  * Client-side search filter over tasks by description, repo URL, or ID.
  */
 export function filterTasks(

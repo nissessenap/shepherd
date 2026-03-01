@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -51,6 +52,29 @@ func validateLabelValue(value string) error {
 		return fmt.Errorf("label value contains invalid characters or format")
 	}
 	return nil
+}
+
+// normalizeRepoFilter converts a repo filter value to a valid Kubernetes label value.
+// It handles full URLs (https://github.com/org/repo), slash forms (org/repo),
+// and already-valid label values (org-repo).
+// NOTE: keep in sync with web/src/lib/filters.ts:repoUrlToLabel
+func normalizeRepoFilter(value string) (string, error) {
+	if strings.HasPrefix(value, "https://") || strings.HasPrefix(value, "http://") {
+		u, err := url.Parse(value)
+		if err != nil {
+			return "", fmt.Errorf("invalid repo filter URL: %w", err)
+		}
+		value = strings.TrimPrefix(u.Path, "/")
+		value = strings.TrimSuffix(value, ".git")
+	}
+	value = strings.ReplaceAll(value, "/", "-")
+	if value == "" {
+		return "", fmt.Errorf("repo filter is empty after normalization")
+	}
+	if err := validateLabelValue(value); err != nil {
+		return "", fmt.Errorf("repo filter is not a valid label value: %w", err)
+	}
+	return value, nil
 }
 
 // taskHandler holds dependencies for task endpoints.
@@ -247,12 +271,25 @@ func (h *taskHandler) listTasks(w http.ResponseWriter, r *http.Request) {
 	// Build label selector from query params
 	labelSelector := map[string]string{}
 	if repo := r.URL.Query().Get("repo"); repo != "" {
-		labelSelector["shepherd.io/repo"] = repo
+		normalized, err := normalizeRepoFilter(repo)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid repo filter", err.Error())
+			return
+		}
+		labelSelector["shepherd.io/repo"] = normalized
 	}
 	if issue := r.URL.Query().Get("issue"); issue != "" {
+		if err := validateLabelValue(issue); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid issue filter", err.Error())
+			return
+		}
 		labelSelector["shepherd.io/issue"] = issue
 	}
 	if fleet := r.URL.Query().Get("fleet"); fleet != "" {
+		if err := validateLabelValue(fleet); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid fleet filter", err.Error())
+			return
+		}
 		labelSelector["shepherd.io/fleet"] = fleet
 	}
 	if len(labelSelector) > 0 {

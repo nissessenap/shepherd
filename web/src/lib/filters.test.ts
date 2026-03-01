@@ -5,6 +5,7 @@ import {
 	computeStats,
 	filterTasks,
 	getStatusConfig,
+	repoUrlToLabel,
 } from "./filters.js";
 
 type TaskResponse = components["schemas"]["TaskResponse"];
@@ -22,6 +23,37 @@ function makeTask(overrides: Partial<TaskResponse> = {}): TaskResponse {
 		...overrides,
 	};
 }
+
+// ---------------------------------------------------------------------------
+// repoUrlToLabel
+// ---------------------------------------------------------------------------
+describe("repoUrlToLabel", () => {
+	it("converts full GitHub URL to label form", () => {
+		expect(repoUrlToLabel("https://github.com/org/repo")).toBe("org-repo");
+	});
+
+	it("strips .git suffix from URL", () => {
+		expect(repoUrlToLabel("https://github.com/org/repo.git")).toBe("org-repo");
+	});
+
+	it("handles non-GitHub URLs", () => {
+		expect(repoUrlToLabel("https://gitlab.com/org/repo")).toBe("org-repo");
+	});
+
+	it("converts slash form to dash form", () => {
+		expect(repoUrlToLabel("org/repo")).toBe("org-repo");
+	});
+
+	it("passes through already-valid label values", () => {
+		expect(repoUrlToLabel("org-repo")).toBe("org-repo");
+	});
+
+	it("handles deep paths", () => {
+		expect(repoUrlToLabel("https://github.com/org/sub/repo")).toBe(
+			"org-sub-repo",
+		);
+	});
+});
 
 // ---------------------------------------------------------------------------
 // buildFilters
