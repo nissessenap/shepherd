@@ -3,7 +3,7 @@
 <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
 <script>
 SwaggerUIBundle({
-  url: "{{ .Get "src" }}",
+  url: "{{ trim (.Get "src") "/" | relURL }}",
   dom_id: '#swagger-ui',
   presets: [SwaggerUIBundle.presets.apis],
   layout: "BaseLayout"
