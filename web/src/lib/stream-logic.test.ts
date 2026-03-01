@@ -123,7 +123,12 @@ describe("classifyMessage", () => {
 		expect(r1.action).toEqual({ type: "append", event: taskEvent(1).data });
 
 		// Event 3 arrives before 2 — gap detected (lastSequence=1, got 3)
-		const r2 = classifyMessage(taskEvent(3), 1, r1.newGapReconnectCount, MAX_GAP);
+		const r2 = classifyMessage(
+			taskEvent(3),
+			1,
+			r1.newGapReconnectCount,
+			MAX_GAP,
+		);
 		expect(r2.action).toEqual({ type: "reconnect", fromSequence: 1 });
 		expect(r2.newGapReconnectCount).toBe(1);
 
