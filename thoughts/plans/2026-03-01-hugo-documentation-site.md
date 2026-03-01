@@ -38,7 +38,7 @@ Set up a Hugo documentation site using the Hextra theme, deploy it to GitHub Pag
 - Not auto-generating API reference from OpenAPI (using Swagger UI embed instead)
 - Not adding versioned docs (single version for now)
 - Not adding search configuration beyond Hextra's built-in FlexSearch
-- Not writing the ngrok/smee quickstart section (the quickstart covers local-only testing via `make deploy-test`)
+- Not hosting a `/setup` endpoint for the manifest flow (docs-only, no code changes)
 
 ## Implementation Approach
 
@@ -278,7 +278,9 @@ Write full content for the quickstart guide, architecture overview, and GitHub A
 #### 1. Quickstart page
 **File**: `docs/content/docs/getting-started/quickstart.md`
 
-Full content covering:
+Full content covering two parts:
+
+**Part 1 — Local-only testing (no GitHub App required):**
 - Prerequisites: Kind, kubectl, ko, Docker, Go 1.25+, Node.js 22+
 - Create Kind cluster: `make kind-create`
 - Build and load images: `make ko-build-kind`
@@ -290,7 +292,36 @@ Full content covering:
 - Frontend dev mode: `make web-dev`
 - Note about test overlay (no GitHub App required, token endpoint returns 503)
 
-Source: Research doc lines 45-56, 713-727.
+**Part 2 — Connecting to GitHub (ngrok / smee):**
+
+After the local-only section, a "Next: Connect to GitHub" section walks through exposing the local cluster to receive real GitHub webhooks.
+
+**Option A: ngrok (recommended for full-stack)**
+- Install ngrok, authenticate with free account
+- `ngrok http 8082` to tunnel to the GitHub adapter
+- Note the `https://XXXX.ngrok-free.app` URL
+- Use this as the webhook URL when creating the GitHub App (link to GitHub App Setup page)
+- Multi-port config (`ngrok.yml`) for exposing both adapter and API
+- Gotchas: HMAC signatures pass through unchanged, browser interstitial doesn't affect webhooks, inspection UI at `http://127.0.0.1:4040`
+- Free tier caveat: random subdomain changes on restart
+
+**Option B: smee.io (webhook-only, simpler)**
+- `npm install -g smee-client`
+- Create a channel at https://smee.io
+- `smee --url https://smee.io/YOUR_CHANNEL_ID --path /webhook --port 8082`
+- Trade-off: only relays webhooks, can't expose API or web UI
+- Advantage: permanent channel URL (no restart problem)
+
+**Full end-to-end flow:**
+1. Start ngrok/smee
+2. Create GitHub Apps using manifests (link to GitHub App Setup page)
+3. Store credentials as K8s secrets
+4. Redeploy with GitHub App configuration (not the test overlay)
+5. Install apps on target repo
+6. Comment `@shepherd do something` on an issue
+7. Watch the task appear in the web UI
+
+Source: Research doc lines 45-56, 652-727.
 
 #### 2. Architecture overview page
 **File**: `docs/content/docs/architecture/overview.md`
