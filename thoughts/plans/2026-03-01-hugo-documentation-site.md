@@ -421,7 +421,7 @@ Source: Research doc lines 167-177.
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `make docs-build` completes without errors
+- [x] `make docs-build` completes without errors
 
 #### Manual Verification:
 - [ ] GitHub App setup guide has correct manifest JSON
