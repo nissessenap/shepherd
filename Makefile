@@ -137,7 +137,7 @@ docs-serve: ## Start Hugo dev server for documentation.
 	cd docs && hugo server --buildDrafts --disableFastRender
 
 .PHONY: docs-build
-docs-build: ## Build documentation site for production.
+docs-build: docs-sync-openapi ## Build documentation site for production.
 	cd docs && hugo build --gc --minify
 
 .PHONY: docs-sync-openapi

@@ -509,8 +509,8 @@ docs-build: docs-sync-openapi ## Build documentation site for production.
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `make docs-build` completes without errors (includes OpenAPI sync)
-- [ ] `docs/static/openapi.yaml` is generated
+- [x] `make docs-build` completes without errors (includes OpenAPI sync)
+- [x] `docs/static/openapi.yaml` is generated
 
 #### Manual Verification:
 - [ ] Custom runners page has working Python and Node.js examples
