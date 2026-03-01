@@ -16,7 +16,7 @@ Common issues and their solutions when working with Shepherd.
 | GitHub Adapter (`shepherd github`) | **Trigger App** — receives webhooks, posts comments |
 | API Server (`shepherd api`) | **Runner App** — generates installation tokens for runners |
 
-**Fix**: Verify that each deployment mounts the correct app's credentials. See [GitHub Apps Explained](architecture/github-apps/) for details on the two-app model.
+**Fix**: Verify that each deployment mounts the correct app's credentials. See [GitHub Apps Explained](../architecture/github-apps/) for details on the two-app model.
 
 ## Token Endpoint Returns 503
 
@@ -28,7 +28,7 @@ Common issues and their solutions when working with Shepherd.
 
 **Cause**: The API server was started without GitHub App credentials. The three flags (`--github-app-id`, `--github-installation-id`, `--github-private-key-path`) are all-or-nothing — all three must be set or the token endpoint is disabled.
 
-**Fix**: Set all three environment variables or flags for the Runner App. See [Configuration Reference](setup/configuration/#api-server-shepherd-api).
+**Fix**: Set all three environment variables or flags for the Runner App. See [Configuration Reference](../setup/configuration/#api-server-shepherd-api).
 
 ## Token Endpoint Returns 409
 
@@ -107,5 +107,5 @@ Never hand-edit `api.d.ts` — always regenerate it.
 
 ## Next Steps
 
-- [Configuration Reference](setup/configuration/) — full list of flags and environment variables
-- [Contributing](contributing/) — development workflow and conventions
+- [Configuration Reference](../setup/configuration/) — full list of flags and environment variables
+- [Contributing](../contributing/) — development workflow and conventions
