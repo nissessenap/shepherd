@@ -90,22 +90,6 @@ kubectl get agenttask <task-name> -n shepherd-system -o jsonpath='{.status.condi
 
 **Fix**: Verify that `SHEPHERD_CALLBACK_SECRET` is identical on both the API server and adapter. Check that the callback URL resolves from within the cluster.
 
-## golangci-lint Failures
-
-**Symptom**: `make lint-fix` fails with unused code errors.
-
-**Cause**: golangci-lint v2 is strict about unused functions, variables, and imports. This commonly happens when scaffolding code before it's wired to routes.
-
-**Fix**: Only add functions in the phase where they're actually called. If you're building incrementally, defer unused code to later commits.
-
-## `go mod tidy` Removes Packages
-
-**Symptom**: `go mod tidy` removes a dependency you just added.
-
-**Cause**: `go mod tidy` removes packages that aren't imported by any Go source file. If you added a dependency to `go.mod` but haven't written code that imports it yet, `tidy` will remove it.
-
-**Fix**: Add the import in the same commit as the `go.mod` change. Don't pre-add dependencies before they're used.
-
 ## Frontend Type Errors After API Changes
 
 **Symptom**: TypeScript errors in the web frontend after modifying `api/openapi.yaml`.
