@@ -9,6 +9,7 @@ tags: [research, documentation, hugo, github-pages, github-apps, runner-api, arc
 status: complete
 last_updated: 2026-03-01
 last_updated_by: claude
+last_updated_note: "Added Hugo setup research, ngrok/smee quickstart section, theme comparison, GitHub Pages settings, and GitHub Actions workflow"
 ---
 
 # Research: Documentation Site Planning
@@ -32,6 +33,7 @@ Based on thorough codebase analysis, the documentation site should have **9 core
 ### Section 1: Getting Started
 
 #### Page 1: Introduction / Home (`_index.md`)
+
 - What Shepherd is: background coding agent orchestrator on Kubernetes
 - The problem it solves: automated code changes triggered from GitHub issues
 - High-level flow: `@shepherd` comment → task → sandbox → PR
@@ -39,7 +41,9 @@ Based on thorough codebase analysis, the documentation site should have **9 core
 - Links to quickstart and architecture pages
 
 #### Page 2: Quickstart (`quickstart.md`)
+
 Content available from codebase:
+
 - **Prerequisites**: Kind, kubectl, ko, Docker, Go 1.25+, Node.js 22+
 - **Local development cluster setup**: `make kind-create` uses `test/e2e/kind-config.yaml` (single node, ports 30080/30081)
 - **Build and load images**: `make ko-build-kind` builds 3 images (shepherd, shepherd-runner, shepherd-web) and loads into Kind
@@ -54,7 +58,9 @@ Content available from codebase:
 ### Section 2: Architecture & Concepts
 
 #### Page 3: Architecture Overview (`architecture.md`)
+
 Content available from codebase:
+
 - **Component diagram**: 4 deployments (operator, API server, GitHub adapter, web frontend) + ephemeral runner sandboxes
 - **Two-port API architecture**: public `:8080` (adapters, UI) and internal `:8081` (runners only, NetworkPolicy-protected)
 - **Full task lifecycle flow** (12 steps documented in detail from codebase analysis):
@@ -74,7 +80,9 @@ Content available from codebase:
 - **Status watcher**: backup callback mechanism with 5-minute TTL for stale CallbackPending conditions
 
 #### Page 4: GitHub Apps Explained (`github-apps.md`)
+
 Content available from codebase:
+
 - **Why two apps**: separation of concerns — Trigger App reads webhooks/posts comments, Runner App generates repo-scoped tokens
 - **Trigger App** (GitHub adapter):
   - Permissions: Issues (read/write)
@@ -92,9 +100,11 @@ Content available from codebase:
 ### Section 3: Setup & Configuration
 
 #### Page 5: GitHub App Setup with Manifests (`github-app-setup.md`)
+
 Content available from GitHub docs + codebase analysis:
 
 **Trigger App Manifest**:
+
 ```json
 {
   "name": "Shepherd Trigger",
@@ -115,6 +125,7 @@ Content available from GitHub docs + codebase analysis:
 ```
 
 **Runner App Manifest**:
+
 ```json
 {
   "name": "Shepherd Runner",
@@ -136,7 +147,9 @@ Content available from GitHub docs + codebase analysis:
 - **Installation**: install each app on the target repos/org
 
 #### Page 6: Deployment & Configuration (`deployment.md`)
+
 Content available from codebase:
+
 - **Prerequisites**: Kubernetes cluster, cert-manager (optional), agent-sandbox operator
 - **Kustomize structure**: `config/default/` composes CRD + RBAC + operator + API + web
 - **Installing CRDs**: `make install` (includes AgentTask CRD, external sandbox CRDs for envtest only)
@@ -152,7 +165,9 @@ Content available from codebase:
 - **Optional**: Prometheus ServiceMonitor, NetworkPolicy for metrics
 
 #### Page 7: Configuration Reference (`configuration.md`)
+
 Content available from codebase:
+
 - **CLI flags and env vars**: complete table for each subcommand (`api`, `operator`, `github`)
 - **AgentTask CRD spec reference**: all fields with types, validation rules, defaults
 - **SandboxTemplate reference**: pod template, resource requirements, volumes
@@ -163,6 +178,7 @@ Content available from codebase:
 ### Section 4: Extending Shepherd
 
 #### Page 8: Building Custom Runners (`custom-runners.md`)
+
 Content available from codebase — this is the most detailed guide:
 
 **Runner Protocol** (5-step contract):
@@ -174,6 +190,7 @@ Content available from codebase — this is the most detailed guide:
 5. **Report completion** — `POST {apiURL}/api/v1/tasks/{taskID}/status` with `{event: "completed"|"failed", message, details: {pr_url, error}}`
 
 **Python example** (minimal runner):
+
 ```python
 from flask import Flask, request, jsonify
 import requests, subprocess, os
@@ -219,6 +236,7 @@ def execute_task(task_id, api_url):
 ```
 
 **Node.js example** (minimal runner):
+
 ```javascript
 import express from 'express';
 
@@ -274,7 +292,9 @@ app.listen(8888);
 **Key constraints**: token is one-time use (409 on second call), task data returns 410 if task is already terminal, runner must handle its own timeout gracefully
 
 #### Page 9: API Reference (`api-reference.md`)
+
 Content available from codebase (OpenAPI spec + handler analysis):
+
 - **Public endpoints** (port 8080): `GET /healthz`, `GET /readyz`, `POST /api/v1/tasks`, `GET /api/v1/tasks`, `GET /api/v1/tasks/{taskID}`, `GET /api/v1/tasks/{taskID}/events` (WebSocket)
 - **Internal endpoints** (port 8081): `POST /api/v1/tasks/{taskID}/status`, `POST /api/v1/tasks/{taskID}/events`, `GET /api/v1/tasks/{taskID}/data`, `GET /api/v1/tasks/{taskID}/token`
 - Full request/response schemas for each endpoint
@@ -286,6 +306,7 @@ Content available from codebase (OpenAPI spec + handler analysis):
 ### Additional Pages to Consider
 
 #### Page 10: Contributing / Development Guide (`contributing.md`)
+
 - `make build` / `make test` / `make lint-fix` workflow
 - Frontend dev: `make web-dev` / `make web-test` / `make web-check` / `make web-lint-fix`
 - CRD changes: edit `api/v1alpha1/` → `make manifests generate`
@@ -294,6 +315,7 @@ Content available from codebase (OpenAPI spec + handler analysis):
 - Code conventions: testify, httptest, table-driven tests, Svelte 5 runes only
 
 #### Page 11: Troubleshooting (`troubleshooting.md`)
+
 - Common issues: `SHEPHERD_GITHUB_APP_ID` same env var name for different apps
 - Token endpoint returns 503: GitHub App not configured
 - Token endpoint returns 409: token already issued (one-time use)
@@ -332,6 +354,7 @@ docs/
 From GitHub documentation research:
 
 ### Three-Step Registration Flow
+
 1. **Redirect**: Send user to `https://github.com/settings/apps/new` with `manifest` JSON parameter
 2. **Callback**: GitHub redirects to `redirect_url` with temporary `code` parameter
 3. **Exchange**: `POST /app-manifests/{code}/conversions` returns `id`, `pem` (private key), `webhook_secret`
@@ -339,6 +362,7 @@ From GitHub documentation research:
 All three steps must complete within 1 hour.
 
 ### Manifest Parameters
+
 | Parameter | Type | Required | Notes |
 |---|---|---|---|
 | `name` | string | No | App name (editable by user) |
@@ -355,6 +379,7 @@ All three steps must complete within 1 hour.
 | `setup_on_update` | boolean | No | Redirect on updates |
 
 ### What the Exchange Returns
+
 - `id` — GitHub App ID (use as `SHEPHERD_GITHUB_APP_ID`)
 - `pem` — Private key (save to file, use as `SHEPHERD_GITHUB_PRIVATE_KEY_PATH`)
 - `webhook_secret` — Generated secret (use as `SHEPHERD_GITHUB_WEBHOOK_SECRET`)
@@ -388,8 +413,314 @@ The installation ID is obtained separately after installing the app on a repo/or
 
 ## Open Questions
 
-1. **Hugo theme choice**: The user mentioned "basic theme" — Docsy, Hextra, or Hugo Book are popular for project docs
-2. **API reference generation**: Could embed Swagger UI or use `openapi-to-md` to generate from `api/openapi.yaml` instead of hand-writing
-3. **Versioning**: Should docs be versioned per release?
-4. **GitHub Pages deployment**: GitHub Actions workflow needed for Hugo build + deploy
-5. **GitHub App manifest implementation**: Shepherd could potentially host a `/setup` endpoint that implements the manifest flow, but that's a code change, not a docs-only task
+1. **API reference generation**: Could embed Swagger UI or use `openapi-to-md` to generate from `api/openapi.yaml` instead of hand-writing
+2. **Versioning**: Should docs be versioned per release?
+3. **GitHub App manifest implementation**: Shepherd could potentially host a `/setup` endpoint that implements the manifest flow, but that's a code change, not a docs-only task
+
+---
+
+## Follow-up Research: Hugo Setup, ngrok, and GitHub Pages Configuration
+
+### Hugo Theme Recommendation
+
+After researching available themes, the two best options for Shepherd:
+
+| Theme | Character | Install Complexity | Best For |
+|---|---|---|---|
+| **Hugo Book** | Minimal, "docs as a plain book", left sidebar, zero JS beyond search | Trivial | Pure simplicity, fast setup |
+| **Hextra** | Modern Tailwind-based (inspired by Nextra), dark/light mode, polished sidebar, FlexSearch | Trivial | Better UX/look, still lightweight |
+| **Docsy** | Google's enterprise theme (used by K8s, gRPC) | Requires Node.js + PostCSS | Overkill for this project |
+| **Relearn** | Evolved "Hugo Learn", deep section trees, collapsible sidebar | Trivial | Deep hierarchical docs |
+
+**Recommendation**: **Hextra** — modern look, great dark mode, built-in search, lightweight, and installs as a Hugo module with zero extra dependencies.
+
+### Hugo Project Setup
+
+```bash
+# Create the docs site inside the repo
+hugo new site docs --format=yaml
+cd docs
+hugo mod init github.com/NissesSenap/shepherd/docs
+
+# Add Hextra theme
+hugo mod get github.com/imfing/hextra
+```
+
+**`docs/hugo.yaml`** (Hextra configuration):
+
+```yaml
+baseURL: "https://nissessenap.github.io/shepherd/"
+title: "Shepherd"
+enableGitInfo: true
+
+module:
+  imports:
+    - path: github.com/imfing/hextra
+
+params:
+  navbar:
+    displayTitle: true
+    displayLogo: false
+  theme:
+    default: system
+    displayToggle: true
+  page:
+    width: normal
+  editURL:
+    base: "https://github.com/NissesSenap/shepherd/edit/main/docs/content"
+
+menu:
+  main:
+    - name: Documentation
+      pageRef: /docs
+      weight: 1
+    - name: GitHub
+      url: "https://github.com/NissesSenap/shepherd"
+      weight: 5
+      params:
+        icon: github
+```
+
+**Content structure** (maps to the page plan from the initial research):
+
+```
+docs/
+├── hugo.yaml
+├── go.mod
+├── go.sum
+├── content/
+│   ├── _index.md                      # Landing page
+│   └── docs/
+│       ├── _index.md                  # Docs section root
+│       ├── getting-started/
+│       │   ├── _index.md
+│       │   └── quickstart.md
+│       ├── architecture/
+│       │   ├── _index.md
+│       │   ├── overview.md
+│       │   └── github-apps.md
+│       ├── setup/
+│       │   ├── _index.md
+│       │   ├── github-app-setup.md
+│       │   ├── deployment.md
+│       │   └── configuration.md
+│       ├── extending/
+│       │   ├── _index.md
+│       │   ├── custom-runners.md
+│       │   └── api-reference.md
+│       ├── contributing.md
+│       └── troubleshooting.md
+└── static/
+    └── images/
+```
+
+**Local preview**:
+
+```bash
+cd docs
+hugo server --buildDrafts --disableFastRender
+# Open http://localhost:1313/shepherd/
+```
+
+### GitHub Pages Settings
+
+Steps to enable:
+
+1. Go to **Settings** in the GitHub repo
+2. In the left sidebar under "Code and automation", click **Pages**
+3. Under "Build and deployment" > **Source**, change from "Deploy from a branch" to **GitHub Actions**
+4. No branch selection needed — the workflow controls everything
+
+The site URL will be: `https://nissessenap.github.io/shepherd/`
+
+### GitHub Actions Workflow
+
+**`.github/workflows/hugo.yaml`**:
+
+```yaml
+name: Deploy docs
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'docs/**'
+      - '.github/workflows/hugo.yaml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      HUGO_VERSION: 0.156.0
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: docs/go.mod
+          cache: false
+
+      - name: Setup Pages
+        id: pages
+        uses: actions/configure-pages@v5
+
+      - name: Install Hugo
+        run: |
+          curl -sLJO "https://github.com/gohugoio/hugo/releases/download/v${HUGO_VERSION}/hugo_extended_${HUGO_VERSION}_linux-amd64.tar.gz"
+          mkdir -p "${HOME}/.local/hugo"
+          tar -C "${HOME}/.local/hugo" -xf "hugo_extended_${HUGO_VERSION}_linux-amd64.tar.gz"
+          echo "${HOME}/.local/hugo" >> "${GITHUB_PATH}"
+
+      - name: Build
+        working-directory: docs
+        run: |
+          hugo build \
+            --gc \
+            --minify \
+            --baseURL "${{ steps.pages.outputs.base_url }}/"
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: docs/public
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+```
+
+Key details:
+
+- `paths` filter: only triggers on docs changes
+- `fetch-depth: 0`: enables `.GitInfo` (last-modified dates in Hugo)
+- `permissions: pages: write` + `id-token: write`: required for `actions/deploy-pages`
+- Go is needed because Hugo modules use `go.mod`
+- `working-directory: docs` keeps the Hugo build scoped to the docs subdirectory
+
+### OpenAPI Reference via Hugo
+
+Instead of hand-writing the API reference, the `api/openapi.yaml` can be referenced from a Hugo page and rendered with Swagger UI. Options:
+
+1. **Hugo shortcode embedding Swagger UI** — create `docs/layouts/shortcodes/swagger.html`:
+
+   ```html
+   <div id="swagger-ui"></div>
+   <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist/swagger-ui.css">
+   <script src="https://unpkg.com/swagger-ui-dist/swagger-ui-bundle.js"></script>
+   <script>
+   SwaggerUIBundle({
+     url: "{{ .Get "src" }}",
+     dom_id: '#swagger-ui',
+     presets: [SwaggerUIBundle.presets.apis],
+     layout: "BaseLayout"
+   });
+   </script>
+   ```
+
+   Then in `api-reference.md`: `{{</* swagger src="/openapi.yaml" */>}}`
+   Copy `api/openapi.yaml` to `docs/static/openapi.yaml` (or symlink it).
+
+2. **Makefile target** to copy the spec:
+
+   ```makefile
+   docs-sync-openapi:
+       cp api/openapi.yaml docs/static/openapi.yaml
+   ```
+
+### ngrok / smee.io for Local Quickstart
+
+The quickstart page should guide users through exposing their local Kind cluster to receive GitHub webhooks. Two options:
+
+#### Option A: ngrok (full-stack, recommended for quickstart)
+
+ngrok can expose both the adapter (port 8082) and the API (port 30080) in one session (free tier allows up to 3 endpoints):
+
+```bash
+# Install ngrok (one-time)
+# Download from https://ngrok.com/download or: brew install ngrok
+
+# Authenticate (one-time, free account)
+ngrok config add-authtoken <YOUR_TOKEN>
+
+# Start tunnel to the GitHub adapter
+ngrok http 8082
+# Note the https://XXXX.ngrok-free.app URL
+# Use this as the webhook URL when creating your GitHub App
+```
+
+**Important**: The free tier gives a random subdomain that changes on restart. Keep ngrok running, or update the GitHub App webhook URL when restarting.
+
+**For multiple ports** (`~/.config/ngrok/ngrok.yml`):
+
+```yaml
+version: "3"
+agent:
+  authtoken: <TOKEN>
+tunnels:
+  shepherd-adapter:
+    proto: http
+    addr: 8082
+  shepherd-api:
+    proto: http
+    addr: 30080
+```
+
+Then: `ngrok start --all`
+
+**Gotchas that should go in the docs**:
+
+- HMAC signatures pass through ngrok unchanged — webhook verification works correctly
+- The ngrok browser interstitial does NOT affect programmatic webhook POSTs
+- The inspection UI at `http://127.0.0.1:4040` shows all requests (great for debugging)
+
+#### Option B: smee.io (webhook-only, simpler)
+
+smee.io is purpose-built for GitHub webhook development by the Probot team. The channel URL is permanent (no restart problem):
+
+```bash
+npm install -g smee-client
+
+# 1. Go to https://smee.io → "Start a new channel" → copy URL
+# 2. Use that URL as the GitHub App webhook URL
+# 3. Forward to local adapter:
+smee --url https://smee.io/YOUR_CHANNEL_ID --path /webhook --port 8082
+```
+
+**Trade-off**: smee.io only relays webhooks — it can't expose the API or web UI. For webhook testing alone it's simpler than ngrok. For full-stack testing, use ngrok.
+
+### Updated Quickstart Flow (Zero to Testing)
+
+The quickstart page should walk through this complete sequence:
+
+1. **Prerequisites**: Kind, kubectl, ko, Docker, Go, Node.js, ngrok (or smee)
+2. **Create Kind cluster**: `make kind-create`
+3. **Build and load images**: `make ko-build-kind`
+4. **Install dependencies**: `make install-agent-sandbox && make install`
+5. **Deploy**: `make deploy-test`
+6. **Start ngrok**: `ngrok http 8082` → note the public URL
+7. **Create GitHub Apps using manifests**: use the manifest JSON from the GitHub App Setup page, set the webhook URL to the ngrok URL + `/webhook`
+8. **Store credentials**: create K8s secret, configure adapter env vars
+9. **Run the adapter locally**: `./bin/shepherd github --webhook-secret=... --github-app-id=... ...`
+10. **Test**: comment `@shepherd do something` on an issue → watch the task appear in the web UI at `localhost:30081`
