@@ -237,8 +237,8 @@ global:
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `helm template test charts/shepherd/` renders without errors (will be minimal output)
-- [ ] `helm lint charts/shepherd/` passes
+- [x] `helm template test charts/shepherd/` renders without errors (will be minimal output)
+- [x] `helm lint charts/shepherd/` passes
 
 #### Manual Verification:
 - [ ] Chart directory structure looks clean — no leftover boilerplate files
@@ -509,9 +509,9 @@ operator:
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `helm template test charts/shepherd/` renders operator deployment, SA, ClusterRole, ClusterRoleBinding
-- [ ] `helm lint charts/shepherd/` passes
-- [ ] Rendered operator deployment has correct security contexts and args
+- [x] `helm template test charts/shepherd/` renders operator deployment, SA, ClusterRole, ClusterRoleBinding
+- [x] `helm lint charts/shepherd/` passes
+- [x] Rendered operator deployment has correct security contexts and args
 
 #### Manual Verification:
 - [ ] RBAC rules in rendered output match `config/rbac/role.yaml`
@@ -672,9 +672,9 @@ api:
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `helm template test charts/shepherd/` renders API deployment, service, SA, Role, RoleBinding
-- [ ] `helm template test charts/shepherd/ --set api.githubApp.enabled=true --set api.githubApp.existingSecret=my-secret` renders with secret volume mounts
-- [ ] `helm lint charts/shepherd/` passes
+- [x] `helm template test charts/shepherd/` renders API deployment, service, SA, Role, RoleBinding
+- [x] `helm template test charts/shepherd/ --set api.githubApp.enabled=true --set api.githubApp.existingSecret=my-secret` renders with secret volume mounts
+- [x] `helm lint charts/shepherd/` passes
 
 #### Manual Verification:
 - [ ] API service has both public (8080) and internal (8081) ports

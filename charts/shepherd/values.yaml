@@ -1,0 +1,157 @@
+# -- Overrides the chart name
+# @default -- chart name
+nameOverride: ""
+
+# -- Overrides the fully qualified app name
+# @default -- derived from release name + chart name
+fullnameOverride: ""
+
+# -- Override the release namespace
+# @default -- .Release.Namespace
+namespaceOverride: ""
+
+global:
+  image:
+    # -- Global image registry override for all Shepherd images
+    registry: ""
+  # -- Additional labels applied to all resources
+  additionalLabels: {}
+  # -- Image pull secrets shared across all components
+  imagePullSecrets: []
+
+operator:
+  # -- Annotations for the operator deployment
+  annotations: {}
+  # -- Labels for the operator pods
+  podLabels: {}
+  # -- Annotations for the operator pods
+  podAnnotations: {}
+  # -- Enable leader election for the operator
+  leaderElection: true
+  # -- Health probe port
+  healthPort: 8082
+  # -- Metrics port
+  metricsPort: 9090
+  image:
+    # -- Operator image registry
+    registry: ghcr.io
+    # -- Operator image repository
+    repository: nissessenap/shepherd
+    # -- Operator image tag (defaults to chart appVersion)
+    # @default -- .Chart.AppVersion
+    tag: ""
+    # -- Operator image pull policy
+    pullPolicy: IfNotPresent
+  # -- Image pull secrets for operator (overrides global)
+  imagePullSecrets: []
+  serviceAccount:
+    # -- Whether to create a service account for the operator
+    create: true
+    # -- Annotations to add to the operator service account
+    annotations: {}
+    # -- The name of the operator service account
+    # @default -- fullname-operator
+    name: ""
+  rbac:
+    # -- Whether to create RBAC resources for the operator
+    create: true
+  # -- Pod security context for the operator
+  podSecurityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  # -- Container security context for the operator
+  securityContext:
+    readOnlyRootFilesystem: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+  # -- Resource requests and limits for the operator
+  resources:
+    limits:
+      cpu: 500m
+      memory: 128Mi
+    requests:
+      cpu: 10m
+      memory: 64Mi
+  # -- Node selector for the operator pods
+  nodeSelector: {}
+  # -- Tolerations for the operator pods
+  tolerations: []
+  # -- Affinity rules for the operator pods
+  affinity: {}
+
+api:
+  # -- Number of API server replicas
+  replicas: 2
+  # -- Annotations for the API deployment
+  annotations: {}
+  # -- Labels for the API pods
+  podLabels: {}
+  # -- Annotations for the API pods
+  podAnnotations: {}
+  image:
+    # -- API image registry
+    registry: ghcr.io
+    # -- API image repository (same binary as operator)
+    repository: nissessenap/shepherd
+    # -- API image tag (defaults to chart appVersion)
+    # @default -- .Chart.AppVersion
+    tag: ""
+    # -- API image pull policy
+    pullPolicy: IfNotPresent
+  # -- Image pull secrets for the API (overrides global)
+  imagePullSecrets: []
+  serviceAccount:
+    # -- Whether to create a service account for the API
+    create: true
+    # -- Annotations to add to the API service account
+    annotations: {}
+    # -- The name of the API service account
+    # @default -- fullname-api
+    name: ""
+  rbac:
+    # -- Whether to create RBAC resources for the API
+    create: true
+  service:
+    # -- API service type
+    type: ClusterIP
+    # -- Public API port
+    port: 8080
+    # -- Internal API port (for runner communication)
+    internalPort: 8081
+    # -- Annotations for the API service
+    annotations: {}
+  githubApp:
+    # -- Enable GitHub App integration for token generation
+    enabled: false
+    # -- Name of the existing Secret containing GitHub App credentials.
+    # Must contain keys: app-id, installation-id, private-key
+    existingSecret: ""
+  # -- Pod security context for the API
+  podSecurityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  # -- Container security context for the API
+  securityContext:
+    readOnlyRootFilesystem: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+  # -- Resource requests and limits for the API
+  resources:
+    limits:
+      cpu: 500m
+      memory: 128Mi
+    requests:
+      cpu: 10m
+      memory: 64Mi
+  # -- Node selector for the API pods
+  nodeSelector: {}
+  # -- Tolerations for the API pods
+  tolerations: []
+  # -- Affinity rules for the API pods
+  affinity: {}

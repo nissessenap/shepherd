@@ -1,0 +1,87 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "shepherd.fullname" . }}-operator
+  namespace: {{ include "shepherd.namespace" . }}
+  labels:
+    {{- include "shepherd.componentLabels" (dict "context" . "component" "operator") | nindent 4 }}
+  {{- with .Values.operator.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "shepherd.componentSelectorLabels" (dict "context" . "component" "operator") | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.operator.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "shepherd.componentLabels" (dict "context" . "component" "operator") | nindent 8 }}
+        {{- with .Values.operator.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with (coalesce .Values.operator.imagePullSecrets .Values.global.imagePullSecrets) }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "shepherd.serviceAccountName" (dict "context" . "component" "operator" "sa" .Values.operator.serviceAccount) }}
+      securityContext:
+        {{- toYaml .Values.operator.podSecurityContext | nindent 8 }}
+      containers:
+        - name: operator
+          securityContext:
+            {{- toYaml .Values.operator.securityContext | nindent 12 }}
+          image: {{ include "shepherd.image" (dict "service" .Values.operator.image "global" .Values.global.image "defaultVersion" .Chart.AppVersion) }}
+          imagePullPolicy: {{ .Values.operator.image.pullPolicy }}
+          command:
+            - /ko-app/shepherd
+          args:
+            - operator
+            {{- if .Values.operator.leaderElection }}
+            - --leader-election
+            {{- end }}
+            - --health-addr=:{{ .Values.operator.healthPort }}
+            - --metrics-addr=:{{ .Values.operator.metricsPort }}
+            - --apiurl={{ printf "http://%s-api.%s.svc.cluster.local:%d" (include "shepherd.fullname" .) (include "shepherd.namespace" .) (.Values.api.service.internalPort | int) }}
+          ports:
+            - name: health
+              containerPort: {{ .Values.operator.healthPort }}
+              protocol: TCP
+            - name: metrics
+              containerPort: {{ .Values.operator.metricsPort }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          {{- with .Values.operator.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      terminationGracePeriodSeconds: 10
+      {{- with .Values.operator.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.operator.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.operator.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

@@ -1,0 +1,33 @@
+{{- if .Values.api.rbac.create -}}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "shepherd.fullname" . }}-api
+  namespace: {{ include "shepherd.namespace" . }}
+  labels:
+    {{- include "shepherd.componentLabels" (dict "context" . "component" "api") | nindent 4 }}
+rules:
+  - apiGroups: ["toolkit.shepherd.io"]
+    resources: ["agenttasks"]
+    verbs: ["get", "list", "watch", "create"]
+  - apiGroups: ["toolkit.shepherd.io"]
+    resources: ["agenttasks/status"]
+    verbs: ["get", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "shepherd.fullname" . }}-api
+  namespace: {{ include "shepherd.namespace" . }}
+  labels:
+    {{- include "shepherd.componentLabels" (dict "context" . "component" "api") | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "shepherd.fullname" . }}-api
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "shepherd.serviceAccountName" (dict "context" . "component" "api" "sa" .Values.api.serviceAccount) }}
+    namespace: {{ include "shepherd.namespace" . }}
+{{- end }}
