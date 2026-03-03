@@ -1162,10 +1162,10 @@ spec:
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `helm template test charts/shepherd/` does NOT render any PDB or HPA (disabled by default)
-- [ ] `helm template test charts/shepherd/ --set api.pdb.enabled=true --set api.hpa.enabled=true` renders PDB and HPA for API
-- [ ] `helm template test charts/shepherd/ --set githubAdapter.enabled=true --set githubAdapter.pdb.enabled=true` renders PDB for GitHub adapter
-- [ ] `helm lint charts/shepherd/` passes
+- [x] `helm template test charts/shepherd/` does NOT render any PDB or HPA (disabled by default)
+- [x] `helm template test charts/shepherd/ --set api.pdb.enabled=true --set api.hpa.enabled=true` renders PDB and HPA for API
+- [x] `helm template test charts/shepherd/ --set githubAdapter.enabled=true --set githubAdapter.pdb.enabled=true` renders PDB for GitHub adapter
+- [x] `helm lint charts/shepherd/` passes
 
 #### Manual Verification:
 - [ ] PDB selector labels match deployment selector labels

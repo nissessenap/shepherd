@@ -1,0 +1,19 @@
+{{- if .Values.api.pdb.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "shepherd.fullname" . }}-api
+  namespace: {{ include "shepherd.namespace" . }}
+  labels:
+    {{- include "shepherd.componentLabels" (dict "context" . "component" "api") | nindent 4 }}
+spec:
+  {{- with .Values.api.pdb.minAvailable }}
+  minAvailable: {{ . }}
+  {{- end }}
+  {{- with .Values.api.pdb.maxUnavailable }}
+  maxUnavailable: {{ . }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "shepherd.componentSelectorLabels" (dict "context" . "component" "api") | nindent 6 }}
+{{- end }}

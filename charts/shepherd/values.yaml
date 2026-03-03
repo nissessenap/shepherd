@@ -161,6 +161,29 @@ api:
   tolerations: []
   # -- Affinity rules for the API pods
   affinity: {}
+  pdb:
+    # -- Enable PodDisruptionBudget for the API
+    enabled: false
+    # -- Minimum available pods (mutually exclusive with maxUnavailable)
+    minAvailable: 1
+    # -- Maximum unavailable pods (mutually exclusive with minAvailable)
+    # @default -- not set
+    maxUnavailable: ""
+  hpa:
+    # -- Enable HorizontalPodAutoscaler for the API
+    enabled: false
+    # -- Minimum number of replicas
+    minReplicas: 2
+    # -- Maximum number of replicas
+    maxReplicas: 5
+    # -- Metrics for the HPA
+    metrics:
+      - type: Resource
+        resource:
+          name: cpu
+          target:
+            type: Utilization
+            averageUtilization: 80
 
 web:
   # -- Number of web frontend replicas
@@ -226,6 +249,29 @@ web:
   tolerations: []
   # -- Affinity rules for the web pods
   affinity: {}
+  pdb:
+    # -- Enable PodDisruptionBudget for the web frontend
+    enabled: false
+    # -- Minimum available pods (mutually exclusive with maxUnavailable)
+    minAvailable: 1
+    # -- Maximum unavailable pods (mutually exclusive with minAvailable)
+    # @default -- not set
+    maxUnavailable: ""
+  hpa:
+    # -- Enable HorizontalPodAutoscaler for the web frontend
+    enabled: false
+    # -- Minimum number of replicas
+    minReplicas: 2
+    # -- Maximum number of replicas
+    maxReplicas: 5
+    # -- Metrics for the HPA
+    metrics:
+      - type: Resource
+        resource:
+          name: cpu
+          target:
+            type: Utilization
+            averageUtilization: 80
 
 githubAdapter:
   # -- Enable the GitHub adapter component
@@ -301,3 +347,26 @@ githubAdapter:
   tolerations: []
   # -- Affinity rules for the GitHub adapter pods
   affinity: {}
+  pdb:
+    # -- Enable PodDisruptionBudget for the GitHub adapter
+    enabled: false
+    # -- Minimum available pods (mutually exclusive with maxUnavailable)
+    minAvailable: 1
+    # -- Maximum unavailable pods (mutually exclusive with minAvailable)
+    # @default -- not set
+    maxUnavailable: ""
+  hpa:
+    # -- Enable HorizontalPodAutoscaler for the GitHub adapter
+    enabled: false
+    # -- Minimum number of replicas
+    minReplicas: 2
+    # -- Maximum number of replicas
+    maxReplicas: 5
+    # -- Metrics for the HPA
+    metrics:
+      - type: Resource
+        resource:
+          name: cpu
+          target:
+            type: Utilization
+            averageUtilization: 80

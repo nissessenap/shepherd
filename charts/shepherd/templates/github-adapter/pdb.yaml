@@ -1,0 +1,19 @@
+{{- if and .Values.githubAdapter.enabled .Values.githubAdapter.pdb.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "shepherd.fullname" . }}-github-adapter
+  namespace: {{ include "shepherd.namespace" . }}
+  labels:
+    {{- include "shepherd.componentLabels" (dict "context" . "component" "github-adapter") | nindent 4 }}
+spec:
+  {{- with .Values.githubAdapter.pdb.minAvailable }}
+  minAvailable: {{ . }}
+  {{- end }}
+  {{- with .Values.githubAdapter.pdb.maxUnavailable }}
+  maxUnavailable: {{ . }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "shepherd.componentSelectorLabels" (dict "context" . "component" "github-adapter") | nindent 6 }}
+{{- end }}
