@@ -1295,11 +1295,11 @@ Also update the `manifests` target (already described in Phase 5).
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `make helm-lint` passes (helm template + helm lint)
-- [ ] `make helm-docs` generates `charts/shepherd/README.md`
-- [ ] `make manifests` syncs CRDs and RBAC to Helm chart
-- [ ] `helm template test charts/shepherd/ --set extraObjects[0].apiVersion=v1 --set extraObjects[0].kind=ConfigMap --set extraObjects[0].metadata.name=test` renders the extra object
-- [ ] Full `helm template` with all options enabled renders cleanly:
+- [x] `make helm-lint` passes (helm template + helm lint)
+- [x] `make helm-docs` generates `charts/shepherd/README.md`
+- [x] `make manifests` syncs CRDs and RBAC to Helm chart
+- [x] `helm template test charts/shepherd/ --set extraObjects[0].apiVersion=v1 --set extraObjects[0].kind=ConfigMap --set extraObjects[0].metadata.name=test` renders the extra object
+- [x] Full `helm template` with all options enabled renders cleanly:
   ```bash
   helm template test charts/shepherd/ \
     --set githubAdapter.enabled=true \

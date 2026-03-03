@@ -370,3 +370,16 @@ githubAdapter:
           target:
             type: Utilization
             averageUtilization: 80
+
+# -- Array of extra K8s objects to deploy (supports templating)
+extraObjects: []
+# - apiVersion: monitoring.coreos.com/v1
+#   kind: ServiceMonitor
+#   metadata:
+#     name: shepherd-api
+#   spec:
+#     selector:
+#       matchLabels:
+#         app.kubernetes.io/component: api
+#     endpoints:
+#       - port: metrics
