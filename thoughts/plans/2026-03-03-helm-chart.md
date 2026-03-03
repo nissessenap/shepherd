@@ -1049,9 +1049,9 @@ githubAdapter:
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `helm template test charts/shepherd/` does NOT render GitHub adapter resources (disabled by default)
-- [ ] `helm template test charts/shepherd/ --set githubAdapter.enabled=true --set githubAdapter.existingSecret=gh-secret --set githubAdapter.callbackURL=https://example.com/callback` renders all GitHub adapter resources
-- [ ] `helm lint charts/shepherd/` passes
+- [x] `helm template test charts/shepherd/` does NOT render GitHub adapter resources (disabled by default)
+- [x] `helm template test charts/shepherd/ --set githubAdapter.enabled=true --set githubAdapter.existingSecret=gh-secret --set githubAdapter.callbackURL=https://example.com/callback` renders all GitHub adapter resources
+- [x] `helm lint charts/shepherd/` passes
 
 #### Manual Verification:
 - [ ] GitHub adapter deployment has correct env vars and volume mounts

@@ -226,3 +226,78 @@ web:
   tolerations: []
   # -- Affinity rules for the web pods
   affinity: {}
+
+githubAdapter:
+  # -- Enable the GitHub adapter component
+  enabled: false
+  # -- Number of GitHub adapter replicas
+  replicas: 1
+  # -- Annotations for the GitHub adapter deployment
+  annotations: {}
+  # -- Labels for the GitHub adapter pods
+  podLabels: {}
+  # -- Annotations for the GitHub adapter pods
+  podAnnotations: {}
+  image:
+    # -- GitHub adapter image registry
+    registry: ghcr.io
+    # -- GitHub adapter image repository (same binary as operator)
+    repository: nissessenap/shepherd
+    # -- GitHub adapter image tag (defaults to chart appVersion)
+    # @default -- .Chart.AppVersion
+    tag: ""
+    # -- GitHub adapter image pull policy
+    pullPolicy: IfNotPresent
+  # -- Image pull secrets for the GitHub adapter (overrides global)
+  imagePullSecrets: []
+  serviceAccount:
+    # -- Whether to create a service account for the GitHub adapter
+    create: true
+    # -- Annotations to add to the GitHub adapter service account
+    annotations: {}
+    # -- The name of the GitHub adapter service account
+    # @default -- fullname-github-adapter
+    name: ""
+    # -- Whether to auto-mount the service account token (not needed)
+    automountServiceAccountToken: false
+  service:
+    # -- GitHub adapter service type
+    type: ClusterIP
+    # -- GitHub adapter webhook port
+    port: 8082
+    # -- Annotations for the GitHub adapter service
+    annotations: {}
+  # -- Name of the existing Secret containing GitHub App credentials.
+  # Must contain keys: webhook-secret, app-id, installation-id, private-key.
+  # Optionally: callback-secret.
+  existingSecret: ""
+  # -- Callback URL that the API server will call back to
+  callbackURL: ""
+  # -- Default sandbox template name for new tasks
+  defaultSandboxTemplate: "default"
+  # -- Pod security context for the GitHub adapter
+  podSecurityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  # -- Container security context for the GitHub adapter
+  securityContext:
+    readOnlyRootFilesystem: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+  # -- Resource requests and limits for the GitHub adapter
+  resources:
+    limits:
+      cpu: 500m
+      memory: 128Mi
+    requests:
+      cpu: 10m
+      memory: 64Mi
+  # -- Node selector for the GitHub adapter pods
+  nodeSelector: {}
+  # -- Tolerations for the GitHub adapter pods
+  tolerations: []
+  # -- Affinity rules for the GitHub adapter pods
+  affinity: {}
