@@ -16,14 +16,32 @@ This section sets up a local Kind cluster with Shepherd fully deployed. You can 
 | [Docker](https://docs.docker.com/get-docker/) | Latest | — |
 | [Kind](https://kind.sigs.k8s.io/) | v0.20+ | `go install sigs.k8s.io/kind@latest` |
 | [kubectl](https://kubernetes.io/docs/tasks/tools/) | Latest | — |
-| [ko](https://ko.build/) | v0.17+ | `go install github.com/google/ko@latest` |
-| [Go](https://go.dev/dl/) | 1.25+ | — |
-| [Node.js](https://nodejs.org/) | 22+ | — |
+| [Helm](https://helm.sh/docs/intro/install/) | 3.10+ | — |
 
 ### Create a Kind Cluster
 
+If you have the repo cloned:
+
 ```bash
 make kind-create
+```
+
+Or create the cluster directly:
+
+```bash
+cat <<EOF | kind create cluster --name shepherd --config=-
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+- role: control-plane
+  extraPortMappings:
+  - containerPort: 30080
+    hostPort: 30080
+    protocol: TCP
+  - containerPort: 30081
+    hostPort: 30081
+    protocol: TCP
+EOF
 ```
 
 This creates a single-node Kind cluster named `shepherd` with two NodePort mappings:
@@ -31,30 +49,110 @@ This creates a single-node Kind cluster named `shepherd` with two NodePort mappi
 - **Port 30080** — Public API
 - **Port 30081** — Web UI
 
-### Build and Load Images
+### Install agent-sandbox
+
+The [agent-sandbox operator](https://github.com/kubernetes-sigs/agent-sandbox) manages ephemeral sandbox pods for task runners:
 
 ```bash
-make ko-build-kind
+export AGENT_SANDBOX_VERSION="v0.1.1"
+kubectl apply -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/manifest.yaml
+kubectl apply -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/extensions.yaml
 ```
 
-This builds three container images (`shepherd`, `shepherd-runner`, `shepherd-web`) and loads them into the Kind cluster.
-
-### Install Dependencies
+Wait for the operator to be ready:
 
 ```bash
-make install-agent-sandbox
-make install
+kubectl wait --for=condition=Available deployment/agent-sandbox-controller-manager \
+  -n agent-sandbox-system --timeout=120s
 ```
 
-The first command installs the [agent-sandbox operator](https://agent-sandbox.sigs.k8s.io/docs/) (v0.1.1) which manages sandbox pods. The second installs the AgentTask CRD.
+See the [agent-sandbox getting started guide](https://agent-sandbox.sigs.k8s.io/docs/getting_started/) for more details.
 
-### Deploy the Test Overlay
+### Create a SandboxTemplate
+
+Runners need a `SandboxTemplate` that defines the container image, resources, and volumes. Apply the sample template:
 
 ```bash
-make deploy-test
+kubectl apply -n shepherd-system -f - <<'EOF'
+apiVersion: extensions.agents.x-k8s.io/v1alpha1
+kind: SandboxTemplate
+metadata:
+  name: runner
+spec:
+  template:
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        runAsNonRoot: true
+      containers:
+        - name: runner
+          image: ghcr.io/nissessenap/shepherd-runner:v0.1.0
+          ports:
+            - containerPort: 8888
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8888
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          env:
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: anthropic-credentials
+                  key: api-key
+          resources:
+            requests:
+              memory: "2Gi"
+              cpu: "500m"
+            limits:
+              memory: "4Gi"
+              cpu: "2000m"
+          volumeMounts:
+            - name: home
+              mountPath: /home/shepherd
+            - name: workspace
+              mountPath: /workspace
+      volumes:
+        - name: home
+          emptyDir: {}
+        - name: workspace
+          emptyDir: {}
+      restartPolicy: Never
+EOF
 ```
 
-The test overlay deploys all Shepherd components with NodePort services and **no GitHub App requirement**. This is the fastest way to explore the system.
+{{< callout type="info" >}}
+The template name (`runner`) is what you'll reference as the `sandboxTemplateName` when creating tasks. The runner container requires an `ANTHROPIC_API_KEY` secret — create it with:
+```bash
+kubectl create secret generic anthropic-credentials \
+  --namespace shepherd-system \
+  --from-literal=api-key=<YOUR_ANTHROPIC_API_KEY>
+```
+{{< /callout >}}
+
+See the [agent-sandbox documentation](https://agent-sandbox.sigs.k8s.io/docs/) for the full `SandboxTemplate` reference.
+
+### Deploy with Helm
+
+Download the quickstart values file from the repo (or use it directly if you have the repo cloned):
+
+```bash
+curl -sLO https://raw.githubusercontent.com/NissesSenap/shepherd/main/charts/shepherd/values-quickstart.yaml
+```
+
+Install Shepherd without the GitHub adapter:
+
+```bash
+helm install shepherd oci://ghcr.io/nissessenap/helm-charts/shepherd \
+  --version 0.1.0 \
+  -f values-quickstart.yaml \
+  --set githubAdapter.enabled=false \
+  --create-namespace -n shepherd-system
+```
 
 ### Verify
 
@@ -89,18 +187,12 @@ curl -s -X POST http://localhost:30080/api/v1/tasks \
 
 Watch the task appear in the web UI and move through `Pending` → `Running` → `Succeeded` or `Failed`.
 
-### Frontend Development
-
-For live-reloading frontend development:
-
-```bash
-make web-dev
-```
-
-This starts the SvelteKit dev server with an API proxy to `localhost:8080`.
-
 {{< callout type="info" >}}
-The test overlay does not configure a GitHub App. The token endpoint (`GET /api/v1/tasks/{taskID}/token`) returns **503** — this is expected. Everything else works normally.
+Without a GitHub App configured, the token endpoint (`GET /api/v1/tasks/{taskID}/token`) returns **503** — this is expected. Everything else works normally.
+{{< /callout >}}
+
+{{< callout type="warning" >}}
+**Ingress / HTTPRoute** support is planned but not yet available in the chart. For production access beyond NodePorts, configure your own ingress controller or use `kubectl port-forward`.
 {{< /callout >}}
 
 ---
@@ -188,10 +280,16 @@ Once your tunnel is running:
      --from-file=private-key=<RUNNER_PRIVATE_KEY_FILE>
    ```
 
-3. **Redeploy** with GitHub App configuration (replace the test overlay with your production-like configuration):
+3. **Upgrade the Helm release** with GitHub App configuration:
 
    ```bash
-   make deploy
+   helm upgrade shepherd oci://ghcr.io/nissessenap/helm-charts/shepherd \
+     --version 0.1.0 \
+     -f values-quickstart.yaml \
+     -n shepherd-system \
+     --set api.githubApp.enabled=true \
+     --set api.githubApp.existingSecret=shepherd-runner-app \
+     --set githubAdapter.callbackURL=https://XXXX.ngrok-free.app/callback
    ```
 
 4. **Install the GitHub Apps** on your target repository (or organization).
@@ -203,5 +301,6 @@ Once your tunnel is running:
 ## Next Steps
 
 - [Architecture Overview]({{< relref "../architecture/overview" >}}) — understand how the components fit together
+- [Helm Chart Values](../../setup/helm-values/) — full reference for all chart configuration options
+- [Deployment Guide](../../setup/deployment/) — production deployment with Helm
 - [GitHub App Setup](../../setup/github-app-setup/) — detailed guide for creating the two GitHub Apps
-- [Deployment Guide](../../setup/deployment/) — production deployment with Kustomize

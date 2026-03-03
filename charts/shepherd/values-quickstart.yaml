@@ -1,0 +1,58 @@
+# values-quickstart.yaml — Local Kind development only. DO NOT use in production.
+#
+# Usage:
+#   Part 1 (no GitHub):
+#     helm install shepherd oci://ghcr.io/nissessenap/helm-charts/shepherd \
+#       -f values-quickstart.yaml --set githubAdapter.enabled=false \
+#       --create-namespace -n shepherd-system
+#
+#   Part 2 (with GitHub): create secrets first, then:
+#     helm upgrade shepherd oci://ghcr.io/nissessenap/helm-charts/shepherd \
+#       -f values-quickstart.yaml -n shepherd-system
+
+api:
+  replicas: 1
+
+githubAdapter:
+  enabled: true
+  existingSecret: shepherd-trigger-app
+  callbackURL: ""  # Set via --set for your ngrok/smee URL
+
+# NodePort services for Kind cluster access (ports match test/e2e/kind-config.yaml)
+extraObjects:
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: shepherd-api-nodeport
+      namespace: '{{ include "shepherd.namespace" . }}'
+      labels:
+        app.kubernetes.io/component: api
+    spec:
+      type: NodePort
+      selector:
+        app.kubernetes.io/name: shepherd
+        app.kubernetes.io/instance: '{{ .Release.Name }}'
+        app.kubernetes.io/component: api
+      ports:
+        - port: 8080
+          targetPort: 8080
+          nodePort: 30080
+          protocol: TCP
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: shepherd-web-nodeport
+      namespace: '{{ include "shepherd.namespace" . }}'
+      labels:
+        app.kubernetes.io/component: web
+    spec:
+      type: NodePort
+      selector:
+        app.kubernetes.io/name: shepherd
+        app.kubernetes.io/instance: '{{ .Release.Name }}'
+        app.kubernetes.io/component: web
+      ports:
+        - port: 8080
+          targetPort: 8080
+          nodePort: 30081
+          protocol: TCP

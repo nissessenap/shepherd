@@ -3,7 +3,7 @@ title: Deployment Guide
 weight: 2
 ---
 
-This guide covers deploying Shepherd to a Kubernetes cluster. If you're looking to run locally for development, see the [Quickstart](../../getting-started/quickstart/) instead.
+This guide covers deploying Shepherd to a Kubernetes cluster with Helm. If you're looking to run locally for development, see the [Quickstart](../../getting-started/quickstart/) instead.
 
 ## Prerequisites
 
@@ -11,94 +11,63 @@ This guide covers deploying Shepherd to a Kubernetes cluster. If you're looking 
 |-------------|-------|
 | **Kubernetes cluster** | v1.28+ recommended |
 | **kubectl** | Configured to access your cluster |
-| **Kustomize** | Bundled with kubectl or install separately |
+| **Helm** | 3.10+ |
 | **agent-sandbox operator** | Manages runner sandbox pods |
 | **Two GitHub Apps** | See [GitHub App Setup](../github-app-setup/) |
-| **cert-manager** (optional) | For webhook TLS certificates |
 
-## Architecture Recap
+## Step 1: Install agent-sandbox
 
-Shepherd deploys four components into a single namespace (`shepherd-system`):
-
-| Component | Deployment | Purpose |
-|-----------|------------|---------|
-| **Operator** | `shepherd-controller-manager` | Reconciles AgentTask CRDs, manages sandbox lifecycle |
-| **API Server** | `shepherd-shepherd-api` | Public + internal HTTP API, token generation |
-| **GitHub Adapter** | (not in default overlay) | Webhook receiver, comment poster |
-| **Web Frontend** | `shepherd-shepherd-web` | Svelte SPA served by nginx |
-
-The default Kustomize overlay (`config/default/`) deploys the operator, API server, and web frontend. The GitHub adapter is deployed separately or added to your own overlay.
-
-## Step 1: Install CRDs
-
-Install the AgentTask CRD into your cluster:
+The [agent-sandbox operator](https://github.com/kubernetes-sigs/agent-sandbox) manages ephemeral sandbox pods for task runners:
 
 ```bash
-make install
+export AGENT_SANDBOX_VERSION="v0.1.1"
+kubectl apply -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/manifest.yaml
+kubectl apply -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/extensions.yaml
 ```
 
-This runs `kustomize build config/crd | kubectl apply -f -` to install the `AgentTask` custom resource definition.
-
-## Step 2: Install agent-sandbox
-
-The [agent-sandbox operator](https://agent-sandbox.sigs.k8s.io/docs/) manages ephemeral sandbox pods for task runners:
+Wait for the operator to be ready:
 
 ```bash
-make install-agent-sandbox
+kubectl wait --for=condition=Available deployment/agent-sandbox-controller-manager \
+  -n agent-sandbox-system --timeout=120s
 ```
 
-This installs the agent-sandbox operator (v0.1.1) and waits for it to be ready.
+See the [agent-sandbox getting started guide](https://agent-sandbox.sigs.k8s.io/docs/getting_started/) for more details.
 
-## Step 3: Create Secrets
+## Step 2: Create Secrets
 
-Create the GitHub App secret for the API server (the Runner App):
+Shepherd uses two GitHub Apps — one for the adapter (webhooks/comments) and one for the API server (token generation). Create a secret for each:
 
 ```bash
-kubectl create secret generic shepherd-github-app \
+kubectl create secret generic shepherd-trigger-app \
+  --namespace shepherd-system \
+  --from-literal=app-id=<TRIGGER_APP_ID> \
+  --from-literal=installation-id=<TRIGGER_INSTALLATION_ID> \
+  --from-file=private-key=<TRIGGER_PRIVATE_KEY_FILE>
+
+kubectl create secret generic shepherd-runner-app \
   --namespace shepherd-system \
   --from-literal=app-id=<RUNNER_APP_ID> \
   --from-literal=installation-id=<RUNNER_INSTALLATION_ID> \
   --from-file=private-key=<RUNNER_PRIVATE_KEY_FILE>
 ```
 
+The runner also needs an Anthropic API key for the sandbox containers:
+
+```bash
+kubectl create secret generic anthropic-credentials \
+  --namespace shepherd-system \
+  --from-literal=api-key=<YOUR_ANTHROPIC_API_KEY>
+```
+
 See [GitHub App Setup](../github-app-setup/) for creating the apps and obtaining these values.
 
-## Step 4: Deploy Shepherd
+## Step 3: Create a SandboxTemplate
+
+Runners need a `SandboxTemplate` that defines the container image, resources, and volumes. Apply the sample template:
 
 ```bash
-make deploy
-```
-
-This builds and applies the default Kustomize overlay, which includes:
-
-- CRDs (`config/crd/`)
-- Operator RBAC + deployment (`config/rbac/`, `config/manager/`)
-- API server RBAC + deployment (`config/api-rbac/`, `config/api/`)
-- Web frontend deployment (`config/web/`)
-- Metrics service (`config/default/metrics_service.yaml`)
-
-### Customizing the Image
-
-By default, the overlay uses `shepherd:latest`. To use a custom image:
-
-```bash
-IMG=ghcr.io/your-org/shepherd:v1.0.0 make deploy
-```
-
-Or edit `config/default/kustomization.yaml` directly:
-
-```yaml
-images:
-- name: controller
-  newName: ghcr.io/your-org/shepherd
-  newTag: v1.0.0
-```
-
-## Step 5: Create a SandboxTemplate
-
-Runners need a `SandboxTemplate` that defines the container image, resources, and volumes. Here's the default template from `config/samples/sandbox-template-runner.yaml`:
-
-```yaml
+kubectl apply -n shepherd-system -f - <<'EOF'
 apiVersion: extensions.agents.x-k8s.io/v1alpha1
 kind: SandboxTemplate
 metadata:
@@ -147,19 +116,52 @@ spec:
         - name: workspace
           emptyDir: {}
       restartPolicy: Never
-```
-
-Apply it:
-
-```bash
-kubectl apply -f config/samples/sandbox-template-runner.yaml -n shepherd-system
+EOF
 ```
 
 {{< callout type="info" >}}
 The template name (`runner` in this example) is what you'll use as the `sandboxTemplateName` in task creation requests. The GitHub adapter uses `SHEPHERD_DEFAULT_SANDBOX_TEMPLATE` to set this automatically.
 {{< /callout >}}
 
-## Step 6: Verify
+See the [agent-sandbox documentation](https://agent-sandbox.sigs.k8s.io/docs/) and [Custom Runners](../../extending/custom-runners/) for building your own runner container.
+
+## Step 4: Deploy with Helm
+
+### Basic Install (without GitHub adapter)
+
+```bash
+helm install shepherd oci://ghcr.io/nissessenap/helm-charts/shepherd \
+  --version 0.1.0 \
+  --create-namespace -n shepherd-system
+```
+
+### Full Install (with GitHub adapter)
+
+```bash
+helm install shepherd oci://ghcr.io/nissessenap/helm-charts/shepherd \
+  --version 0.1.0 \
+  --set api.githubApp.enabled=true \
+  --set api.githubApp.existingSecret=shepherd-runner-app \
+  --set githubAdapter.enabled=true \
+  --set githubAdapter.existingSecret=shepherd-trigger-app \
+  --set githubAdapter.callbackURL=https://your-domain.com/callback \
+  --create-namespace -n shepherd-system
+```
+
+### Using a Custom Values File
+
+For more complex configurations, create a `values.yaml` and install with:
+
+```bash
+helm install shepherd oci://ghcr.io/nissessenap/helm-charts/shepherd \
+  --version 0.1.0 \
+  -f my-values.yaml \
+  --create-namespace -n shepherd-system
+```
+
+See the [Helm Chart Values](../helm-values/) reference for all available options.
+
+## Step 5: Verify
 
 ```bash
 kubectl get pods -n shepherd-system
@@ -182,96 +184,13 @@ curl http://localhost:8080/healthz
 # ok
 ```
 
-## Kustomize Structure
-
-The `config/` directory is organized as follows:
-
-```
-config/
-├── crd/                  # AgentTask CRD + external CRDs (for envtest)
-├── rbac/                 # Operator ClusterRole, ServiceAccount, leader election
-├── api-rbac/             # API server Role + RoleBinding
-├── manager/              # Operator Deployment (controller-manager)
-├── api/                  # API server Deployment + Service
-├── web/                  # Web frontend Deployment + Service
-├── default/              # Production overlay (composes all of the above)
-├── test/                 # Test overlay (NodePorts, no GitHub secrets)
-├── network-policy/       # Optional NetworkPolicy
-├── prometheus/           # Optional ServiceMonitor
-└── samples/              # Example CRs (AgentTask, SandboxTemplate)
-```
-
-The `config/default/kustomization.yaml` composes: `crd` + `rbac` + `manager` + `api-rbac` + `api` + `web` + `metrics_service.yaml`.
-
-## RBAC
-
-### Operator (ClusterRole)
-
-The operator runs with a `ClusterRole` because it needs cluster-wide access to sandbox resources:
-
-| API Group | Resources | Verbs |
-|-----------|-----------|-------|
-| `toolkit.shepherd.io` | `agenttasks`, `agenttasks/status`, `agenttasks/finalizers` | get, list, watch, patch, update |
-| `extensions.agents.x-k8s.io` | `sandboxclaims` | create, delete, get, list, watch |
-| `agents.x-k8s.io` | `sandboxes` | get, list, watch |
-| `coordination.k8s.io` | `leases` | create, delete, get, list, patch, update, watch |
-| `""`, `events.k8s.io` | `events` | create, patch |
-
-### API Server (Role)
-
-The API server uses a namespace-scoped `Role`:
-
-| API Group | Resources | Verbs |
-|-----------|-----------|-------|
-| `toolkit.shepherd.io` | `agenttasks` | get, list, watch, create |
-| `toolkit.shepherd.io` | `agenttasks/status` | get, update, patch |
-
-## Web Frontend
-
-The web frontend is a Svelte 5 SPA served by nginx. The nginx container:
-
-- Serves the built static files
-- Proxies `/api/` requests to the API server service
-- Provides SPA fallback routing (all unknown paths serve `index.html`)
-
-The frontend image (`shepherd-web`) is built separately:
-
-```bash
-make docker-build-web
-```
-
-### Frontend Configuration
-
-The frontend uses a build-time environment variable:
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `VITE_API_URL` | (empty) | API base URL; empty means same-origin (proxied by nginx) |
-
-In most deployments, you don't need to set this — the nginx proxy handles API routing.
-
-## Optional: Prometheus Monitoring
-
-Enable Prometheus monitoring by uncommenting the prometheus resources in your kustomization:
-
-```yaml
-resources:
-- ../prometheus
-```
-
-This creates a `ServiceMonitor` that scrapes the operator's metrics endpoint on port 9090.
-
-## Optional: Network Policy
-
-For additional security, enable the NetworkPolicy to restrict access to the metrics endpoint:
-
-```yaml
-resources:
-- ../network-policy
-```
+{{< callout type="warning" >}}
+**Ingress / HTTPRoute** support is planned but not yet available in the chart. For production access, configure your own ingress controller, use `extraObjects` to add Ingress resources, or use `kubectl port-forward`.
+{{< /callout >}}
 
 ## Next Steps
 
-- [Configuration Reference](../configuration/) — all CLI flags, environment variables, and CRD fields
+- [Helm Chart Values](../helm-values/) — full reference for all chart configuration options
+- [Configuration Reference](../configuration/) — CLI flags, environment variables, and CRD fields
 - [GitHub App Setup](../github-app-setup/) — if you haven't created the apps yet
 - [Custom Runners](../../extending/custom-runners/) — build your own runner container
