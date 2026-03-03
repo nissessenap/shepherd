@@ -842,9 +842,9 @@ web:
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `helm template test charts/shepherd/` renders web deployment, ConfigMap, service, SA
-- [ ] ConfigMap contains correct `proxy_pass` URL referencing the API service
-- [ ] `helm lint charts/shepherd/` passes
+- [x] `helm template test charts/shepherd/` renders web deployment, ConfigMap, service, SA
+- [x] ConfigMap contains correct `proxy_pass` URL referencing the API service
+- [x] `helm lint charts/shepherd/` passes
 
 #### Manual Verification:
 - [ ] nginx.conf in ConfigMap uses templated service name, not hardcoded
@@ -920,11 +920,11 @@ manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and Cust
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `make manifests` generates CRDs in both `config/crd/bases/` and `charts/shepherd/files/crds/`
-- [ ] `make manifests` syncs RBAC to `charts/shepherd/files/rbac.yaml`
-- [ ] `helm template test charts/shepherd/` renders the CRD with `helm.sh/resource-policy: keep`
-- [ ] `helm template test charts/shepherd/ --set crds.install=false` does NOT render the CRD
-- [ ] `helm lint charts/shepherd/` passes
+- [x] `make manifests` generates CRDs in both `config/crd/bases/` and `charts/shepherd/files/crds/`
+- [x] `make manifests` syncs RBAC to `charts/shepherd/files/rbac.yaml`
+- [x] `helm template test charts/shepherd/` renders the CRD with `helm.sh/resource-policy: keep`
+- [x] `helm template test charts/shepherd/ --set crds.install=false` does NOT render the CRD
+- [x] `helm lint charts/shepherd/` passes
 
 #### Manual Verification:
 - [ ] CRD YAML in `charts/shepherd/files/crds/` matches `config/crd/bases/`

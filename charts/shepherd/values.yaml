@@ -1,3 +1,9 @@
+crds:
+  # -- Whether to install CRDs with the chart.
+  # CRDs are placed in templates/ (not crds/) so they are updated on helm upgrade.
+  # Protected with helm.sh/resource-policy: keep to prevent deletion on chart uninstall.
+  install: true
+
 # -- Overrides the chart name
 # @default -- chart name
 nameOverride: ""
@@ -154,4 +160,69 @@ api:
   # -- Tolerations for the API pods
   tolerations: []
   # -- Affinity rules for the API pods
+  affinity: {}
+
+web:
+  # -- Number of web frontend replicas
+  replicas: 1
+  # -- Annotations for the web deployment
+  annotations: {}
+  # -- Labels for the web pods
+  podLabels: {}
+  # -- Annotations for the web pods
+  podAnnotations: {}
+  image:
+    # -- Web image registry
+    registry: ghcr.io
+    # -- Web image repository
+    repository: nissessenap/shepherd-web
+    # -- Web image tag (defaults to chart appVersion)
+    # @default -- .Chart.AppVersion
+    tag: ""
+    # -- Web image pull policy
+    pullPolicy: IfNotPresent
+  # -- Image pull secrets for the web frontend (overrides global)
+  imagePullSecrets: []
+  serviceAccount:
+    # -- Whether to create a service account for the web frontend
+    create: true
+    # -- Annotations to add to the web service account
+    annotations: {}
+    # -- The name of the web service account
+    # @default -- fullname-web
+    name: ""
+    # -- Whether to auto-mount the service account token (not needed for web)
+    automountServiceAccountToken: false
+  service:
+    # -- Web service type
+    type: ClusterIP
+    # -- Web service port
+    port: 8080
+    # -- Annotations for the web service
+    annotations: {}
+  # -- Pod security context for the web frontend
+  podSecurityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  # -- Container security context for the web frontend
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop:
+        - ALL
+  # -- Resource requests and limits for the web frontend
+  resources:
+    limits:
+      cpu: 100m
+      memory: 64Mi
+    requests:
+      cpu: 10m
+      memory: 32Mi
+  # -- Node selector for the web pods
+  nodeSelector: {}
+  # -- Tolerations for the web pods
+  tolerations: []
+  # -- Affinity rules for the web pods
   affinity: {}

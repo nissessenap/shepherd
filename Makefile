@@ -46,6 +46,13 @@ help: ## Display this help.
 .PHONY: manifests
 manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
 	"$(CONTROLLER_GEN)" rbac:roleName=manager-role crd webhook paths="$$(go list ./... | paste -sd';' -)" output:crd:artifacts:config=config/crd/bases
+	@# Sync CRDs to Helm chart
+	@mkdir -p charts/shepherd/files/crds
+	@cp config/crd/bases/*.yaml charts/shepherd/files/crds/
+	@echo "Synced CRDs to charts/shepherd/files/crds/"
+	@# Sync RBAC to Helm chart
+	@cp config/rbac/role.yaml charts/shepherd/files/rbac.yaml
+	@echo "Synced RBAC to charts/shepherd/files/rbac.yaml"
 
 .PHONY: generate
 generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
@@ -145,6 +152,17 @@ docs-sync-openapi: ## Copy OpenAPI spec to docs static directory.
 	@mkdir -p docs/static
 	cp api/openapi.yaml docs/static/openapi.yaml
 	@echo "Synced api/openapi.yaml → docs/static/openapi.yaml"
+
+##@ Helm
+
+.PHONY: helm-docs
+helm-docs: $(HELM_DOCS) ## Generate Helm chart documentation.
+	$(HELM_DOCS) --chart-search-root=charts
+
+.PHONY: helm-lint
+helm-lint: ## Validate Helm chart.
+	$(HELM) template charts/shepherd/ > /dev/null
+	$(HELM) lint charts/shepherd/
 
 ##@ E2E Testing
 
@@ -295,11 +313,14 @@ CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
 ENVTEST ?= $(LOCALBIN)/setup-envtest
 GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
 KO ?= $(LOCALBIN)/ko
+HELM_DOCS ?= $(LOCALBIN)/helm-docs
+HELM ?= helm
 
 ## Tool Versions
 KUSTOMIZE_VERSION ?= v5.7.1
 CONTROLLER_TOOLS_VERSION ?= v0.20.0
 KO_VERSION ?= v0.17.1
+HELM_DOCS_VERSION ?= v1.14.2
 
 ## Ko
 KO_DOCKER_REPO ?= ko.local/nissessenap/shepherd
@@ -347,6 +368,11 @@ $(GOLANGCI_LINT): $(LOCALBIN)
 ko: $(KO) ## Download ko locally if necessary.
 $(KO): $(LOCALBIN)
 	$(call go-install-tool,$(KO),github.com/google/ko,$(KO_VERSION))
+
+.PHONY: helm-docs-tool
+helm-docs-tool: $(HELM_DOCS) ## Download helm-docs locally if necessary.
+$(HELM_DOCS): $(LOCALBIN)
+	$(call go-install-tool,$(HELM_DOCS),github.com/norwoodj/helm-docs/cmd/helm-docs,$(HELM_DOCS_VERSION))
 
 # go-install-tool will 'go install' any package with custom target and name of binary, if it doesn't exist
 # $1 - target path with name of binary

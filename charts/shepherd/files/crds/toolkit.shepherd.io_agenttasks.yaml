@@ -1,0 +1,294 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.0
+  name: agenttasks.toolkit.shepherd.io
+spec:
+  group: toolkit.shepherd.io
+  names:
+    kind: AgentTask
+    listKind: AgentTaskList
+    plural: agenttasks
+    singular: agenttask
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.conditions[?(@.type=="Succeeded")].reason
+      name: Status
+      type: string
+    - jsonPath: .status.result.prURL
+      name: PR
+      priority: 1
+      type: string
+    - jsonPath: .status.sandboxClaimName
+      name: Claim
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: AgentTask is the Schema for the agenttasks API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            properties:
+              callback:
+                properties:
+                  url:
+                    pattern: ^https?://
+                    type: string
+                required:
+                - url
+                type: object
+              repo:
+                properties:
+                  ref:
+                    type: string
+                  url:
+                    pattern: ^https://
+                    type: string
+                required:
+                - url
+                type: object
+                x-kubernetes-validations:
+                - message: repo is immutable
+                  rule: self == oldSelf
+              runner:
+                properties:
+                  resources:
+                    description: ResourceRequirements describes the compute resource
+                      requirements.
+                    properties:
+                      claims:
+                        description: |-
+                          Claims lists the names of resources, defined in spec.resourceClaims,
+                          that are used by this container.
+
+                          This field depends on the
+                          DynamicResourceAllocation feature gate.
+
+                          This field is immutable. It can only be set for containers.
+                        items:
+                          description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                          properties:
+                            name:
+                              description: |-
+                                Name must match the name of one entry in pod.spec.resourceClaims of
+                                the Pod where this field is used. It makes that resource available
+                                inside a container.
+                              type: string
+                            request:
+                              description: |-
+                                Request is the name chosen for a request in the referenced claim.
+                                If empty, everything from the claim is made available, otherwise
+                                only the result of this request.
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
+                      limits:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Limits describes the maximum amount of compute resources allowed.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                      requests:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Requests describes the minimum amount of compute resources required.
+                          If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                          otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                    type: object
+                  sandboxTemplateName:
+                    description: SandboxTemplateName references a SandboxTemplate
+                      for the runner environment.
+                    type: string
+                  serviceAccountName:
+                    type: string
+                  timeout:
+                    default: 30m
+                    description: Timeout is the maximum duration for task execution.
+                    type: string
+                required:
+                - sandboxTemplateName
+                type: object
+              task:
+                properties:
+                  context:
+                    description: |-
+                      Context is additional context, gzip-compressed then base64-encoded.
+                      The API accepts raw text, compresses for CRD storage.
+                    type: string
+                  contextEncoding:
+                    enum:
+                    - ""
+                    - gzip
+                    type: string
+                  description:
+                    minLength: 1
+                    type: string
+                  sourceID:
+                    description: SourceID identifies the specific trigger instance
+                      (e.g., issue number).
+                    type: string
+                  sourceType:
+                    description: 'SourceType identifies the trigger type: "issue",
+                      "pr", or "fleet".'
+                    enum:
+                    - ""
+                    - issue
+                    - pr
+                    - fleet
+                    type: string
+                  sourceURL:
+                    description: SourceURL is the origin of the task (e.g., GitHub
+                      issue URL). Informational only.
+                    type: string
+                required:
+                - description
+                type: object
+                x-kubernetes-validations:
+                - message: task is immutable
+                  rule: self == oldSelf
+            required:
+            - callback
+            - repo
+            - task
+            type: object
+          status:
+            properties:
+              completionTime:
+                format: date-time
+                type: string
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              graceDeadline:
+                description: |-
+                  GraceDeadline tracks the deadline for the grace period when a sandbox
+                  terminates while the task is still running. This gives the API time to
+                  process success callbacks before marking the task as failed.
+                format: date-time
+                type: string
+              observedGeneration:
+                format: int64
+                type: integer
+              result:
+                properties:
+                  error:
+                    type: string
+                  prURL:
+                    type: string
+                type: object
+              sandboxClaimName:
+                type: string
+              startTime:
+                format: date-time
+                type: string
+              tokenIssued:
+                description: |-
+                  TokenIssued is set true when a GitHub token has been issued for this execution.
+                  Prevents replay attacks by blocking subsequent token requests.
+                  Should be reset if task retrigger functionality is implemented in the future.
+                type: boolean
+            type: object
+        required:
+        - metadata
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
