@@ -83,7 +83,7 @@ kind: SandboxTemplate
 metadata:
   name: runner
 spec:
-  template:
+  podTemplate:
     spec:
       securityContext:
         runAsUser: 1000
