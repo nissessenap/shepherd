@@ -198,6 +198,7 @@ func Run(opts Options) error {
 	internalRouter.Get("/readyz", readyzHandler)
 	internalRouter.Route("/api/v1", func(r chi.Router) {
 		r.Use(contentTypeMiddleware)
+		r.Get("/tasks/{taskID}", handler.getTask)
 		r.Post("/tasks/{taskID}/status", handler.updateTaskStatus)
 		r.Post("/tasks/{taskID}/events", handler.postEvents)
 		r.Get("/tasks/{taskID}/data", handler.getTaskData)
