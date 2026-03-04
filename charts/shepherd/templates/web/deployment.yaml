@@ -10,7 +10,9 @@ metadata:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 spec:
+  {{- if not .Values.web.hpa.enabled }}
   replicas: {{ .Values.web.replicas }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "shepherd.componentSelectorLabels" (dict "context" . "component" "web") | nindent 6 }}
@@ -61,7 +63,9 @@ spec:
             - name: nginx-tmp
               mountPath: /var/lib/nginx/tmp
             - name: nginx-run
-              mountPath: /var/run
+              mountPath: /run
+            - name: nginx-log
+              mountPath: /var/log/nginx
       volumes:
         - name: nginx-config
           configMap:
@@ -69,6 +73,8 @@ spec:
         - name: nginx-tmp
           emptyDir: {}
         - name: nginx-run
+          emptyDir: {}
+        - name: nginx-log
           emptyDir: {}
       terminationGracePeriodSeconds: 10
       {{- with .Values.web.nodeSelector }}

@@ -3,7 +3,7 @@ title: Deployment Guide
 weight: 2
 ---
 
-This guide covers deploying Shepherd to a Kubernetes cluster with Helm. If you're looking to run locally for development, see the [Quickstart](../../getting-started/quickstart/) instead.
+This guide covers deploying Shepherd to a Kubernetes cluster with Helm. For a quick local test, see the [Quickstart](../../getting-started/quickstart/). For development, see the [Contributing Guide](https://github.com/NissesSenap/shepherd/blob/main/CONTRIBUTING.md).
 
 ## Prerequisites
 
@@ -124,6 +124,10 @@ The template name (`runner` in this example) is what you'll use as the `sandboxT
 {{< /callout >}}
 
 See the [agent-sandbox documentation](https://agent-sandbox.sigs.k8s.io/docs/) and [Custom Runners](../../extending/custom-runners/) for building your own runner container.
+
+{{< callout type="info" >}}
+For lower latency, agent-sandbox supports **warm sandboxes** — pre-provisioned pods that are ready before tasks arrive. See the [agent-sandbox warm pools documentation](https://agent-sandbox.sigs.k8s.io/docs/) for details on configuring warm agent pools.
+{{< /callout >}}
 
 ## Step 4: Deploy with Helm
 

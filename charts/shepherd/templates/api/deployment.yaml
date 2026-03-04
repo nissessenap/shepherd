@@ -10,7 +10,9 @@ metadata:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 spec:
+  {{- if not .Values.api.hpa.enabled }}
   replicas: {{ .Values.api.replicas }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "shepherd.componentSelectorLabels" (dict "context" . "component" "api") | nindent 6 }}

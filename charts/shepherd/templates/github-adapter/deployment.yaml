@@ -11,7 +11,9 @@ metadata:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 spec:
+  {{- if not .Values.githubAdapter.hpa.enabled }}
   replicas: {{ .Values.githubAdapter.replicas }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "shepherd.componentSelectorLabels" (dict "context" . "component" "github-adapter") | nindent 6 }}

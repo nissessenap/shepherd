@@ -164,7 +164,9 @@ api:
   pdb:
     # -- Enable PodDisruptionBudget for the API
     enabled: false
-    # -- Minimum available pods (mutually exclusive with maxUnavailable)
+    # -- Minimum available pods (mutually exclusive with maxUnavailable).
+    # IMPORTANT: replicas (or hpa.minReplicas) must be at least minAvailable + 1,
+    # otherwise rolling updates and node drains will hang indefinitely.
     minAvailable: 1
     # -- Maximum unavailable pods (mutually exclusive with minAvailable)
     # @default -- not set
@@ -252,7 +254,9 @@ web:
   pdb:
     # -- Enable PodDisruptionBudget for the web frontend
     enabled: false
-    # -- Minimum available pods (mutually exclusive with maxUnavailable)
+    # -- Minimum available pods (mutually exclusive with maxUnavailable).
+    # IMPORTANT: replicas (or hpa.minReplicas) must be at least minAvailable + 1,
+    # otherwise rolling updates and node drains will hang indefinitely.
     minAvailable: 1
     # -- Maximum unavailable pods (mutually exclusive with minAvailable)
     # @default -- not set
@@ -350,7 +354,9 @@ githubAdapter:
   pdb:
     # -- Enable PodDisruptionBudget for the GitHub adapter
     enabled: false
-    # -- Minimum available pods (mutually exclusive with maxUnavailable)
+    # -- Minimum available pods (mutually exclusive with maxUnavailable).
+    # IMPORTANT: replicas (or hpa.minReplicas) must be at least minAvailable + 1,
+    # otherwise rolling updates and node drains will hang indefinitely.
     minAvailable: 1
     # -- Maximum unavailable pods (mutually exclusive with minAvailable)
     # @default -- not set

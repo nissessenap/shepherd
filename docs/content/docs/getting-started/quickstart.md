@@ -3,9 +3,9 @@ title: Quickstart
 weight: 1
 ---
 
-Get Shepherd running locally in minutes. Part 1 requires only Docker and a few CLI tools — no GitHub App needed. Part 2 walks through connecting to GitHub for full end-to-end testing.
+Get Shepherd running locally in minutes. The first section requires only Docker and a few CLI tools — no GitHub App needed. The second section walks through connecting to GitHub for full end-to-end testing.
 
-## Part 1: Local-Only Testing
+## Local-Only Testing (No GitHub)
 
 This section sets up a local Kind cluster with Shepherd fully deployed. You can create tasks via the API and watch them execute in sandboxed runners — all without a GitHub App.
 
@@ -41,13 +41,17 @@ nodes:
   - containerPort: 30081
     hostPort: 30081
     protocol: TCP
+  - containerPort: 30082
+    hostPort: 30082
+    protocol: TCP
 EOF
 ```
 
-This creates a single-node Kind cluster named `shepherd` with two NodePort mappings:
+This creates a single-node Kind cluster named `shepherd` with three NodePort mappings:
 
 - **Port 30080** — Public API
 - **Port 30081** — Web UI
+- **Port 30082** — GitHub Adapter (webhooks)
 
 ### Install agent-sandbox
 
@@ -127,11 +131,13 @@ EOF
 
 {{< callout type="info" >}}
 The template name (`runner`) is what you'll reference as the `sandboxTemplateName` when creating tasks. The runner container requires an `ANTHROPIC_API_KEY` secret — create it with:
+
 ```bash
 kubectl create secret generic anthropic-credentials \
   --namespace shepherd-system \
   --from-literal=api-key=<YOUR_ANTHROPIC_API_KEY>
 ```
+
 {{< /callout >}}
 
 See the [agent-sandbox documentation](https://agent-sandbox.sigs.k8s.io/docs/) for the full `SandboxTemplate` reference.
@@ -151,6 +157,18 @@ helm install shepherd oci://ghcr.io/nissessenap/helm-charts/shepherd \
   --version 0.1.0 \
   -f values-quickstart.yaml \
   --set githubAdapter.enabled=false \
+  --create-namespace -n shepherd-system
+```
+
+Or install with the GitHub adapter (requires secrets — see [Connecting to GitHub](#connecting-to-github) below):
+
+```bash
+helm install shepherd oci://ghcr.io/nissessenap/helm-charts/shepherd \
+  --version 0.1.0 \
+  -f values-quickstart.yaml \
+  --set api.githubApp.enabled=true \
+  --set api.githubApp.existingSecret=shepherd-runner-app \
+  --set githubAdapter.callbackURL=https://XXXX.ngrok-free.app/callback \
   --create-namespace -n shepherd-system
 ```
 
@@ -197,7 +215,7 @@ Without a GitHub App configured, the token endpoint (`GET /api/v1/tasks/{taskID}
 
 ---
 
-## Part 2: Connecting to GitHub
+## Connecting to GitHub
 
 Once you've verified the local setup, you can connect it to GitHub to receive real webhooks. This requires exposing your local cluster to the internet using ngrok or smee.io.
 
@@ -218,13 +236,13 @@ Once you've verified the local setup, you can connect it to GitHub to receive re
 3. Start a tunnel to the GitHub adapter:
 
    ```bash
-   ngrok http 8082
+   ngrok http 30082
    ```
 
 4. Note the `https://XXXX.ngrok-free.app` URL — you'll use this as the webhook URL when creating your GitHub App.
 
 {{< callout type="warning" >}}
-Only expose the adapter port (8082). The API server has no authentication — do **not** tunnel port 30080 to the internet.
+Only expose the adapter port (30082). The API server has no authentication — do **not** tunnel port 30080 to the internet.
 {{< /callout >}}
 
 #### Gotchas
@@ -251,7 +269,7 @@ Only expose the adapter port (8082). The API server has no authentication — do
 4. Forward webhooks to the local adapter:
 
    ```bash
-   smee --url https://smee.io/YOUR_CHANNEL_ID --path /webhook --port 8082
+   smee --url https://smee.io/YOUR_CHANNEL_ID --path /webhook --port 30082
    ```
 
 {{< callout type="info" >}}
