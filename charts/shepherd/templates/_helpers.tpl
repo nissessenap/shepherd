@@ -55,7 +55,7 @@ Component labels - call with dict "context" . "component" "api"
 */}}
 {{- define "shepherd.componentLabels" -}}
 {{ include "shepherd.labels" .context }}
-app.kubernetes.io/component: {{ .component }}
+{{ include "shepherd.componentSelectorLabels" . }}
 {{- end }}
 
 {{/*

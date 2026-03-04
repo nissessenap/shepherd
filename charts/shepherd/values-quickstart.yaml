@@ -7,7 +7,8 @@
 #
 #   With GitHub adapter (create secrets first):
 #     helm upgrade shepherd oci://ghcr.io/nissessenap/helm-charts/shepherd \
-#       -f values-quickstart.yaml --set githubAdapter.enabled=true --create-namespace -n shepherd-system
+#       -f values-quickstart.yaml --set githubAdapter.enabled=true --set githubAdapter.callbackURL=https://something.ngrok-free.dev/callback \
+#       --create-namespace -n shepherd-system
 
 api:
   replicas: 1
