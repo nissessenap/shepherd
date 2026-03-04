@@ -92,7 +92,8 @@ spec:
         runAsNonRoot: true
       containers:
         - name: runner
-          image: ghcr.io/nissessenap/shepherd-runner:v0.1.0
+          image: shepherd-runner:latest
+          imagePullPolicy: Never
           ports:
             - containerPort: 8888
               protocol: TCP
@@ -197,8 +198,9 @@ curl -s -X POST http://localhost:30080/api/v1/tasks \
     "task": {
       "description": "Say hello world"
     },
-    "callback": {
-      "url": "https://example.com/callback"
+    "callbackURL": "https://example.com/callback",
+    "runner": {
+      "sandboxTemplateName": "runner"
     }
   }' | jq .
 ```
