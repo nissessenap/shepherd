@@ -96,14 +96,19 @@ make helm-deploy
 
 This runs `ko-build-kind` (builds shepherd + runner + web images and loads them into the Kind cluster), then installs/upgrades the Helm release using `values-quickstart.yaml` (NodePort services) layered with `values-kind.yaml` (local image overrides with `pullPolicy: Never`).
 
-To enable the GitHub adapter, append `--set` flags:
+To pass extra Helm flags (e.g. enabling the GitHub adapter callback URL):
 
 ```bash
-make helm-deploy
-helm upgrade shepherd charts/shepherd \
+make helm-deploy HELM_DEPLOY_ARGS="--set githubAdapter.callbackURL=https://XXXX.ngrok-free.app/callback"
+```
+
+or use helm directly
+
+```bash
+helm upgrade -i shepherd charts/shepherd \
   -f charts/shepherd/values-quickstart.yaml \
   -f charts/shepherd/values-kind.yaml \
-  --set githubAdapter.callbackURL=https://XXXX.ngrok-free.app/callback \
+  --set githubAdapter.callbackURL=https://foobar.ngrok-free.dev/callback \
   -n shepherd-system
 ```
 

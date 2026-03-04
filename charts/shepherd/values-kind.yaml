@@ -21,6 +21,7 @@ web:
     tag: latest
     pullPolicy: Never
 githubAdapter:
+  enabled: true
   image:
     registry: ""
     repository: shepherd

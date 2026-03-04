@@ -160,7 +160,8 @@ helm-deploy: ko-build-kind ## Build images, load into Kind, and deploy with Helm
 	$(HELM) upgrade --install shepherd charts/shepherd \
 		-f charts/shepherd/values-quickstart.yaml \
 		-f charts/shepherd/values-kind.yaml \
-		--create-namespace -n shepherd-system
+		--create-namespace -n shepherd-system \
+		$(HELM_DEPLOY_ARGS)
 
 .PHONY: helm-docs
 helm-docs: $(HELM_DOCS) ## Generate Helm chart documentation.
