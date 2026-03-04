@@ -16,6 +16,7 @@ api:
 githubAdapter:
   enabled: true
   existingSecret: shepherd-trigger-app
+  defaultSandboxTemplate: "runner"
   callbackURL: "" # Set via --set for your ngrok/smee URL
 
 # NodePort services for Kind cluster access (ports match test/e2e/kind-config.yaml)
