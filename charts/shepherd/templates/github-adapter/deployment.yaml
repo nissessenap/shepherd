@@ -47,7 +47,7 @@ spec:
           args:
             - github
             - --listen-addr=:{{ .Values.githubAdapter.service.port }}
-            - --api-url={{ printf "http://%s-api.%s.svc.cluster.local:%d" (include "shepherd.fullname" .) (include "shepherd.namespace" .) (.Values.api.service.internalPort | int) }}
+            - --apiurl={{ printf "http://%s-api.%s.svc.cluster.local:%d" (include "shepherd.fullname" .) (include "shepherd.namespace" .) (.Values.api.service.internalPort | int) }}
             - --default-sandbox-template={{ .Values.githubAdapter.defaultSandboxTemplate }}
             {{- if .Values.githubAdapter.callbackURL }}
             - --callback-url={{ .Values.githubAdapter.callbackURL }}

@@ -38,6 +38,9 @@ test/e2e/testrunner/testrunner
 # External CRDs copied from module cache for envtest
 config/crd/external/
 
+# GitHub App private keys (local dev)
+.github-app-keys/
+
 # Hugo documentation build artifacts
 docs/public/
 docs/resources/

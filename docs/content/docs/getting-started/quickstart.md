@@ -59,8 +59,8 @@ The [agent-sandbox operator](https://github.com/kubernetes-sigs/agent-sandbox) m
 
 ```bash
 export AGENT_SANDBOX_VERSION="v0.1.1"
-kubectl apply -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/manifest.yaml
-kubectl apply -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/extensions.yaml
+kubectl apply -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/$AGENT_SANDBOX_VERSION/manifest.yaml
+kubectl apply -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/$AGENT_SANDBOX_VERSION/extensions.yaml
 ```
 
 Wait for the operator to be ready:
@@ -83,7 +83,7 @@ kind: SandboxTemplate
 metadata:
   name: runner
 spec:
-  template:
+  podTemplate:
     spec:
       securityContext:
         runAsUser: 1000
@@ -92,7 +92,8 @@ spec:
         runAsNonRoot: true
       containers:
         - name: runner
-          image: ghcr.io/nissessenap/shepherd-runner:v0.1.0
+          image: shepherd-runner:latest
+          imagePullPolicy: Never
           ports:
             - containerPort: 8888
               protocol: TCP
@@ -197,8 +198,9 @@ curl -s -X POST http://localhost:30080/api/v1/tasks \
     "task": {
       "description": "Say hello world"
     },
-    "callback": {
-      "url": "https://example.com/callback"
+    "callbackURL": "https://example.com/callback",
+    "runner": {
+      "sandboxTemplateName": "runner"
     }
   }' | jq .
 ```

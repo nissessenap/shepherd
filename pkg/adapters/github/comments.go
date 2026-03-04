@@ -39,11 +39,7 @@ Pull Request: %s
 
 Please review the changes.`
 
-	commentFailed = `Shepherd was unable to complete the task.
-
-Error: %s
-
-You can trigger a new attempt by commenting with @shepherd again.`
+	commentFailed = "Shepherd was unable to complete the task.\n\nError: %s\n\nYou can trigger a new attempt by commenting with `@shepherd` again."
 )
 
 func formatAcknowledge(taskID string) string {

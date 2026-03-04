@@ -85,6 +85,10 @@ func (h *taskHandler) getTaskToken(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Generate and return token
+		if h.githubClient == nil {
+			writeError(w, http.StatusServiceUnavailable, "GitHub App not configured", "")
+			return
+		}
 		token, expiresAt, err := h.githubClient.GetToken(r.Context(), task.Spec.Repo.URL)
 		if err != nil {
 			log.Error(err, "failed to get GitHub token", "taskID", taskID)

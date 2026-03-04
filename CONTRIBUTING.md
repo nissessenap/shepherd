@@ -86,6 +86,34 @@ make web-check
 
 This generates `web/src/lib/api.d.ts` from the OpenAPI spec using `openapi-typescript`.
 
+## Local Deployment with Helm
+
+Build all images from source, load them into Kind, and deploy with Helm:
+
+```bash
+make helm-deploy
+```
+
+This runs `ko-build-kind` (builds shepherd + runner + web images and loads them into the Kind cluster), then installs/upgrades the Helm release using `values-quickstart.yaml` (NodePort services) layered with `values-kind.yaml` (local image overrides with `pullPolicy: Never`).
+
+**Note:** `ko-build-kind` loads a **test runner stub** (`test/e2e/testrunner/`) as `shepherd-runner:latest`, not the real runner. The stub always returns success with a fake PR URL, so tasks will show as "Succeeded" without needing an Anthropic API key. This is useful for testing the full orchestration pipeline (API → Operator → Sandbox → Runner → Callback) without incurring API costs. To test with the real runner, build it separately with `make docker-build-runner` and provide an `ANTHROPIC_API_KEY` secret.
+
+To pass extra Helm flags (e.g. enabling the GitHub adapter callback URL):
+
+```bash
+make helm-deploy HELM_DEPLOY_ARGS="--set githubAdapter.callbackURL=https://XXXX.ngrok-free.app/callback"
+```
+
+or use helm directly
+
+```bash
+helm upgrade -i shepherd charts/shepherd \
+  -f charts/shepherd/values-quickstart.yaml \
+  -f charts/shepherd/values-kind.yaml \
+  --set githubAdapter.callbackURL=https://foobar.ngrok-free.dev/callback \
+  -n shepherd-system
+```
+
 ## E2E Testing
 
 ### Full Stack (Go + Playwright)

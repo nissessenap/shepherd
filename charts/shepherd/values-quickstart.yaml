@@ -3,20 +3,24 @@
 # Usage:
 #   Without GitHub adapter:
 #     helm install shepherd oci://ghcr.io/nissessenap/helm-charts/shepherd \
-#       -f values-quickstart.yaml --set githubAdapter.enabled=false \
-#       --create-namespace -n shepherd-system
+#       -f values-quickstart.yaml --create-namespace -n shepherd-system
 #
 #   With GitHub adapter (create secrets first):
 #     helm upgrade shepherd oci://ghcr.io/nissessenap/helm-charts/shepherd \
-#       -f values-quickstart.yaml -n shepherd-system
+#       -f values-quickstart.yaml --set githubAdapter.enabled=true --set githubAdapter.callbackURL=https://something.ngrok-free.dev/callback \
+#       --create-namespace -n shepherd-system
 
 api:
   replicas: 1
+  githubApp:
+    enabled: true
+    existingSecret: shepherd-runner-app
 
 githubAdapter:
   enabled: true
   existingSecret: shepherd-trigger-app
-  callbackURL: ""  # Set via --set for your ngrok/smee URL
+  defaultSandboxTemplate: "runner"
+  callbackURL: "" # Set via --set for your ngrok/smee URL
 
 # NodePort services for Kind cluster access (ports match test/e2e/kind-config.yaml)
 extraObjects:
@@ -31,7 +35,7 @@ extraObjects:
       type: NodePort
       selector:
         app.kubernetes.io/name: shepherd
-        app.kubernetes.io/instance: '{{ .Release.Name }}'
+        app.kubernetes.io/instance: "{{ .Release.Name }}"
         app.kubernetes.io/component: api
       ports:
         - port: 8080
@@ -49,7 +53,7 @@ extraObjects:
       type: NodePort
       selector:
         app.kubernetes.io/name: shepherd
-        app.kubernetes.io/instance: '{{ .Release.Name }}'
+        app.kubernetes.io/instance: "{{ .Release.Name }}"
         app.kubernetes.io/component: web
       ports:
         - port: 8080
@@ -67,7 +71,7 @@ extraObjects:
       type: NodePort
       selector:
         app.kubernetes.io/name: shepherd
-        app.kubernetes.io/instance: '{{ .Release.Name }}'
+        app.kubernetes.io/instance: "{{ .Release.Name }}"
         app.kubernetes.io/component: github-adapter
       ports:
         - port: 8082

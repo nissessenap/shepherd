@@ -1,0 +1,29 @@
+# values-kind.yaml — Image overrides for local Kind development.
+# Used by `make helm-deploy` on top of values-quickstart.yaml.
+# Images are built locally via ko/docker and loaded into Kind (ko-build-kind).
+
+operator:
+  image:
+    registry: ""
+    repository: shepherd
+    tag: latest
+    pullPolicy: Never
+api:
+  image:
+    registry: ""
+    repository: shepherd
+    tag: latest
+    pullPolicy: Never
+web:
+  image:
+    registry: ""
+    repository: shepherd-web
+    tag: latest
+    pullPolicy: Never
+githubAdapter:
+  enabled: true
+  image:
+    registry: ""
+    repository: shepherd
+    tag: latest
+    pullPolicy: Never
