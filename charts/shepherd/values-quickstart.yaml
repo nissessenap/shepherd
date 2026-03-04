@@ -12,6 +12,9 @@
 
 api:
   replicas: 1
+  githubApp:
+    enabled: true
+    existingSecret: shepherd-runner-app
 
 githubAdapter:
   enabled: true
