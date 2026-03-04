@@ -21,8 +21,8 @@ The [agent-sandbox operator](https://github.com/kubernetes-sigs/agent-sandbox) m
 
 ```bash
 export AGENT_SANDBOX_VERSION="v0.1.1"
-kubectl apply -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/manifest.yaml
-kubectl apply -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/extensions.yaml
+kubectl apply -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/$AGENT_SANDBOX_VERSION/manifest.yaml
+kubectl apply -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/$AGENT_SANDBOX_VERSION/extensions.yaml
 ```
 
 Wait for the operator to be ready:
