@@ -6,7 +6,8 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 go build -o /shepherd-runner ./cmd/shepherd-runner/
 
-FROM golang:1.25-bookworm
+# Tooling stage — cached independently of Go code changes
+FROM golang:1.25-bookworm AS tooling
 
 # Install tools (as root)
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -25,6 +26,8 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | d
 
 # Install Claude Code (native Bun binary, as root)
 RUN curl -fsSL https://claude.ai/install.sh | bash
+
+FROM tooling
 
 # Copy runner binary (root ownership is fine for system binaries)
 COPY --from=builder /shepherd-runner /usr/local/bin/shepherd-runner

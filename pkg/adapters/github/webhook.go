@@ -138,6 +138,11 @@ func (h *WebhookHandler) handleIssueComment(ctx context.Context, body []byte) {
 		return
 	}
 
+	// Ignore comments from bots (including our own app) to prevent feedback loops
+	if event.GetComment().GetUser().GetType() == "Bot" {
+		return
+	}
+
 	// Check for @shepherd mention
 	commentBody := event.GetComment().GetBody()
 	if !shepherdMentionRegex.MatchString(commentBody) {

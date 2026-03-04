@@ -248,11 +248,12 @@ build-smoke: ko-build-local ko-build-e2e-runner-local manifests kustomize ## Ver
 	@echo "Build smoke test passed: ko images built, kustomize renders cleanly"
 
 .PHONY: ko-build-kind
-ko-build-kind: ko-build-local ko-build-e2e-runner-local docker-build-web ## Build images and load them into the kind cluster.
+ko-build-kind: ko-build-local ko-build-e2e-runner-local docker-build-runner docker-build-web ## Build images and load them into the kind cluster.
 	docker tag "$(IMG)" shepherd:latest
 	docker tag "$(RUNNER_E2E_IMG)" shepherd-runner-e2e:latest
 	kind load docker-image shepherd:latest --name "$(KIND_CLUSTER_NAME)"
 	kind load docker-image shepherd-runner-e2e:latest --name "$(KIND_CLUSTER_NAME)"
+	kind load docker-image $(RUNNER_IMG) --name "$(KIND_CLUSTER_NAME)"
 	kind load docker-image $(FRONTEND_IMG) --name "$(KIND_CLUSTER_NAME)"
 
 ##@ Kind
