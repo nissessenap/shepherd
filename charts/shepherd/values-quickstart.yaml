@@ -1,0 +1,76 @@
+# values-quickstart.yaml — Local Kind development only. DO NOT use in production.
+#
+# Usage:
+#   Without GitHub adapter:
+#     helm install shepherd oci://ghcr.io/nissessenap/helm-charts/shepherd \
+#       -f values-quickstart.yaml --set githubAdapter.enabled=false \
+#       --create-namespace -n shepherd-system
+#
+#   With GitHub adapter (create secrets first):
+#     helm upgrade shepherd oci://ghcr.io/nissessenap/helm-charts/shepherd \
+#       -f values-quickstart.yaml -n shepherd-system
+
+api:
+  replicas: 1
+
+githubAdapter:
+  enabled: true
+  existingSecret: shepherd-trigger-app
+  callbackURL: ""  # Set via --set for your ngrok/smee URL
+
+# NodePort services for Kind cluster access (ports match test/e2e/kind-config.yaml)
+extraObjects:
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: shepherd-api-nodeport
+      namespace: '{{ include "shepherd.namespace" . }}'
+      labels:
+        app.kubernetes.io/component: api
+    spec:
+      type: NodePort
+      selector:
+        app.kubernetes.io/name: shepherd
+        app.kubernetes.io/instance: '{{ .Release.Name }}'
+        app.kubernetes.io/component: api
+      ports:
+        - port: 8080
+          targetPort: 8080
+          nodePort: 30080
+          protocol: TCP
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: shepherd-web-nodeport
+      namespace: '{{ include "shepherd.namespace" . }}'
+      labels:
+        app.kubernetes.io/component: web
+    spec:
+      type: NodePort
+      selector:
+        app.kubernetes.io/name: shepherd
+        app.kubernetes.io/instance: '{{ .Release.Name }}'
+        app.kubernetes.io/component: web
+      ports:
+        - port: 8080
+          targetPort: 8080
+          nodePort: 30081
+          protocol: TCP
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: shepherd-github-adapter-nodeport
+      namespace: '{{ include "shepherd.namespace" . }}'
+      labels:
+        app.kubernetes.io/component: github-adapter
+    spec:
+      type: NodePort
+      selector:
+        app.kubernetes.io/name: shepherd
+        app.kubernetes.io/instance: '{{ .Release.Name }}'
+        app.kubernetes.io/component: github-adapter
+      ports:
+        - port: 8082
+          targetPort: 8082
+          nodePort: 30082
+          protocol: TCP

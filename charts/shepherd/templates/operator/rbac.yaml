@@ -1,0 +1,57 @@
+{{- if .Values.operator.rbac.create -}}
+{{- $rbac := .Files.Get "files/rbac.yaml" | fromYaml }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "shepherd.fullname" . }}-operator
+  labels:
+    {{- include "shepherd.componentLabels" (dict "context" . "component" "operator") | nindent 4 }}
+rules:
+  {{- toYaml $rbac.rules | nindent 2 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "shepherd.fullname" . }}-operator
+  labels:
+    {{- include "shepherd.componentLabels" (dict "context" . "component" "operator") | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "shepherd.fullname" . }}-operator
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "shepherd.serviceAccountName" (dict "context" . "component" "operator" "sa" .Values.operator.serviceAccount) }}
+    namespace: {{ include "shepherd.namespace" . }}
+{{- if .Values.operator.leaderElection }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "shepherd.fullname" . }}-operator-leases
+  namespace: {{ include "shepherd.namespace" . }}
+  labels:
+    {{- include "shepherd.componentLabels" (dict "context" . "component" "operator") | nindent 4 }}
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "shepherd.fullname" . }}-operator-leases
+  namespace: {{ include "shepherd.namespace" . }}
+  labels:
+    {{- include "shepherd.componentLabels" (dict "context" . "component" "operator") | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "shepherd.serviceAccountName" (dict "context" . "component" "operator" "sa" .Values.operator.serviceAccount) }}
+    namespace: {{ include "shepherd.namespace" . }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "shepherd.fullname" . }}-operator-leases
+{{- end }}
+{{- end }}

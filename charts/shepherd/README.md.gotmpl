@@ -1,0 +1,51 @@
+---
+title: Helm Chart Values
+weight: 4
+---
+
+{{ template "chart.header" . }}
+
+{{ template "chart.typeBadge" . }}{{ template "chart.appVersionBadge" . }}
+
+{{ template "chart.description" . }}
+
+## Prerequisites
+
+- Kubernetes >= 1.28
+- Helm >= 3.10
+- [agent-sandbox operator](https://github.com/kubernetes-sigs/agent-sandbox) installed in the cluster
+
+## Installation
+
+```shell
+helm install shepherd charts/shepherd/
+```
+
+### With GitHub Adapter
+
+```shell
+helm install shepherd charts/shepherd/ \
+  --set githubAdapter.enabled=true \
+  --set githubAdapter.existingSecret=my-github-secret \
+  --set githubAdapter.callbackURL=https://my-domain.com/callback
+```
+
+## CRDs
+
+CRDs are installed via `templates/` (not `crds/`) so they are automatically updated on `helm upgrade`.
+They are protected with `helm.sh/resource-policy: keep` to prevent deletion on chart uninstall.
+
+To skip CRD installation (e.g. if managed externally):
+```shell
+helm install shepherd charts/shepherd/ --set crds.install=false
+```
+
+{{ template "chart.maintainersSection" . }}
+
+{{ template "chart.sourcesSection" . }}
+
+{{ template "chart.requirementsSection" . }}
+
+{{ template "chart.valuesSection" . }}
+
+{{ template "helm-docs.versionFooter" . }}

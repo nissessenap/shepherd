@@ -1,0 +1,391 @@
+crds:
+  # -- Whether to install CRDs with the chart.
+  # CRDs are placed in templates/ (not crds/) so they are updated on helm upgrade.
+  # Protected with helm.sh/resource-policy: keep to prevent deletion on chart uninstall.
+  install: true
+
+# -- Overrides the chart name
+# @default -- chart name
+nameOverride: ""
+
+# -- Overrides the fully qualified app name
+# @default -- derived from release name + chart name
+fullnameOverride: ""
+
+# -- Override the release namespace
+# @default -- .Release.Namespace
+namespaceOverride: ""
+
+global:
+  image:
+    # -- Global image registry override for all Shepherd images
+    registry: ""
+  # -- Additional labels applied to all resources
+  additionalLabels: {}
+  # -- Image pull secrets shared across all components
+  imagePullSecrets: []
+
+operator:
+  # -- Annotations for the operator deployment
+  annotations: {}
+  # -- Labels for the operator pods
+  podLabels: {}
+  # -- Annotations for the operator pods
+  podAnnotations: {}
+  # -- Enable leader election for the operator
+  leaderElection: true
+  # -- Health probe port
+  healthPort: 8082
+  # -- Metrics port
+  metricsPort: 9090
+  image:
+    # -- Operator image registry
+    registry: ghcr.io
+    # -- Operator image repository
+    repository: nissessenap/shepherd
+    # -- Operator image tag (defaults to chart appVersion)
+    # @default -- .Chart.AppVersion
+    tag: ""
+    # -- Operator image pull policy
+    pullPolicy: IfNotPresent
+  # -- Image pull secrets for operator (overrides global)
+  imagePullSecrets: []
+  serviceAccount:
+    # -- Whether to create a service account for the operator
+    create: true
+    # -- Annotations to add to the operator service account
+    annotations: {}
+    # -- The name of the operator service account
+    # @default -- fullname-operator
+    name: ""
+  rbac:
+    # -- Whether to create RBAC resources for the operator
+    create: true
+  # -- Pod security context for the operator
+  podSecurityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  # -- Container security context for the operator
+  securityContext:
+    readOnlyRootFilesystem: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+  # -- Resource requests and limits for the operator
+  resources:
+    limits:
+      cpu: 500m
+      memory: 128Mi
+    requests:
+      cpu: 10m
+      memory: 64Mi
+  # -- Node selector for the operator pods
+  nodeSelector: {}
+  # -- Tolerations for the operator pods
+  tolerations: []
+  # -- Affinity rules for the operator pods
+  affinity: {}
+
+api:
+  # -- Number of API server replicas
+  replicas: 2
+  # -- Annotations for the API deployment
+  annotations: {}
+  # -- Labels for the API pods
+  podLabels: {}
+  # -- Annotations for the API pods
+  podAnnotations: {}
+  image:
+    # -- API image registry
+    registry: ghcr.io
+    # -- API image repository (same binary as operator)
+    repository: nissessenap/shepherd
+    # -- API image tag (defaults to chart appVersion)
+    # @default -- .Chart.AppVersion
+    tag: ""
+    # -- API image pull policy
+    pullPolicy: IfNotPresent
+  # -- Image pull secrets for the API (overrides global)
+  imagePullSecrets: []
+  serviceAccount:
+    # -- Whether to create a service account for the API
+    create: true
+    # -- Annotations to add to the API service account
+    annotations: {}
+    # -- The name of the API service account
+    # @default -- fullname-api
+    name: ""
+  rbac:
+    # -- Whether to create RBAC resources for the API
+    create: true
+  service:
+    # -- API service type
+    type: ClusterIP
+    # -- Public API port
+    port: 8080
+    # -- Internal API port (for runner communication)
+    internalPort: 8081
+    # -- Annotations for the API service
+    annotations: {}
+  githubApp:
+    # -- Enable GitHub App integration for token generation
+    enabled: false
+    # -- Name of the existing Secret containing GitHub App credentials.
+    # Must contain keys: app-id, installation-id, private-key
+    existingSecret: ""
+  # -- Pod security context for the API
+  podSecurityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  # -- Container security context for the API
+  securityContext:
+    readOnlyRootFilesystem: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+  # -- Resource requests and limits for the API
+  resources:
+    limits:
+      cpu: 500m
+      memory: 128Mi
+    requests:
+      cpu: 10m
+      memory: 64Mi
+  # -- Node selector for the API pods
+  nodeSelector: {}
+  # -- Tolerations for the API pods
+  tolerations: []
+  # -- Affinity rules for the API pods
+  affinity: {}
+  pdb:
+    # -- Enable PodDisruptionBudget for the API
+    enabled: false
+    # -- Minimum available pods (mutually exclusive with maxUnavailable).
+    # IMPORTANT: replicas (or hpa.minReplicas) must be at least minAvailable + 1,
+    # otherwise rolling updates and node drains will hang indefinitely.
+    minAvailable: 1
+    # -- Maximum unavailable pods (mutually exclusive with minAvailable)
+    # @default -- not set
+    maxUnavailable: ""
+  hpa:
+    # -- Enable HorizontalPodAutoscaler for the API
+    enabled: false
+    # -- Minimum number of replicas
+    minReplicas: 2
+    # -- Maximum number of replicas
+    maxReplicas: 5
+    # -- Metrics for the HPA
+    metrics:
+      - type: Resource
+        resource:
+          name: cpu
+          target:
+            type: Utilization
+            averageUtilization: 80
+
+web:
+  # -- Number of web frontend replicas
+  replicas: 1
+  # -- Annotations for the web deployment
+  annotations: {}
+  # -- Labels for the web pods
+  podLabels: {}
+  # -- Annotations for the web pods
+  podAnnotations: {}
+  image:
+    # -- Web image registry
+    registry: ghcr.io
+    # -- Web image repository
+    repository: nissessenap/shepherd-web
+    # -- Web image tag (defaults to chart appVersion)
+    # @default -- .Chart.AppVersion
+    tag: ""
+    # -- Web image pull policy
+    pullPolicy: IfNotPresent
+  # -- Image pull secrets for the web frontend (overrides global)
+  imagePullSecrets: []
+  serviceAccount:
+    # -- Whether to create a service account for the web frontend
+    create: true
+    # -- Annotations to add to the web service account
+    annotations: {}
+    # -- The name of the web service account
+    # @default -- fullname-web
+    name: ""
+    # -- Whether to auto-mount the service account token (not needed for web)
+    automountServiceAccountToken: false
+  service:
+    # -- Web service type
+    type: ClusterIP
+    # -- Web service port
+    port: 8080
+    # -- Annotations for the web service
+    annotations: {}
+  # -- Pod security context for the web frontend
+  podSecurityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  # -- Container security context for the web frontend
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop:
+        - ALL
+  # -- Resource requests and limits for the web frontend
+  resources:
+    limits:
+      cpu: 100m
+      memory: 64Mi
+    requests:
+      cpu: 10m
+      memory: 32Mi
+  # -- Node selector for the web pods
+  nodeSelector: {}
+  # -- Tolerations for the web pods
+  tolerations: []
+  # -- Affinity rules for the web pods
+  affinity: {}
+  pdb:
+    # -- Enable PodDisruptionBudget for the web frontend
+    enabled: false
+    # -- Minimum available pods (mutually exclusive with maxUnavailable).
+    # IMPORTANT: replicas (or hpa.minReplicas) must be at least minAvailable + 1,
+    # otherwise rolling updates and node drains will hang indefinitely.
+    minAvailable: 1
+    # -- Maximum unavailable pods (mutually exclusive with minAvailable)
+    # @default -- not set
+    maxUnavailable: ""
+  hpa:
+    # -- Enable HorizontalPodAutoscaler for the web frontend
+    enabled: false
+    # -- Minimum number of replicas
+    minReplicas: 2
+    # -- Maximum number of replicas
+    maxReplicas: 5
+    # -- Metrics for the HPA
+    metrics:
+      - type: Resource
+        resource:
+          name: cpu
+          target:
+            type: Utilization
+            averageUtilization: 80
+
+githubAdapter:
+  # -- Enable the GitHub adapter component
+  enabled: false
+  # -- Number of GitHub adapter replicas
+  replicas: 1
+  # -- Annotations for the GitHub adapter deployment
+  annotations: {}
+  # -- Labels for the GitHub adapter pods
+  podLabels: {}
+  # -- Annotations for the GitHub adapter pods
+  podAnnotations: {}
+  image:
+    # -- GitHub adapter image registry
+    registry: ghcr.io
+    # -- GitHub adapter image repository (same binary as operator)
+    repository: nissessenap/shepherd
+    # -- GitHub adapter image tag (defaults to chart appVersion)
+    # @default -- .Chart.AppVersion
+    tag: ""
+    # -- GitHub adapter image pull policy
+    pullPolicy: IfNotPresent
+  # -- Image pull secrets for the GitHub adapter (overrides global)
+  imagePullSecrets: []
+  serviceAccount:
+    # -- Whether to create a service account for the GitHub adapter
+    create: true
+    # -- Annotations to add to the GitHub adapter service account
+    annotations: {}
+    # -- The name of the GitHub adapter service account
+    # @default -- fullname-github-adapter
+    name: ""
+    # -- Whether to auto-mount the service account token (not needed)
+    automountServiceAccountToken: false
+  service:
+    # -- GitHub adapter service type
+    type: ClusterIP
+    # -- GitHub adapter webhook port
+    port: 8082
+    # -- Annotations for the GitHub adapter service
+    annotations: {}
+  # -- Name of the existing Secret containing GitHub App credentials.
+  # Must contain keys: webhook-secret, app-id, installation-id, private-key.
+  # Optionally: callback-secret.
+  existingSecret: ""
+  # -- Callback URL that the API server will call back to
+  callbackURL: ""
+  # -- Default sandbox template name for new tasks
+  defaultSandboxTemplate: "default"
+  # -- Pod security context for the GitHub adapter
+  podSecurityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  # -- Container security context for the GitHub adapter
+  securityContext:
+    readOnlyRootFilesystem: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+  # -- Resource requests and limits for the GitHub adapter
+  resources:
+    limits:
+      cpu: 500m
+      memory: 128Mi
+    requests:
+      cpu: 10m
+      memory: 64Mi
+  # -- Node selector for the GitHub adapter pods
+  nodeSelector: {}
+  # -- Tolerations for the GitHub adapter pods
+  tolerations: []
+  # -- Affinity rules for the GitHub adapter pods
+  affinity: {}
+  pdb:
+    # -- Enable PodDisruptionBudget for the GitHub adapter
+    enabled: false
+    # -- Minimum available pods (mutually exclusive with maxUnavailable).
+    # IMPORTANT: replicas (or hpa.minReplicas) must be at least minAvailable + 1,
+    # otherwise rolling updates and node drains will hang indefinitely.
+    minAvailable: 1
+    # -- Maximum unavailable pods (mutually exclusive with minAvailable)
+    # @default -- not set
+    maxUnavailable: ""
+  hpa:
+    # -- Enable HorizontalPodAutoscaler for the GitHub adapter
+    enabled: false
+    # -- Minimum number of replicas
+    minReplicas: 2
+    # -- Maximum number of replicas
+    maxReplicas: 5
+    # -- Metrics for the HPA
+    metrics:
+      - type: Resource
+        resource:
+          name: cpu
+          target:
+            type: Utilization
+            averageUtilization: 80
+
+# -- Array of extra K8s objects to deploy (supports templating)
+extraObjects: []
+# - apiVersion: monitoring.coreos.com/v1
+#   kind: ServiceMonitor
+#   metadata:
+#     name: shepherd-api
+#   spec:
+#     selector:
+#       matchLabels:
+#         app.kubernetes.io/component: api
+#     endpoints:
+#       - port: metrics

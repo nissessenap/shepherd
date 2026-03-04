@@ -1,0 +1,119 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "shepherd.fullname" . }}-api
+  namespace: {{ include "shepherd.namespace" . }}
+  labels:
+    {{- include "shepherd.componentLabels" (dict "context" . "component" "api") | nindent 4 }}
+  {{- with .Values.api.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if not .Values.api.hpa.enabled }}
+  replicas: {{ .Values.api.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "shepherd.componentSelectorLabels" (dict "context" . "component" "api") | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.api.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "shepherd.componentLabels" (dict "context" . "component" "api") | nindent 8 }}
+        {{- with .Values.api.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with (coalesce .Values.api.imagePullSecrets .Values.global.imagePullSecrets) }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "shepherd.serviceAccountName" (dict "context" . "component" "api" "sa" .Values.api.serviceAccount) }}
+      securityContext:
+        {{- toYaml .Values.api.podSecurityContext | nindent 8 }}
+      containers:
+        - name: api
+          securityContext:
+            {{- toYaml .Values.api.securityContext | nindent 12 }}
+          image: {{ include "shepherd.image" (dict "service" .Values.api.image "global" .Values.global.image "defaultVersion" .Chart.AppVersion) }}
+          imagePullPolicy: {{ .Values.api.image.pullPolicy }}
+          command:
+            - /ko-app/shepherd
+          args:
+            - api
+            - --listen-addr=:{{ .Values.api.service.port }}
+            - --internal-listen-addr=:{{ .Values.api.service.internalPort }}
+          env:
+            - name: SHEPHERD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            {{- if .Values.api.githubApp.enabled }}
+            - name: SHEPHERD_GITHUB_APP_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.api.githubApp.existingSecret }}
+                  key: app-id
+            - name: SHEPHERD_GITHUB_INSTALLATION_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.api.githubApp.existingSecret }}
+                  key: installation-id
+            - name: SHEPHERD_GITHUB_PRIVATE_KEY_PATH
+              value: /etc/shepherd/github-app-key
+            {{- end }}
+          ports:
+            - name: api
+              containerPort: {{ .Values.api.service.port }}
+              protocol: TCP
+            - name: internal
+              containerPort: {{ .Values.api.service.internalPort }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: api
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: api
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          {{- with .Values.api.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if .Values.api.githubApp.enabled }}
+          volumeMounts:
+            - name: github-app-key
+              mountPath: /etc/shepherd
+              readOnly: true
+          {{- end }}
+      {{- if .Values.api.githubApp.enabled }}
+      volumes:
+        - name: github-app-key
+          secret:
+            secretName: {{ .Values.api.githubApp.existingSecret }}
+            items:
+              - key: private-key
+                path: github-app-key
+      {{- end }}
+      terminationGracePeriodSeconds: 10
+      {{- with .Values.api.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.api.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.api.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

@@ -1,0 +1,13 @@
+apiVersion: v2
+name: shepherd
+description: Background coding agent orchestrator for Kubernetes
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.28.0-0"
+home: https://github.com/NissesSenap/shepherd
+sources:
+  - https://github.com/NissesSenap/shepherd
+maintainers:
+  - name: NissesSenap
+    url: https://github.com/NissesSenap

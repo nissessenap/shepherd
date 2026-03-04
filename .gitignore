@@ -5,7 +5,7 @@
 *.so
 *.dylib
 bin/*
-shepherd
+/shepherd
 Dockerfile.cross
 
 # Test binary, built with `go test -c`

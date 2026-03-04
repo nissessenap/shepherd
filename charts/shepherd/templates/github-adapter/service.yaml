@@ -1,0 +1,22 @@
+{{- if .Values.githubAdapter.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "shepherd.fullname" . }}-github-adapter
+  namespace: {{ include "shepherd.namespace" . }}
+  labels:
+    {{- include "shepherd.componentLabels" (dict "context" . "component" "github-adapter") | nindent 4 }}
+  {{- with .Values.githubAdapter.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.githubAdapter.service.type }}
+  selector:
+    {{- include "shepherd.componentSelectorLabels" (dict "context" . "component" "github-adapter") | nindent 4 }}
+  ports:
+    - name: webhook
+      port: {{ .Values.githubAdapter.service.port }}
+      targetPort: webhook
+      protocol: TCP
+{{- end }}
