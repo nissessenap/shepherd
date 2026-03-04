@@ -155,6 +155,13 @@ docs-sync-openapi: ## Copy OpenAPI spec to docs static directory.
 
 ##@ Helm
 
+.PHONY: helm-deploy
+helm-deploy: ko-build-kind ## Build images, load into Kind, and deploy with Helm.
+	$(HELM) upgrade --install shepherd charts/shepherd \
+		-f charts/shepherd/values-quickstart.yaml \
+		-f charts/shepherd/values-kind.yaml \
+		--create-namespace -n shepherd-system
+
 .PHONY: helm-docs
 helm-docs: $(HELM_DOCS) ## Generate Helm chart documentation.
 	$(HELM_DOCS) --chart-search-root=charts

@@ -86,6 +86,27 @@ make web-check
 
 This generates `web/src/lib/api.d.ts` from the OpenAPI spec using `openapi-typescript`.
 
+## Local Deployment with Helm
+
+Build all images from source, load them into Kind, and deploy with Helm:
+
+```bash
+make helm-deploy
+```
+
+This runs `ko-build-kind` (builds shepherd + runner + web images and loads them into the Kind cluster), then installs/upgrades the Helm release using `values-quickstart.yaml` (NodePort services) layered with `values-kind.yaml` (local image overrides with `pullPolicy: Never`).
+
+To enable the GitHub adapter, append `--set` flags:
+
+```bash
+make helm-deploy
+helm upgrade shepherd charts/shepherd \
+  -f charts/shepherd/values-quickstart.yaml \
+  -f charts/shepherd/values-kind.yaml \
+  --set githubAdapter.callbackURL=https://XXXX.ngrok-free.app/callback \
+  -n shepherd-system
+```
+
 ## E2E Testing
 
 ### Full Stack (Go + Playwright)
