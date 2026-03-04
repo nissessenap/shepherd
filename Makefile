@@ -1,6 +1,7 @@
 # Image URL to use all building/pushing image targets
 IMG ?= shepherd:latest
 RUNNER_IMG ?= shepherd-runner:latest
+RUNNER_E2E_IMG ?= shepherd-runner-e2e:latest
 FRONTEND_IMG ?= shepherd-web:latest
 
 # Docker cache arguments (used by CI for GHA cache backend)
@@ -228,10 +229,10 @@ ko-build-local: ko ## Build shepherd image locally with ko (sets IMG).
 	$(eval IMG := $(shell KO_DOCKER_REPO=$(KO_DOCKER_REPO) "$(KO)" build --sbom=none --bare --local ./cmd/shepherd/))
 	@echo "IMG=$(IMG)"
 
-.PHONY: ko-build-runner-local
-ko-build-runner-local: ko ## Build runner stub image locally with ko (sets RUNNER_IMG).
-	$(eval RUNNER_IMG := $(shell KO_DOCKER_REPO=$(KO_DOCKER_REPO) "$(KO)" build --sbom=none --bare --local ./test/e2e/testrunner/))
-	@echo "RUNNER_IMG=$(RUNNER_IMG)"
+.PHONY: ko-build-e2e-runner-local
+ko-build-e2e-runner-local: ko ## Build e2e test runner stub image locally with ko (sets RUNNER_E2E_IMG).
+	$(eval RUNNER_E2E_IMG := $(shell KO_DOCKER_REPO=$(KO_DOCKER_REPO) "$(KO)" build --sbom=none --bare --local ./test/e2e/testrunner/))
+	@echo "RUNNER_E2E_IMG=$(RUNNER_E2E_IMG)"
 
 .PHONY: docker-build-runner
 docker-build-runner: ## Build shepherd-runner Docker image locally.
@@ -242,16 +243,16 @@ docker-build-web: web-build ## Build frontend Docker image.
 	docker buildx build --load $(DOCKER_CACHE_ARGS) -f build/web/Dockerfile -t $(FRONTEND_IMG) .
 
 .PHONY: build-smoke
-build-smoke: ko-build-local ko-build-runner-local manifests kustomize ## Verify ko builds + kustomize render.
+build-smoke: ko-build-local ko-build-e2e-runner-local manifests kustomize ## Verify ko builds + kustomize render.
 	"$(KUSTOMIZE)" build config/default > /dev/null
 	@echo "Build smoke test passed: ko images built, kustomize renders cleanly"
 
 .PHONY: ko-build-kind
-ko-build-kind: ko-build-local ko-build-runner-local docker-build-web ## Build images and load them into the kind cluster.
+ko-build-kind: ko-build-local ko-build-e2e-runner-local docker-build-web ## Build images and load them into the kind cluster.
 	docker tag "$(IMG)" shepherd:latest
-	docker tag "$(RUNNER_IMG)" shepherd-runner:latest
+	docker tag "$(RUNNER_E2E_IMG)" shepherd-runner-e2e:latest
 	kind load docker-image shepherd:latest --name "$(KIND_CLUSTER_NAME)"
-	kind load docker-image shepherd-runner:latest --name "$(KIND_CLUSTER_NAME)"
+	kind load docker-image shepherd-runner-e2e:latest --name "$(KIND_CLUSTER_NAME)"
 	kind load docker-image $(FRONTEND_IMG) --name "$(KIND_CLUSTER_NAME)"
 
 ##@ Kind
