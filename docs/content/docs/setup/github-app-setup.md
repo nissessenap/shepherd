@@ -81,10 +81,16 @@ For an **organization app**, change the form action to `https://github.com/organ
 
 1. Open the HTML file in your browser and click **Create Shepherd Trigger App**.
 2. GitHub shows the pre-filled app creation form — review and click **Create GitHub App**.
-3. GitHub redirects to the `redirect_url` with a `?code=` query parameter in the address bar (e.g., `https://github.com/NissesSenap/shepherd?code=abc123`). Copy the code value and exchange it:
+3. GitHub redirects to the `redirect_url` with a `?code=` query parameter in the address bar, e.g.:
+
+   ```
+   https://github.com/NissesSenap/shepherd?code=abc123def456&state=trigger
+   ```
+
+   Copy **only the code value** (`abc123def456` in this example) and exchange it:
 
    ```bash
-   curl -s -X POST https://api.github.com/app-manifests/<CODE>/conversions | jq '{id, pem, webhook_secret}'
+   curl -s -X POST https://api.github.com/app-manifests/abc123def456/conversions | jq '{id, pem, webhook_secret}'
    ```
 
    This returns:
@@ -141,7 +147,12 @@ Save this as `register-runner.html` and open it in your browser:
 ```
 
 1. Click **Create Shepherd Runner App**, review, and confirm.
-2. Exchange the code: `curl -s -X POST https://api.github.com/app-manifests/<CODE>/conversions | jq '{id, pem}'`
+2. Copy the `code` value from the redirect URL (same as the Trigger App step above) and exchange it:
+
+   ```bash
+   curl -s -X POST https://api.github.com/app-manifests/<CODE>/conversions | jq '{id, pem}'
+   ```
+
 3. Save the returned `id` and `pem`. The Runner App doesn't have a `webhook_secret`.
 
 ## Step 3: Install Both Apps
