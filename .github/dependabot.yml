@@ -1,0 +1,36 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: daily
+
+  - package-ecosystem: docker
+    directory: /build/runner
+    schedule:
+      interval: daily
+
+  - package-ecosystem: docker
+    directory: /build/web
+    schedule:
+      interval: daily
+
+  - package-ecosystem: gomod
+    directory: /docs
+    schedule:
+      interval: daily
+
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: daily
+
+  - package-ecosystem: gomod
+    directory: /poc/sandbox
+    schedule:
+      interval: daily
+
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: daily
